@@ -51,7 +51,14 @@ pub fn run_json_recovery_action(action: JsonRecoveryAction) -> Result<JsonRecove
         // as read-only. Run the fixed-purpose restore in its own transient unit
         // with only the official library destination writable.
         if action == JsonRecoveryAction::RestoreMainLibrary {
-            return restore_main_library_via_transient_unit();
+            return match main_library_restore_mode(gitrun_platform::detect_service_manager())? {
+                MainLibraryRestoreMode::SystemdTransientUnit => {
+                    restore_main_library_via_transient_unit()
+                }
+                MainLibraryRestoreMode::DirectRoot => {
+                    run_json_recovery_root_action(action.as_str())
+                }
+            };
         }
         return run_json_recovery_root_action(action.as_str());
     }
@@ -80,6 +87,26 @@ pub fn run_json_recovery_action(action: JsonRecoveryAction) -> Result<JsonRecove
     }
     serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("decode JSON recovery report: {error}"))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MainLibraryRestoreMode {
+    SystemdTransientUnit,
+    DirectRoot,
+}
+
+fn main_library_restore_mode(
+    manager: Option<gitrun_platform::ServiceManager>,
+) -> Result<MainLibraryRestoreMode, String> {
+    match manager {
+        Some(gitrun_platform::ServiceManager::Systemd) => {
+            Ok(MainLibraryRestoreMode::SystemdTransientUnit)
+        }
+        Some(gitrun_platform::ServiceManager::OpenRc | gitrun_platform::ServiceManager::Runit) => {
+            Ok(MainLibraryRestoreMode::DirectRoot)
+        }
+        None => Err("cannot safely restore the Main Library: no supported Linux service manager was detected".into()),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -737,10 +764,30 @@ fn push_recovery_detail(report: &mut JsonRecoveryReport, detail: String) {
 #[cfg(test)]
 mod tests {
     use super::{
-        active_path_for_backup, append_backup_suffix, remove_trailing_json_commas,
-        repaired_json_value, same_json_root_shape, JsonRecoveryAction,
+        active_path_for_backup, append_backup_suffix, main_library_restore_mode,
+        remove_trailing_json_commas, repaired_json_value, same_json_root_shape, JsonRecoveryAction,
+        MainLibraryRestoreMode,
     };
     use std::path::Path;
+
+    #[test]
+    fn main_library_restore_routes_by_the_active_service_manager() {
+        use gitrun_platform::ServiceManager::{OpenRc, Runit, Systemd};
+
+        assert_eq!(
+            main_library_restore_mode(Some(Systemd)).unwrap(),
+            MainLibraryRestoreMode::SystemdTransientUnit
+        );
+        assert_eq!(
+            main_library_restore_mode(Some(OpenRc)).unwrap(),
+            MainLibraryRestoreMode::DirectRoot
+        );
+        assert_eq!(
+            main_library_restore_mode(Some(Runit)).unwrap(),
+            MainLibraryRestoreMode::DirectRoot
+        );
+        assert!(main_library_restore_mode(None).is_err());
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

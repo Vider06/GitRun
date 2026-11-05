@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""Guard GitRun's multi-distro boundaries and package-format contracts.
+
+This is a regression guard, not a claim that every host lifecycle is already
+portable. Known legacy host integrations are inventoried with exact per-file
+budgets until they are migrated to gitrun-platform. New or expanded direct
+platform assumptions fail the check.
+"""
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+PATTERNS = {
+    "apt-get": re.compile(r"\bapt-get\b"),
+    "dpkg": re.compile(r"\bdpkg(?:-query)?\b"),
+    "systemctl": re.compile(r"\bsystemctl\b"),
+    "systemd-path": re.compile(r"/(?:etc|usr/lib|lib)/systemd/"),
+    "systemd-run": re.compile(r"\bsystemd-run\b"),
+}
+
+# Temporary, explicit inventory of runtime paths not yet routed through the
+# platform abstraction. Counts are upper bounds: a new occurrence in an
+# existing file is a regression just as much as a new file would be.
+RUNTIME_BASELINE = {
+    "crates/gitrun-setup/src/lib.rs": {
+        "apt-get": 13, "dpkg": 12, "systemctl": 38, "systemd-path": 28,
+    },
+    "crates/gitrun-updater/src/lib.rs": {"apt-get": 14},
+    "crates/gitrun-cli/src/main.rs": {
+        "apt-get": 2, "dpkg": 5, "systemctl": 6, "systemd-path": 12,
+    },
+    "crates/gitrun-recovery/src/lib.rs": {
+        "systemctl": 6, "systemd-path": 7,
+    },
+    "crates/gitrun-management/src/backend.rs": {
+        "systemctl": 11, "systemd-path": 6,
+    },
+    "crates/gitrun-management/src/control_manager.rs": {
+        "systemctl": 2, "systemd-run": 1,
+    },
+    "crates/gitrun-cli/src/manage.rs": {"systemctl": 1},
+}
+
+# Conditional host integrations are not migration debt: they are reachable
+# only after explicit service-manager detection and have a tested native route.
+CONDITIONAL_RUNTIME_ALLOWLIST = {
+    "crates/gitrun-recovery/src/json_recovery.rs": {
+        "systemd-run": 2,
+        "description": "systemd-only transient-unit path; OpenRC/runit use direct privileged restore",
+    },
+}
+
+# These occurrences are intentional and must remain isolated to their
+# documented execution context rather than copied into host lifecycle code.
+CONTEXT_ALLOWLIST = {
+    "crates/gitrun-platform/src/lib.rs": "native package-manager and service-manager detection",
+    "crates/gitrun-core/src/compatibility.rs": "command compatibility classifier; strings are not executed",
+    "crates/gitrun-scheduler/src/api_service.rs": "package installation runs as container root inside the pinned Debian runner image",
+    "scripts/ci/ci-lib.sh": "CI-only apt/dpkg helpers provision Debian-based GitHub Actions runners; they are not product runtime paths",
+    "scripts/ci/ci-lib.sh": "CI-only apt/dpkg helpers provision Debian-based GitHub Actions runners; they are not product runtime paths",
+}
+
+PREFIX_ALLOWLIST = (
+    ".github/workflows/",  # GitHub-hosted/self-hosted runner provisioning, not product runtime.
+    "docker/",             # Pinned Debian container build environments.
+    "Core/Dockers/",       # Pinned Debian runner/workbench container build environments.
+    "systemd/",            # Native systemd unit definitions.
+)
+
+FILE_ALLOWLIST = {
+    "packaging/gitrun-postinst": "DEB-only maintainer hook",
+    "packaging/gitrun-prerm": "DEB-only maintainer hook",
+    "scripts/build-deb.sh": "DEB-only package builder",
+}
+
+SCANNED_SUFFIXES = {".rs", ".sh", ".ps1", ".service"}
+
+
+def tracked_files() -> list[str]:
+    result = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, check=True, capture_output=True
+    )
+    return [item.decode("utf-8") for item in result.stdout.split(b"\0") if item]
+
+
+def read_text(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        return None
+
+
+def check_platform_catalog(errors: list[str]) -> None:
+    source = (ROOT / "crates/gitrun-platform/src/lib.rs").read_text(encoding="utf-8")
+    required = (
+        "Apt", "Dnf", "Zypper", "Pacman", "Apk", "Xbps", "Emerge",
+        "Systemd", "OpenRc", "Runit",
+        "known_distributions_prefer_their_native_package_manager",
+    )
+    missing = [item for item in required if item not in source]
+    if missing:
+        errors.append("gitrun-platform is missing expected platform contracts: " + ", ".join(missing))
+
+
+def check_release_package_boundaries(errors: list[str]) -> None:
+    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    required_targets = (
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+    )
+    for target in required_targets:
+        if target not in release:
+            errors.append(f"release matrix no longer declares {target}")
+
+    if 'xbps_stage="$RUNNER_TEMP/xbps-stage"' not in release:
+        errors.append("XBPS must use a dedicated init-neutral staging directory")
+    if 'cp -a "$stage" "$xbps_stage"' not in release:
+        errors.append("XBPS staging must be copied from the neutral Server stage")
+    xbps_block = release.split('xbps_root="$RUNNER_TEMP/xbps"', 1)
+    if len(xbps_block) != 2:
+        errors.append("could not locate the XBPS packaging block")
+    else:
+        block = xbps_block[1].split("Upload immutable target packages", 1)[0]
+        if '"$xbps_create"' not in block or '"$xbps_stage"' not in block:
+            errors.append("XBPS archive creation must consume the init-neutral stage")
+        if '"$xbps_create"' in block and '"$package_stage"' in block:
+            errors.append("XBPS archive must not consume the systemd-enabled package stage")
+
+
+def check_recovery_service_manager_contract(errors: list[str]) -> None:
+    recovery = (ROOT / "crates/gitrun-recovery/src/json_recovery.rs").read_text(encoding="utf-8")
+    required = (
+        "main_library_restore_mode",
+        "ServiceManager::Systemd",
+        "ServiceManager::OpenRc",
+        "ServiceManager::Runit",
+        "MainLibraryRestoreMode::DirectRoot",
+        "run_json_recovery_root_action(action.as_str())",
+    )
+    missing = [item for item in required if item not in recovery]
+    if missing:
+        errors.append(
+            "Main Library restore must route systemd, OpenRC, and runit explicitly; "
+            "missing: " + ", ".join(missing)
+        )
+
+
+def main() -> int:
+    errors: list[str] = []
+    known: list[str] = []
+    conditional: list[str] = []
+    files = tracked_files()
+
+    for relative in files:
+        path = Path(relative)
+        if path.suffix not in SCANNED_SUFFIXES and path.name != "Dockerfile":
+            continue
+        if relative in FILE_ALLOWLIST or relative.startswith(PREFIX_ALLOWLIST):
+            continue
+        content = read_text(ROOT / path)
+        if content is None:
+            continue
+
+        counts = {name: len(pattern.findall(content)) for name, pattern in PATTERNS.items()}
+        counts = {name: count for name, count in counts.items() if count}
+        if not counts:
+            continue
+
+        if relative in CONDITIONAL_RUNTIME_ALLOWLIST:
+            contract = CONDITIONAL_RUNTIME_ALLOWLIST[relative]
+            limits = {key: value for key, value in contract.items() if key != "description"}
+            for name, count in counts.items():
+                limit = limits.get(name, 0)
+                if count != limit:
+                    errors.append(
+                        f"{relative}: conditional integration {name} count changed "
+                        f"from the reviewed contract ({limit} -> {count})"
+                    )
+            conditional.append(
+                f"- `{relative}`: {contract['description']} "
+                f"({', '.join(f'{name}={count}' for name, count in counts.items())})"
+            )
+            continue
+
+        if relative in RUNTIME_BASELINE:
+            limits = RUNTIME_BASELINE[relative]
+            for name, count in counts.items():
+                limit = limits.get(name, 0)
+                if count > limit:
+                    errors.append(
+                        f"{relative}: {name} occurrences grew from the reviewed baseline "
+                        f"({limit} -> {count})"
+                    )
+            remaining = ", ".join(f"{name}={count}" for name, count in counts.items())
+            known.append(f"- `{relative}`: {remaining}")
+            continue
+
+        if relative in CONTEXT_ALLOWLIST:
+            known.append(f"- `{relative}`: {CONTEXT_ALLOWLIST[relative]}")
+            continue
+
+        errors.append(
+            f"{relative}: unclassified platform-specific command/path occurrence(s): "
+            + ", ".join(f"{name}={count}" for name, count in counts.items())
+        )
+
+    check_platform_catalog(errors)
+    check_release_package_boundaries(errors)
+    check_recovery_service_manager_contract(errors)
+
+    summary = [
+        "# Multi-distro contract audit",
+        "",
+        "The release package matrix and platform detection catalog are checked on every run.",
+        "",
+        "## Explicitly scoped platform-specific contexts",
+        "",
+        "- Debian-based Dockerfiles are intentional container build environments.",
+        "- GitHub workflow package-manager commands provision the CI runner, not the installed product.",
+        "- DEB maintainer hooks are package-format-specific.",
+        "- The runner API package-install operation executes inside the pinned Debian runner image.",
+        "",
+        "## Conditional host-runtime integrations",
+        "",
+        "These references are intentionally limited to a service-manager-specific branch and are not classified as migration debt.",
+        "",
+        *(conditional or ["- No conditional host-runtime integrations found."]),
+        "",
+        "## Known host-runtime migration debt",
+        "",
+        "These reviewed legacy references remain and must be migrated to the shared platform layer. "
+        "This guard prevents their spread; it does not certify full OpenRC/runit or non-Debian lifecycle support.",
+        "",
+        *(known or ["- No known direct platform-specific references found."]),
+        "",
+    ]
+    summary_text = "\n".join(summary)
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with open(summary_path, "a", encoding="utf-8") as stream:
+            stream.write(summary_text)
+
+    print(summary_text)
+    if errors:
+        print("Multi-distro contract violations:", file=sys.stderr)
+        for error in errors:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    print("Multi-distro contract audit: PASS (conditional integrations and known runtime debt are reported separately)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

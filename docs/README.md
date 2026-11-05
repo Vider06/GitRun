@@ -21,6 +21,7 @@ Use this index to find the maintained technical guide for a GitRun subsystem. St
 - [Release history](RELEASE_HISTORY.md) — consolidated source-line history and historical verification boundaries.
 - [Linux platform compatibility](PLATFORM_SUPPORT.md) — detected host capabilities, explicit support boundaries and the distribution/package roadmap.
 - [Release metadata and Main Library artifact](../release/README.md) — version synchronization and signed reference-library contents.
+- [Accessibility](../ACCESSIBILITY.md) — interface notes, supported environments, known limitations and barrier reporting.
 
 ## Source version and releases
 

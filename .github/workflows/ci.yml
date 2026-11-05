@@ -18,8 +18,11 @@ name: GitRun CI
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
+  # Feature branches are validated once, when their pull request is opened or updated.
+  # Main receives the full pipeline on push; PR runs intentionally omit cache-gc.
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
 
@@ -70,6 +73,7 @@ concurrency:
 jobs:
   # ─────────────────────────────────────────────── variables verification ──
   variables-verification:
+    if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
     name: Repository CI variables
     runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
     timeout-minutes: 60
@@ -81,7 +85,9 @@ jobs:
       errors: ${{ steps.report.outputs.errors }}
     steps:
       - name: Start report clock
-        run: echo "GITRUN_JOB_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+        run: |
+          echo "GITRUN_JOB_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+          echo "GITRUN_JOB_STARTED_UTC=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
 
       - name: Verify repository variables
         id: verify
@@ -111,8 +117,6 @@ jobs:
           done
 
           {
-            echo "### Repository CI variables"
-            echo
             echo "| Variable | Current repository value |"
             echo "|---|---|"
             for name in \
@@ -126,18 +130,55 @@ jobs:
               value="${!name:-<unset>}"
               printf '| `%s` | `%s` |\n' "$name" "$value"
             done
-          } >> "$GITHUB_STEP_SUMMARY"
+          } > "$RUNNER_TEMP/gitrun-variables-details.md"
+          echo "GITRUN_VERIFY_SECS=$(( $(date +%s) - GITRUN_JOB_STARTED ))" >> "$GITHUB_ENV"
 
       - name: Report job status
         id: report
         if: always()
         env:
           VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          GITRUN_JOB_STATUS: ${{ job.status }}
         run: |
           started="${GITRUN_JOB_STARTED:-$(date +%s)}"
+          started_utc="${GITRUN_JOB_STARTED_UTC:-unavailable}"
+          generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          secs=$(( $(date +%s) - started ))
+          verify_secs="${GITRUN_VERIFY_SECS:-unavailable}"
+          status="${GITRUN_JOB_STATUS:-unknown}"
           {
-            echo "secs=$(( $(date +%s) - started ))"
-            echo "cache="
+            echo "# GitRun CI job report"
+            echo
+            echo "| Field | Runtime value |"
+            echo "|---|---|"
+            echo "| Job | Repository CI variables |"
+            echo "| Result | **${status}** |"
+            echo "| Execution duration | ${secs}s |"
+            echo "| Measurement started (UTC) | ${started_utc} |"
+            echo "| Report generated (UTC) | ${generated_at} |"
+            echo "| Runner | ${RUNNER_NAME:-unknown} (${RUNNER_OS:-unknown}/${RUNNER_ARCH:-unknown}) |"
+            echo "| Commit | ${GITHUB_SHA:0:12} |"
+            echo "| Run | ${GITHUB_RUN_ID:-unknown} |"
+            echo
+            echo "_Skipped jobs do not execute a job-local report; their status is shown in the workflow-level verification summary._"
+            echo
+            echo "## Step results and timings"
+            echo
+            echo "| Step | Result | Time |"
+            echo "|---|---|---:|"
+            echo "| Verify repository variables | ${VERIFY_OUTCOME:-unavailable} | ${verify_secs}s |"
+            echo
+            echo "## Cache activity"
+            echo
+            echo "_No cache restore operation was recorded for this job._"
+            echo
+            echo "## Job-specific details"
+            echo
+            if [ -f "$RUNNER_TEMP/gitrun-variables-details.md" ]; then cat "$RUNNER_TEMP/gitrun-variables-details.md"; else echo "_No details were captured._"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "secs=$secs"
+            echo "cache=not-used"
             echo "errors<<GITRUN_EOF"
             if [ "$VERIFY_OUTCOME" != success ]; then
               echo "Repository CI variable verification ended with: $VERIFY_OUTCOME"
@@ -146,6 +187,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
   # ───────────────────────────────────────────────────────── environment ──
   environment:
+    if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
     name: Runner environment
     needs: variables-verification
     runs-on: &runner ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux"]') }}
@@ -166,653 +208,10 @@ jobs:
       - &boot
         name: Bootstrap (helpers, diagnostics, jq)
         run: |
-          mkdir -p "$RUNNER_TEMP/gitrun-ci"
-          cat > "$RUNNER_TEMP/ci-lib.sh" <<'GITRUN_LIB'
-          # shellcheck shell=bash
-          # ============================================================================
-          # GitRun CI helper library. Written to $RUNNER_TEMP by every job's Bootstrap
-          # step, then `source`d by the following steps. It never changes shell options.
-          # ============================================================================
-          CI_DIR="${RUNNER_TEMP:?RUNNER_TEMP is not set}/gitrun-ci"
-          CI_LOGS="$CI_DIR/logs"
-          CI_STEPS="$CI_DIR/steps.tsv"        # label <TAB> ok|fail|warn <TAB> seconds
-          CI_CACHES="$CI_DIR/caches.tsv"      # name <TAB> exact|partial|miss <TAB> size <TAB> key
-          CI_CHECKS="$CI_DIR/checks.tsv"      # level <TAB> ok|fail <TAB> name <TAB> detail
-          CI_ANNOT="$CI_DIR/annotations.txt"  # one bullet per error annotation (for the PR comment)
-          CI_TAILS="$CI_DIR/tails.txt"        # tail of every failed command
-          mkdir -p "$CI_LOGS"
-          touch "$CI_STEPS" "$CI_CACHES" "$CI_CHECKS" "$CI_ANNOT" "$CI_TAILS"
-          export CI_DIR CI_LOGS CI_ANNOT
-          CI_MISSING=()
-
-          # ---------------------------------------------------------------- basics ----
-          ci_arch() { case "${RUNNER_ARCH:-$(uname -m)}" in X64|x86_64|amd64) echo x64 ;; ARM64|aarch64|arm64) echo arm64 ;; *) echo unknown ;; esac; }
-          ci_strip() { sed -E 's/\x1b\[[0-9;?]*[A-Za-z]//g'; }
-          ci_dur() { local s="${1:-0}"; if [ "$s" -ge 60 ]; then printf '%dm%02ds' $((s / 60)) $((s % 60)); else printf '%ds' "$s"; fi; }
-          ci_sum() { if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then cat >> "$GITHUB_STEP_SUMMARY"; else cat > /dev/null; fi; }
-          ci_esc() { local s="$1"; s="${s//%/%25}"; s="${s//$'\r'/%0D}"; s="${s//$'\n'/%0A}"; printf '%s' "$s"; }
-          ci_escp() { local s; s="$(ci_esc "$1")"; s="${s//:/%3A}"; s="${s//,/%2C}"; printf '%s' "$s"; }
-
-          # ci_annot LEVEL FILE LINE COL TITLE MESSAGE  -> GitHub annotation (+ bullet for errors)
-          ci_annot() {
-            local p=""
-            [ -n "${2:-}" ] && p+="file=$(ci_escp "$2"),"
-            [ -n "${3:-}" ] && p+="line=$3,"
-            [ -n "${4:-}" ] && p+="col=$4,"
-            [ -n "${5:-}" ] && p+="title=$(ci_escp "$5"),"
-            printf '::%s %s::%s\n' "$1" "${p%,}" "$(ci_esc "${6:-}")"
-            if [ "$1" = error ]; then
-              printf '• %s%s %s\n' "${2:-}" "${3:+:$3}" "${5:+[$5] }${6:-}" >> "$CI_ANNOT"
-            fi
-            return 0
-          }
-          ci_err() { ci_annot error "" "" "" "" "$*"; }
-          ci_warn() { ci_annot warning "" "" "" "" "$*"; }
-          ci_note() { printf 'ℹ️  %s\n' "$*"; }
-
-          # ---------------------------------------------------------- run / retry ----
-          # ci_run LABEL CMD...   run with timing, own log group, tail on failure.
-          # CI_LEVEL=warning ci_run ...  => advisory: failure becomes a warning.
-          ci_run() {
-            local label="$1"; shift
-            local slug log t0 rc dur lvl="${CI_LEVEL:-error}" had_e=0
-            slug="$(printf '%s' "$label" | tr -c 'A-Za-z0-9._-' '_')"
-            log="$CI_LOGS/$slug.log"
-            case $- in *e*) had_e=1 ;; esac
-            t0=$(date +%s)
-            echo "::group::▶ $label"
-            printf '$'; printf ' %q' "$@"; echo
-            set +e
-            "$@" 2>&1 | tee "$log"
-            rc=${PIPESTATUS[0]}
-            if [ "$had_e" = 1 ]; then set -e; fi
-            dur=$(($(date +%s) - t0))
-            echo "::endgroup::"
-            if [ "$rc" -eq 0 ]; then
-              printf '✅ %s (%s)\n' "$label" "$(ci_dur "$dur")"
-              printf '%s\tok\t%s\n' "$label" "$dur" >> "$CI_STEPS"
-              return 0
-            fi
-            echo "──── last 40 lines of: $label ────"
-            tail -n 40 "$log" | ci_strip
-            if [ "$lvl" = warning ]; then
-              printf '⚠️  %s failed (exit %s) — advisory, not blocking\n' "$label" "$rc"
-              ci_annot warning "" "" "" "$label" "advisory check failed (exit $rc) after $(ci_dur "$dur"); see log"
-              printf '%s\twarn\t%s\n' "$label" "$dur" >> "$CI_STEPS"
-              return 0
-            fi
-            printf '❌ %s failed (exit %s) after %s\n' "$label" "$rc" "$(ci_dur "$dur")"
-            printf '::error title=%s::exit code %s after %s\n' "$(ci_escp "$label")" "$rc" "$(ci_dur "$dur")"
-            { echo "### $label (exit $rc)"; tail -n 25 "$log" | ci_strip; echo; } >> "$CI_TAILS"
-            printf '%s\tfail\t%s\n' "$label" "$dur" >> "$CI_STEPS"
-            return "$rc"
-          }
-          ci_adv() { CI_LEVEL=warning ci_run "$@"; }
-
-          # ci_retry TRIES DELAY CMD...
-          ci_retry() {
-            local n="$1" d="$2" i rc=1; shift 2
-            for ((i = 1; i <= n; i++)); do
-              if "$@"; then
-                return 0
-              else
-                # Capture the failed command's status inside the else branch.
-                # Reading $? after the completed if compound can report 0 when
-                # no branch ran, falsely turning an exhausted retry into success.
-                rc=$?
-              fi
-              ci_warn "attempt $i/$n failed (exit $rc): $*"
-              if [ "$i" -lt "$n" ]; then sleep $((d * i)); fi
-            done
-            return "$rc"
-          }
-
-          # ci_download URL DEST [SHA256]
-          ci_download() {
-            local url="$1" dest="$2" sha="${3:-}" optional="${4:-false}" t0 got
-            local candidate="${dest}.partial.$$"
-            t0=$(date +%s)
-            rm -f "$candidate"
-            if ! ci_retry 4 3 curl --fail --silent --show-error --location --connect-timeout 15 --max-time 600 -o "$candidate" "$url"; then
-              rm -f "$candidate"
-              if [ "$optional" = true ]; then
-                ci_warn "optional prebuilt-tool download failed after retries: $url"
-              else
-                ci_err "download failed: $url"
-              fi
-              return 1
-            fi
-            if [ -n "$sha" ]; then
-              got="$(sha256sum "$candidate" | cut -d' ' -f1)"
-              if [ "$got" != "$sha" ]; then
-                rm -f "$candidate"
-                if [ "$optional" = true ]; then
-                  ci_warn "optional prebuilt-tool SHA-256 mismatch for $url (expected $sha, got $got)"
-                else
-                  ci_err "sha256 mismatch for $url (expected $sha, got $got)"
-                fi
-                return 1
-              fi
-            fi
-            mv "$candidate" "$dest"
-            printf '⬇️  %s (%s bytes, %ss%s)\n' "${url##*/}" "$(stat -c %s "$dest")" "$(($(date +%s) - t0))" "${sha:+, sha256 ok}"
-          }
-
-          # ------------------------------------------------- tool install (user space) -
-          # ci_tool NAME VERSION URL SHA256 MODE [MEMBER]
-          #   MODE: bin (single file) | archive (extract, pick MEMBER by file name) | dir (extract everything)
-          # Installs into $RUNNER_TOOL_CACHE/gitrun-tools/NAME/VERSION-ARCH and adds it to PATH.
-          ci_tool() {
-            local name="$1" ver="$2" url="$3" sha="$4" mode="$5" member="${6:-$1}" optional_download="${7:-false}"
-            local dir tmp="$CI_DIR/dl-$name" found
-            dir="${RUNNER_TOOL_CACHE:-$CI_DIR/tools}/gitrun-tools/$name/$ver-$(ci_arch)"
-            if [ -f "$dir/.ok" ] && [ -x "$dir/$member" ]; then
-              printf '✔ %s %s already installed (%s)\n' "$name" "$ver" "$dir"
-            else
-              rm -rf "$dir"; mkdir -p "$dir"
-              ci_download "$url" "$tmp" "$sha" "$optional_download" || return 1
-              case "$mode" in
-                bin) install -m 0755 "$tmp" "$dir/$name" ;;
-                dir) tar -xf "$tmp" -C "$dir" ;;
-                archive)
-                  mkdir -p "$dir/.x"; tar -xf "$tmp" -C "$dir/.x"
-                  found="$(find "$dir/.x" -type f -name "$member" | head -n 1)"
-                  [ -n "$found" ] || { ci_err "$member not found inside ${url##*/}"; return 1; }
-                  install -m 0755 "$found" "$dir/$member"; rm -rf "$dir/.x" ;;
-              esac
-              rm -f "$tmp"; chmod +x "$dir/$member" 2>/dev/null || true
-              printf '%s\n' "${sha:-unverified}" > "$dir/.ok"
-              printf '✔ %s %s installed (%s)\n' "$name" "$ver" "$dir"
-            fi
-            export PATH="$dir:$PATH"
-            [ -z "${GITHUB_PATH:-}" ] || echo "$dir" >> "$GITHUB_PATH"
-          }
-
-          # Pinned tools. Hashes were computed from the real release assets.
-          ci_ensure_jq() {
-            command -v jq >/dev/null 2>&1 && return 0
-            local v=1.8.2 u=https://github.com/jqlang/jq/releases/download/jq-1.8.2 a h
-            a="$(ci_arch)"
-            case "$a" in
-              x64) h=b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f; u="$u/jq-linux-amd64" ;;
-              arm64) h=8b85c817833814ddca00a144c33705546355afccf0cf39b188f3cdb48b852309; u="$u/jq-linux-arm64" ;;
-              *) ci_err "jq: unsupported architecture $a"; return 1 ;;
-            esac
-            ci_tool jq "$v" "$u" "$h" bin
-          }
-          ci_ensure_shellcheck() {
-            command -v shellcheck >/dev/null 2>&1 && return 0
-            local v=v0.11.0 u=https://github.com/koalaman/shellcheck/releases/download/v0.11.0 a h
-            a="$(ci_arch)"
-            case "$a" in
-              x64) h=8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198; u="$u/shellcheck-v0.11.0.linux.x86_64.tar.xz" ;;
-              arm64) h=12b331c1d2db6b9eb13cfca64306b1b157a86eb69db83023e261eaa7e7c14588; u="$u/shellcheck-v0.11.0.linux.aarch64.tar.xz" ;;
-              *) ci_err "shellcheck: unsupported architecture $a"; return 1 ;;
-            esac
-            ci_tool shellcheck "$v" "$u" "$h" archive
-          }
-          ci_ensure_actionlint() {
-            command -v actionlint >/dev/null 2>&1 && return 0
-            local v=1.7.12 u=https://github.com/rhysd/actionlint/releases/download/v1.7.12 a h
-            a="$(ci_arch)"
-            case "$a" in
-              x64) h=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8; u="$u/actionlint_1.7.12_linux_amd64.tar.gz" ;;
-              arm64) h=325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6; u="$u/actionlint_1.7.12_linux_arm64.tar.gz" ;;
-              *) ci_err "actionlint: unsupported architecture $a"; return 1 ;;
-            esac
-            ci_tool actionlint "$v" "$u" "$h" archive
-          }
-          ci_ensure_hadolint() {
-            command -v hadolint >/dev/null 2>&1 && return 0
-            local v=2.15.1 u=https://github.com/hadolint/hadolint/releases/download/v2.15.1 a h
-            a="$(ci_arch)"
-            case "$a" in
-              x64) h=c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507; u="$u/hadolint-linux-x86_64" ;;
-              arm64) h=f6198ef8090f404dbb771abfee086eb8c48ac177f30da7fd3510aca35b344b5d; u="$u/hadolint-linux-arm64" ;;
-              *) ci_err "hadolint: unsupported architecture $a"; return 1 ;;
-            esac
-            ci_tool hadolint "$v" "$u" "$h" bin
-          }
-          ci_ensure_pwsh() {
-            command -v pwsh >/dev/null 2>&1 && return 0
-            local v=7.6.6 u=https://github.com/PowerShell/PowerShell/releases/download/v7.6.6 a h
-            a="$(ci_arch)"
-            case "$a" in
-              x64) h=ddbc4a2d113bbd46d283cfedcbcd117a70caefd7673f41f2b4e0000badf103bc; u="$u/powershell-7.6.6-linux-x64.tar.gz" ;;
-              arm64) h=924829e54c983648f6f1419a2dc7f9433c861b2fb5bd57736ff096c24f133729; u="$u/powershell-7.6.6-linux-arm64.tar.gz" ;;
-              *) ci_err "pwsh: unsupported architecture $a"; return 1 ;;
-            esac
-            ci_tool pwsh "$v" "$u" "$h" dir
-          }
-          ci_ensure_cargo_deny() {
-            command -v cargo-deny >/dev/null 2>&1 && cargo-deny --version 2>/dev/null | grep -q ' 0.20.2' && return 0
-            local u=https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2 a h
-            a="$(ci_arch)"
-            case "$a" in
-              x64) h=9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f; u="$u/cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz" ;;
-              arm64) h=995c82be0defc7a025cae49a2aa2644ce8245c9a3318fc4103907c6a285e8c7d; u="$u/cargo-deny-0.20.2-aarch64-unknown-linux-musl.tar.gz" ;;
-              *) ci_err "cargo-deny: unsupported architecture $a"; return 1 ;;
-            esac
-            ci_tool cargo-deny 0.20.2 "$u" "$h" archive
-          }
-          ci_ensure_cargo_audit() {
-            command -v cargo-audit >/dev/null 2>&1 && cargo-audit --version 2>/dev/null | grep -q ' 0.22.2' && return 0
-            local source_root="${RUNNER_TOOL_CACHE:-$CI_DIR/tools}/gitrun-tools/cargo-audit/0.22.2-source-$(ci_arch)"
-            if [ -x "$source_root/bin/cargo-audit" ] && "$source_root/bin/cargo-audit" --version 2>/dev/null | grep -q ' 0.22.2'; then
-              export PATH="$source_root/bin:$PATH"
-              [ -z "${GITHUB_PATH:-}" ] || echo "$source_root/bin" >> "$GITHUB_PATH"
-              return 0
-            fi
-
-            if [ "$(ci_arch)" = x64 ]; then
-              if ci_tool cargo-audit 0.22.2 \
-                "https://github.com/rustsec/rustsec/releases/download/cargo-audit%2Fv0.22.2/cargo-audit-x86_64-unknown-linux-musl-v0.22.2.tgz" \
-                7fb9497f8594b389e5fce5ef9b92db08432996895b2e0c5a0167a69ed445c428 archive cargo-audit true; then
-                return 0
-              fi
-              ci_warn "cargo-audit prebuilt release download unavailable; falling back to a pinned cargo install"
-            else
-              ci_note "no prebuilt cargo-audit for $(ci_arch): building from source (slow, cached afterwards)"
-            fi
-
-            mkdir -p "$source_root"
-            if [ ! -x "$source_root/bin/cargo-audit" ]; then
-              ci_run "cargo install cargo-audit (fallback)" cargo install --locked --version 0.22.2 --root "$source_root" cargo-audit || return 1
-            fi
-            export PATH="$source_root/bin:$PATH"
-            [ -z "${GITHUB_PATH:-}" ] || echo "$source_root/bin" >> "$GITHUB_PATH"
-          }
-
-          # ------------------------------------------------ system prerequisites ----
-          ci_apt() {
-            command -v apt-get >/dev/null 2>&1 || return 1
-            local sudo="" started rc
-            if [ "$(id -u)" != 0 ]; then
-              if sudo -n true 2>/dev/null; then sudo="sudo -n"; else return 1; fi
-            fi
-
-            # Prefer the canonical Ubuntu archive instead of the Azure mirror that
-            # has intermittently stalled on GitHub-hosted runners. Preserve Ubuntu's
-            # suite/component configuration and leave security.ubuntu.com untouched.
-            # This runs before update in every job that installs APT dependencies.
-            if [ ! -f "$CI_DIR/apt-mirror-forced" ]; then
-              if [ -f /etc/apt/apt-mirrors.txt ]; then
-                $sudo sed -i -E 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' /etc/apt/apt-mirrors.txt
-                echo "APT mirror list after override:"
-                $sudo cat /etc/apt/apt-mirrors.txt
-              fi
-              for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-                [ -f "$source" ] || continue
-                $sudo sed -i -E 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' "$source"
-              done
-              : > "$CI_DIR/apt-mirror-forced"
-            fi
-
-            # Bound network waits without changing the workflow/job timeout, and keep
-            # the package-manager output visible in every job that uses this helper.
-            if [ ! -f "$CI_DIR/apt-updated" ]; then
-              started=$(date +%s)
-              echo "[$(date -Is)] apt-get update started"
-              if (set -o pipefail; $sudo apt-get \
-                -o Acquire::http::Timeout=30 \
-                -o Acquire::https::Timeout=30 \
-                -o Acquire::Retries=2 \
-                update 2>&1 | tee "$CI_LOGS/apt-update.log"); then
-                : > "$CI_DIR/apt-updated"
-                echo "[$(date -Is)] apt-get update finished in $(($(date +%s) - started))s"
-              else
-                rc=$?
-                echo "[$(date -Is)] apt-get update failed after $(($(date +%s) - started))s (exit $rc); see $CI_LOGS/apt-update.log"
-                return "$rc"
-              fi
-            fi
-
-            started=$(date +%s)
-            echo "[$(date -Is)] apt-get install started: $*"
-            if (set -o pipefail; $sudo env DEBIAN_FRONTEND=noninteractive apt-get \
-              -o Acquire::http::Timeout=30 \
-              -o Acquire::https::Timeout=30 \
-              -o Acquire::Retries=2 \
-              install -y --no-install-recommends "$@" 2>&1 | tee "$CI_LOGS/apt.log"); then
-              echo "[$(date -Is)] apt-get install finished in $(($(date +%s) - started))s"
-              return 0
-            else
-              rc=$?
-              echo "[$(date -Is)] apt-get install failed after $(($(date +%s) - started))s (exit $rc); see $CI_LOGS/apt.log"
-              return "$rc"
-            fi
-          }
-          # ci_need CMD [APT_PACKAGE]  -> installs the package when possible, otherwise records it
-          ci_need() {
-            local c="$1" p="${2:-$1}"
-            if command -v "$c" >/dev/null 2>&1; then return 0; fi
-            if ci_apt "$p" && command -v "$c" >/dev/null 2>&1; then ci_note "installed $p (provides $c)"; return 0; fi
-            CI_MISSING+=("command '$c' (apt package: $p)")
-          }
-          # ci_need_pkg PACKAGE...  -> dpkg libraries (headers etc.)
-          ci_need_pkg() {
-            local p miss=()
-            for p in "$@"; do
-              dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok installed' || miss+=("$p")
-            done
-            if [ "${#miss[@]}" -gt 0 ] && ci_apt "${miss[@]}"; then ci_note "installed: ${miss[*]}"; miss=(); fi
-            for p in "${miss[@]}"; do CI_MISSING+=("package '$p'"); done
-          }
-          ci_need_report() {
-            [ "${#CI_MISSING[@]}" -eq 0 ] && { echo "✅ system prerequisites present"; return 0; }
-            local m pk=()
-            for m in "${CI_MISSING[@]}"; do
-              ci_err "missing on this runner image: $m"
-              pk+=("$(printf '%s' "$m" | sed -E "s/.*(apt package: |package ')//; s/[')]//g")")
-            done
-            ci_err "install them on the runner image: sudo apt-get install -y ${pk[*]}"
-            return 1
-          }
-
-          # ----------------------------------------------------------- diagnostics ----
-          ci_image_fp() {
-            {
-              # shellcheck source=/dev/null
-              (. /etc/os-release 2>/dev/null; echo "${ID:-?}-${VERSION_ID:-?}")
-              getconf GNU_LIBC_VERSION 2>/dev/null
-              cc --version 2>/dev/null | head -n 1
-              uname -m
-            } | sha256sum | cut -c1-8
-          }
-          ci_diag() {
-            local ws="${GITHUB_WORKSPACE:-.}" avail_kb inode_pct mem_mb
-            echo "::group::Runner diagnostics"
-            echo "runner: ${RUNNER_NAME:-?} (${RUNNER_OS:-?}/${RUNNER_ARCH:-?})  job: ${GITHUB_JOB:-?}  sha: ${GITHUB_SHA:0:12}"
-            # shellcheck source=/dev/null
-            echo "image : $( (. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown}") ) | $(getconf GNU_LIBC_VERSION 2>/dev/null) | fingerprint $(ci_image_fp)"
-            echo "kernel: $(uname -srm)  cpus: $(nproc 2>/dev/null || echo ?)  load: $(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"
-            df -h "$ws" "$RUNNER_TEMP" 2>/dev/null || true
-            df -i "$ws" 2>/dev/null || true
-            free -m 2>/dev/null || true
-            if [ "${CI_VERBOSE:-0}" = 1 ]; then echo "--- environment (secrets filtered) ---"; env | grep -viE 'token|secret|password|key' | sort; fi
-            echo "::endgroup::"
-            avail_kb="$(df -Pk "$ws" | awk 'NR==2{print $4}')"
-            inode_pct="$(df -Pi "$ws" | awk 'NR==2{gsub("%","",$5); print $5}')"
-            mem_mb="$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 99999)"
-            if [ "${avail_kb:-0}" -lt 1048576 ]; then ci_err "disk almost full on the runner: $((avail_kb / 1024)) MB free in $ws (need >= 1 GB). Clean _work/ and docker images on $RUNNER_NAME."; return 1; fi
-            if [ "${avail_kb:-0}" -lt 5242880 ]; then ci_warn "low disk space: $((avail_kb / 1024)) MB free on $RUNNER_NAME"; fi
-            if [ "${inode_pct:-0}" -ge 90 ]; then ci_warn "inodes ${inode_pct}% used on $RUNNER_NAME"; fi
-            if [ "${mem_mb:-99999}" -lt 1500 ]; then ci_warn "low memory: ${mem_mb} MB available on $RUNNER_NAME"; fi
-            return 0
-          }
-
-          # ci_check LEVEL NAME CMD...   (error|warn) collects results, never exits
-          ci_check() {
-            local lvl="$1" name="$2" out rc; shift 2
-            if out="$("$@" 2>&1)"; then
-              printf '✅ %s%s\n' "$name" "${out:+ — ${out%%$'\n'*}}"
-              printf '%s\tok\t%s\t%s\n' "$lvl" "$name" "${out%%$'\n'*}" >> "$CI_CHECKS"
-            else
-              rc=$?
-              out="${out%%$'\n'*}"
-              if [ "$lvl" = error ]; then printf '❌ %s — %s\n' "$name" "${out:-exit $rc}"; ci_annot error "" "" "" "$name" "${out:-exit $rc}"
-              else printf '⚠️  %s — %s\n' "$name" "${out:-exit $rc}"; ci_annot warning "" "" "" "$name" "${out:-exit $rc}"; fi
-              printf '%s\tfail\t%s\t%s\n' "$lvl" "$name" "${out:-exit $rc}" >> "$CI_CHECKS"
-            fi
-            return 0
-          }
-          # ci_checks_finish TITLE -> summary table, returns 1 if any error-level check failed
-          ci_checks_finish() {
-            local lvl st name detail bad=0
-            {
-              echo "### $1"; echo; echo "| Check | Result | Detail |"; echo "|---|---|---|"
-              while IFS=$'\t' read -r lvl st name detail; do
-                if [ "$st" = ok ]; then echo "| $name | ✅ | ${detail//|/\\|} |"
-                elif [ "$lvl" = error ]; then echo "| $name | ❌ | ${detail//|/\\|} |"; bad=1
-                else echo "| $name | ⚠️ | ${detail//|/\\|} |"; fi
-              done < "$CI_CHECKS"
-              echo
-            } | ci_sum
-            while IFS=$'\t' read -r lvl st name detail; do if [ "$st" = fail ] && [ "$lvl" = error ]; then bad=1; fi; done < "$CI_CHECKS"
-            return "$bad"
-          }
-
-          # ci_gate LEVEL NAME CMD...  like ci_check, but the output is NOT captured: use it for
-          # functions that print their own annotations. CMD returns non-zero when it found problems.
-          ci_gate() {
-            local lvl="$1" name="$2" rc icon="❌"; shift 2
-            if "$@"; then
-              printf '✅ %s\n' "$name"; printf '%s\tok\t%s\t\n' "$lvl" "$name" >> "$CI_CHECKS"
-            else
-              rc=$?
-              if [ "$lvl" != error ]; then icon="⚠️"; fi
-              printf '%s %s (exit %s)\n' "$icon" "$name" "$rc"
-              printf '%s\tfail\t%s\tsee annotations / log\n' "$lvl" "$name" >> "$CI_CHECKS"
-            fi
-            return 0
-          }
-
-          # ------------------------------------------------------------ cache logs ----
-          # ci_cache_note NAME PRIMARY_KEY MATCHED_KEY PATH...
-          ci_cache_note() {
-            local name="$1" primary="$2" matched="$3" res size="-"; shift 3
-            if [ -z "$matched" ]; then res=miss; elif [ "$matched" = "$primary" ]; then res=exact; else res=partial; fi
-            if [ "$res" != miss ] && [ "$#" -gt 0 ]; then size="$(du -sch "$@" 2>/dev/null | tail -n 1 | cut -f1)"; fi
-            printf '🗄️  cache %-22s %-8s %s\n' "$name" "$res" "$size"
-            case "$res" in
-              exact) echo "    ↳ identical inputs: nothing to rebuild" ;;
-              partial) echo "    ↳ restored from an older key (${matched}); only what changed gets rebuilt" ;;
-              miss) echo "    ↳ no usable cache: cold start, everything is built/downloaded" ;;
-            esac
-            printf '%s\t%s\t%s\t%s\n' "$name" "$res" "$size" "$primary" >> "$CI_CACHES"
-          }
-
-          # ---------------------------------------------------- output parsers (awk) ----
-          # pe(): escape a property value (file/title); me(): escape a message.
-          CI_AWK_FN='function pe(s) { gsub(/%/, "%25", s); gsub(/:/, "%3A", s); gsub(/,/, "%2C", s); return s }
-          function me(s) { gsub(/%/, "%25", s); gsub(/\r/, "", s); return s }
-          '
-
-          # All parsers pass the input through unchanged and add ::error/::warning lines.
-          # cargo --message-format=json-diagnostic-rendered-ansi  (needs jq)
-          ci_cargo_json() {
-            jq -rR --arg ws "${GITHUB_WORKSPACE:-}/" '
-              (fromjson? // empty) | select(.reason == "compiler-message") | .message as $m
-              | (if ($m.rendered // "") != "" then ($m.rendered | rtrimstr("\n")) else empty end),
-                ( ([$m.spans[]? | select(.is_primary)] | first) as $s
-                  | select($s != null and ($m.level == "error" or $m.level == "warning"))
-                  | "::\($m.level) file=\($s.file_name | ltrimstr($ws)),line=\($s.line_start),col=\($s.column_start),endLine=\($s.line_end),title=\((($m.code.code // $m.level) | gsub(":"; "%3A")))::\($m.message | gsub("%"; "%25") | gsub("\n"; "%0A"))" )
-            ' | awk -v max="${CI_MAX_ANNOT:-40}" -v out="$CI_ANNOT" '
-              /^::(error|warning) / {
-                if (seen[$0]++) next
-                if (++n > max) { skipped++; next }
-                print
-                if ($0 ~ /^::error /) {
-                  i = index(substr($0, 3), "::"); h = substr($0, 3, i - 1); m = substr($0, 3 + i + 1)
-                  match(h, /file=[^,]*/); f = substr(h, RSTART + 5, RLENGTH - 5)
-                  match(h, /line=[0-9]+/); l = substr(h, RSTART + 5, RLENGTH - 5)
-                  print "• " f ":" l " " m >> out
-                }
-                next
-              }
-              { print }
-              END { if (skipped > 0) printf "::notice::%d more diagnostics not annotated (limit %d); see the log\n", skipped, max }
-            '
-          }
-          # rustfmt --check
-          ci_awk_fmt() {
-            awk -v ws="${GITHUB_WORKSPACE:-}/" -v out="$CI_ANNOT" "$CI_AWK_FN"'
-              { print }
-              /^Diff in / {
-                l = $0; sub(/^Diff in /, "", l); sub(/:$/, "", l)
-                if (match(l, / at line [0-9]+$/)) { ln = substr(l, RSTART + 9); f = substr(l, 1, RSTART - 1) }
-                else { ln = l; sub(/^.*:/, "", ln); f = l; sub(/:[0-9]+$/, "", f) }
-                sub("^" ws, "", f)
-                if (!(f ":" ln in seen)) {
-                  seen[f ":" ln] = 1; files[f] = 1
-                  printf "::error file=%s,line=%s,title=rustfmt::formatting differs here — run `cargo fmt --all`\n", pe(f), ln
-                  print "• " f ":" ln " [rustfmt] formatting differs" >> out
-                }
-              }'
-          }
-          # libtest output: failed tests with panic location, plus totals
-          ci_awk_tests() {
-            awk -v ws="${GITHUB_WORKSPACE:-}/" -v out="$CI_ANNOT" -v tot="$CI_DIR/test-totals.txt" "$CI_AWK_FN"'
-              { print }
-              /^test .* \.\.\. FAILED$/ { t = $0; sub(/^test /, "", t); sub(/ \.\.\. FAILED$/, "", t); failed[t] = 1 }
-              /^thread .* panicked at / {
-                l = $0; sub(/^thread .* panicked at /, "", l); sub(/:$/, "", l)
-                th = $0; sub(/^thread \x27/, "", th); sub(/\x27 panicked.*$/, "", th)
-                n = split(l, p, ":"); col = p[n]; line = p[n - 1]; f = p[1]; for (i = 2; i < n - 1; i++) f = f ":" p[i]
-                sub("^" ws, "", f); want = 1; wth = th; wf = f; wl = line; wc = col; next
-              }
-              want && NF > 0 {
-                msg = $0; sub(/^[ \t]+/, "", msg); want = 0
-                printf "::error file=%s,line=%s,col=%s,title=%s::%s\n", pe(wf), wl, wc, pe("test failed: " wth), me(msg)
-                print "• " wf ":" wl " [test failed: " wth "] " msg >> out
-              }
-              /^test result: / {
-                for (i = 1; i <= NF; i++) { if ($i == "passed;") pa += $(i - 1); if ($i == "failed;") fa += $(i - 1); if ($i == "ignored;") ig += $(i - 1) }
-              }
-              END { printf "passed=%d failed=%d ignored=%d\n", pa, fa, ig > tot }'
-          }
-          # gcc style: file:line:col: level: message [SCxxxx]   (shellcheck -f gcc)
-          ci_awk_gcc() {
-            awk -v out="$CI_ANNOT" "$CI_AWK_FN"'
-              { print }
-              match($0, /^[^:]+:[0-9]+:[0-9]+: (error|warning|note): /) {
-                split($0, h, ": "); loc = h[1]; lvl = h[2]
-                m = $0; sub(/^[^:]+:[0-9]+:[0-9]+: (error|warning|note): /, "", m)
-                n = split(loc, p, ":"); f = p[1]; ln = p[2]; col = p[3]
-                code = ""; if (match(m, / \[SC[0-9]+\]$/)) { code = substr(m, RSTART + 2, RLENGTH - 3); m = substr(m, 1, RSTART - 1) }
-                al = (lvl == "note") ? "notice" : lvl
-                printf "::%s file=%s,line=%s,col=%s,title=%s::%s\n", al, pe(f), ln, col, pe(code == "" ? "shellcheck" : code), me(m)
-                if (al == "error") print "• " f ":" ln " [" code "] " m >> out
-              }'
-          }
-          # hadolint (tty, no color): Dockerfile:3 DL3006 warning: message
-          ci_awk_hadolint() {
-            awk -v out="$CI_ANNOT" "$CI_AWK_FN"'
-              { print }
-              match($0, /^[^ ]+:[0-9]+ [A-Z]+[0-9]+ (error|warning|info|style): /) {
-                split($0, h, " "); loc = h[1]; code = h[2]; lvl = h[3]; sub(/:$/, "", lvl)
-                m = $0; sub(/^[^ ]+:[0-9]+ [A-Z]+[0-9]+ (error|warning|info|style): /, "", m)
-                n = split(loc, p, ":"); ln = p[n]; f = p[1]; for (i = 2; i < n; i++) f = f ":" p[i]
-                al = (lvl == "error") ? "error" : (lvl == "warning" ? "warning" : "notice")
-                printf "::%s file=%s,line=%s,title=%s::%s\n", al, pe(f), ln, pe(code), me(m)
-                if (al == "error") print "• " f ":" ln " [" code "] " m >> out
-              }'
-          }
-          # git diff --check:  file:line: trailing whitespace.   LEVEL via -v lvl=
-          ci_awk_diffcheck() {
-            awk -v lvl="${1:-warning}" -v out="$CI_ANNOT" "$CI_AWK_FN"'
-              { print }
-              match($0, /^[^: ][^:]*:[0-9]+: /) {
-                split($0, p, ":"); f = p[1]; ln = p[2]; m = $0; sub(/^[^:]+:[0-9]+: /, "", m)
-                printf "::%s file=%s,line=%s,title=whitespace::%s\n", lvl, pe(f), ln, me(m)
-                if (lvl == "error") print "• " f ":" ln " [whitespace] " m >> out
-              }'
-          }
-          # cargo audit (human output) -> annotations on Cargo.lock.
-          # A block with a "Warning:" line (unmaintained/unsound/yanked) is a warning, any other block is a vulnerability.
-          ci_awk_audit() {
-            awk -v out="$CI_ANNOT" "$CI_AWK_FN"'
-              function flush(   al, msg) {
-                if (crate != "") {
-                  al = (kind != "") ? "warning" : "error"
-                  msg = crate " " ver ": " title (kind != "" ? " (" kind ")" : "") (sol != "" ? " — " sol : "")
-                  printf "::%s file=Cargo.lock,title=%s::%s\n", al, pe(id == "" ? "advisory" : id), me(msg)
-                  if (al == "error") print "• Cargo.lock [" id "] " msg >> out
-                }
-                crate = ver = title = id = sol = kind = ""
-              }
-              { print }
-              /^Crate: / { flush(); crate = $2 }
-              /^Version: / { ver = $2 }
-              /^Warning: / { kind = $2 }
-              /^Title: / { title = $0; sub(/^Title: +/, "", title) }
-              /^ID: / { id = $2 }
-              /^Solution: / { sol = $0; sub(/^Solution: +/, "", sol) }
-              /^(error|warning): [0-9]+ / { flush() }
-              END { flush() }'
-          }
-          # npm audit (text) -> annotations on package.json.  Arg 1: path of that package.json
-          ci_awk_npm() {
-            awk -v pf="${1:-package.json}" -v out="$CI_ANNOT" "$CI_AWK_FN"'
-              { print }
-              /^Severity: / {
-                sev = $2; pkg = prev
-                al = (sev == "high" || sev == "critical") ? "error" : "warning"
-                if ((getline t) > 0) print t
-                printf "::%s file=%s,title=%s::%s — %s\n", al, pe(pf), pe("npm audit " sev), me(pkg), me(t)
-                if (al == "error") print "• " pf " [npm audit " sev "] " pkg " — " t >> out
-              }
-              { prev = $0 }'
-          }
-
-          # node --check errors:  /abs/file.js:12 ... SyntaxError: msg   (-v ws via GITHUB_WORKSPACE)
-          ci_awk_node() {
-            awk -v ws="${GITHUB_WORKSPACE:-}/" -v out="$CI_ANNOT" "$CI_AWK_FN"'
-              { print }
-              /^[^ ]+\.[cm]?js:[0-9]+$/ { f = $0; sub(/:[0-9]+$/, "", f); l = $0; sub(/^.*:/, "", l); sub("^" ws, "", f); pending = 1; next }
-              pending && /^[A-Za-z]*Error: / {
-                m = $0; sub(/^[A-Za-z]*Error: /, "", m)
-                printf "::error file=%s,line=%s,title=node --check::%s\n", pe(f), l, me(m)
-                print "• " f ":" l " [node --check] " m >> out
-                pending = 0
-              }'
-          }
-          # bash -n errors:  file: line 3: syntax error ...
-          ci_awk_bashn() {
-            awk -v out="$CI_ANNOT" "$CI_AWK_FN"'
-              { print }
-              match($0, /^[^:]+: line [0-9]+: /) {
-                f = $0; sub(/: line [0-9]+: .*$/, "", f); l = $0; sub(/^[^:]+: line /, "", l); sub(/:.*$/, "", l)
-                m = $0; sub(/^[^:]+: line [0-9]+: /, "", m)
-                printf "::error file=%s,line=%s,title=bash -n::%s\n", pe(f), l, me(m)
-                print "• " f ":" l " [bash -n] " m >> out
-              }'
-          }
-
-          # ci_tap: pass-through that copies every ::error annotation into the error bullet list.
-          ci_tap() {
-            awk -v out="$CI_ANNOT" '
-              { print }
-              /^::error / {
-                i = index(substr($0, 3), "::"); h = substr($0, 3, i - 1); m = substr($0, 3 + i + 1); f = ""; l = ""
-                if (match(h, /file=[^,]*/)) f = substr(h, RSTART + 5, RLENGTH - 5)
-                if (match(h, /line=[0-9]+/)) l = substr(h, RSTART + 5, RLENGTH - 5)
-                print "• " f (l != "" ? ":" l : "") " " m >> out
-              }'
-          }
-
-          # ------------------------------------------------------------ job report ----
-          ci_report() {
-            local t0 secs lbl st d res sz line
-            t0="$(cat "$CI_DIR/t0" 2>/dev/null || date +%s)"; secs=$(($(date +%s) - t0))
-            {
-              echo "### ⏱ \`${GITHUB_JOB:-job}\` — $(ci_dur "$secs")"
-              if [ -s "$CI_STEPS" ]; then
-                echo; echo "| Step | Result | Time |"; echo "|---|---|---|"
-                while IFS=$'\t' read -r lbl st d; do
-                  case "$st" in ok) echo "| ${lbl//|/\\|} | ✅ | $(ci_dur "$d") |" ;; warn) echo "| ${lbl//|/\\|} | ⚠️ | $(ci_dur "$d") |" ;; *) echo "| ${lbl//|/\\|} | ❌ | $(ci_dur "$d") |" ;; esac
-                done < "$CI_STEPS"
-              fi
-              if [ -s "$CI_CACHES" ]; then
-                echo; echo "| Cache | Result | Size |"; echo "|---|---|---|"
-                while IFS=$'\t' read -r lbl res sz _; do echo "| $lbl | $res | $sz |"; done < "$CI_CACHES"
-              fi
-              if [ -s "$CI_ANNOT" ]; then echo; echo "<details><summary>Errors</summary>"; echo; echo '```'; head -n 40 "$CI_ANNOT"; echo '```'; echo "</details>"; fi
-              echo
-            } | ci_sum
-            line="$(awk -F'\t' '{printf "%s=%s ", $1, $2}' "$CI_CACHES")"
-            {
-              echo "secs=$secs"
-              echo "cache=${line% }"
-              echo "errors<<GITRUN_EOF"
-              if [ -s "$CI_ANNOT" ]; then head -c 1800 "$CI_ANNOT" | ci_strip; elif [ -s "$CI_TAILS" ]; then head -c 1800 "$CI_TAILS" | ci_strip; fi
-              echo
-              echo "GITRUN_EOF"
-            } >> "${GITHUB_OUTPUT:-/dev/null}"
-          }
-          GITRUN_LIB
+          install -m 0644 "$GITHUB_WORKSPACE/scripts/ci/ci-lib.sh" "$RUNNER_TEMP/ci-lib.sh"
           source "$RUNNER_TEMP/ci-lib.sh"
           date +%s > "$CI_DIR/t0"
+          date -u +'%Y-%m-%dT%H:%M:%SZ' > "$CI_DIR/started_at"
           echo "CI_ANNOT=$CI_ANNOT" >> "$GITHUB_ENV"
           ci_diag
           ci_ensure_jq
@@ -820,89 +219,13 @@ jobs:
       - name: Verify runner
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          chk_platform() {
-            [ "$RUNNER_OS" = Linux ] || { echo "RUNNER_OS=$RUNNER_OS (Linux required)"; return 1; }
-            [ "$(ci_arch)" != unknown ] || { echo "unsupported architecture $RUNNER_ARCH"; return 1; }
-            echo "$RUNNER_OS/$RUNNER_ARCH on $RUNNER_NAME"
-          }
-          chk_dirs() {
-            local d
-            for d in "$GITHUB_WORKSPACE" "$RUNNER_TEMP" "$RUNNER_TOOL_CACHE"; do
-              if [ ! -d "$d" ] || [ ! -w "$d" ]; then echo "$d is missing or not writable"; return 1; fi
-            done
-            echo "workspace, temp and tool cache are writable"
-          }
-          chk_exec_temp() {
-            local f="$RUNNER_TEMP/exec-probe.sh"
-            printf '#!/bin/sh\nexit 0\n' > "$f"; chmod +x "$f"
-            if "$f"; then rm -f "$f"; echo "RUNNER_TEMP allows execution"; else rm -f "$f"; echo "RUNNER_TEMP is mounted noexec: rustup and build scripts will fail"; return 1; fi
-          }
-          chk_cmds() {
-            local c miss=()
-            for c in "$@"; do command -v "$c" >/dev/null 2>&1 || miss+=("$c"); done
-            if [ "${#miss[@]}" -gt 0 ]; then echo "missing: ${miss[*]}"; return 1; fi
-            echo "all present"
-          }
-
-          chk_host() {
-            local code
-            code="$(curl -sS -o /dev/null --connect-timeout 5 --max-time 10 -w '%{http_code}' "https://$1/" 2>&1)" || { echo "unreachable: $1"; return 1; }
-            [ "$code" != 000 ] || { echo "unreachable: $1"; return 1; }
-            echo "$1 → HTTP $code"
-          }
-          chk_repo_api() {
-            curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${GITHUB_REPOSITORY}" -o /dev/null && echo "repository readable with the job token"
-          }
-          chk_rate() {
-            curl -fsS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/rate_limit | jq -r '.resources.core | "API quota \(.remaining)/\(.limit) left"'
-          }
-          chk_clock() {
-            local d skew
-            d="$(curl -sI --max-time 10 https://api.github.com | tr -d '\r' | awk -F': ' 'tolower($1)=="date"{print $2}')"
-            [ -n "$d" ] || { echo "no Date header received"; return 1; }
-            skew=$(( $(date +%s) - $(date -d "$d" +%s) ))
-            [ "${skew#-}" -le 120 ] || { echo "clock skew ${skew}s (TLS and cache signatures may fail)"; return 1; }
-            echo "clock skew ${skew}s"
-          }
-          chk_docker() {
-            command -v docker >/dev/null 2>&1 || { echo "Docker CLI not installed: the docker job will be skipped on this runner"; return 1; }
-            [ -S /var/run/docker.sock ] || { echo "Docker socket unavailable"; return 1; }
-            docker info >/dev/null 2>&1 || { echo "Docker daemon not accessible to this user"; return 1; }
-            docker --version
-          }
-          chk_ghenv() {
-            local v
-            for v in GITHUB_REPOSITORY GITHUB_SHA GITHUB_WORKSPACE RUNNER_NAME RUNNER_TEMP RUNNER_TOOL_CACHE; do
-              [ -n "${!v:-}" ] || { echo "$v is empty"; return 1; }
-            done
-            echo "GitHub Actions environment is usable"
-          }
-          ci_check error "platform" chk_platform
-          ci_check error "writable directories" chk_dirs
-          ci_check error "RUNNER_TEMP executable" chk_exec_temp
-          ci_check error "required commands" chk_cmds bash git curl tar gzip xz sha256sum awk sed grep find
-
-          ci_check warn "build tools (Rust/Tauri jobs)" chk_cmds cc pkg-config make
-          ci_check warn "optional tools" chk_cmds docker
-          ci_check error "GitHub Actions environment" chk_ghenv
-          ci_check error "network: github.com" chk_host github.com
-          ci_check error "network: api.github.com" chk_host api.github.com
-          ci_check error "repository access" chk_repo_api
-          ci_check warn "API rate limit" chk_rate
-          ci_check warn "clock" chk_clock
-          for h in codeload.github.com release-assets.githubusercontent.com index.crates.io static.crates.io static.rust-lang.org sh.rustup.rs registry.npmjs.org download.docker.com pypi.org; do
-            ci_check warn "network: $h" chk_host "$h"
-          done
-          ci_check warn "docker" chk_docker
-          ci_checks_finish "Runner environment — $RUNNER_NAME ($RUNNER_ARCH)"
-
+        run: bash scripts/ci/verify-runner.sh
       - &report
         name: Job report
         id: report
         if: always()
+        env:
+          GITRUN_JOB_STATUS: ${{ job.status }}
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           ci_report
@@ -920,6 +243,7 @@ jobs:
 
   # ───────────────────────────────────────────────────────────── detect ──
   detect:
+    if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
     name: Detect project components
     needs: variables-verification
     runs-on: *runner
@@ -1010,7 +334,7 @@ jobs:
   cargo-lock:
     name: Validate Cargo.lock
     needs: detect
-    if: needs.detect.result == 'success'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.detect.result == 'success') }}
     runs-on: *runner
     timeout-minutes: 60
     outputs:
@@ -1121,7 +445,7 @@ jobs:
   ci-selftest:
     name: CI helper self-test
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.workflows == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.workflows == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -1140,81 +464,13 @@ jobs:
           [[ -z "$empty" ]]
           echo "tracked-file cache fingerprint is stable and handles unmatched patterns"
       - name: Test log parsers and helpers
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          fail=0
-          expect() { # name needle haystack
-            if grep -qF -- "$2" <<<"$3"; then printf '✅ %s\n' "$1"; else printf '❌ %s — expected to find: %s\n' "$1" "$2"; head -n 6 <<<"$3"; fail=1; fi
-          }
-          ws="$GITHUB_WORKSPACE"
-
-          # Target cache keys include manifest/lock hashes before the profile/job suffix.
-          # GC should group superseded keys for the SAME job, never consume another job's
-          # separately useful target cache; image fingerprints must remain distinct too.
-          jq -n '
-            def fam:
-              sub("-run[0-9]+-attempt[0-9]+$"; "")
-              | if contains("-target-img") then
-                  sub("-man[^-]+-[^-]+-prof"; "-prof")
-                else sub("-[^-]+$"; "") end;
-            [
-              "gitrun-e1-Linux-X64-target-imgdeadbeef-rustc1.99.0-cfg12345678-man11111111-lock11111111-profaaaaaaaa-rust-lint",
-              "gitrun-e1-Linux-X64-target-imgdeadbeef-rustc1.99.0-cfg12345678-man22222222-lock22222222-profaaaaaaaa-rust-lint",
-              "gitrun-e1-Linux-X64-target-imgdeadbeef-rustc1.99.0-cfg12345678-man22222222-lock22222222-profaaaaaaaa-rust-test",
-              "gitrun-e1-Linux-X64-target-imgfeedbeef-rustc1.99.0-cfg12345678-man22222222-lock22222222-profaaaaaaaa-rust-lint"
-            ] as $keys
-            | if (($keys[0] | fam) == ($keys[1] | fam))
-                 and (($keys[0] | fam) != ($keys[2] | fam))
-                 and (($keys[0] | fam) != ($keys[3] | fam))
-              then true
-              else error("target cache GC family normalization is unsafe")
-              end
-          ' >/dev/null
-          echo "✅ target cache GC family normalization"
-
-          out="$(printf '%s\n' '{"reason":"compiler-message","message":{"rendered":"error: x\n","level":"error","message":"unneeded return, 50% sure","code":{"code":"clippy::needless_return"},"spans":[{"file_name":"'"$ws"'/crates/b/src/main.rs","is_primary":true,"line_start":7,"line_end":7,"column_start":5,"column_end":12}]}}' | ci_cargo_json)"
-          expect "cargo json → annotation with relative path" '::error file=crates/b/src/main.rs,line=7,col=5' "$out"
-          expect "cargo json → % escaped" '50%25 sure' "$out"
-          out="$(printf 'Diff in %s/src/lib.rs:12:\n' "$ws" | ci_awk_fmt)"
-          expect "rustfmt diff → annotation" '::error file=src/lib.rs,line=12,title=rustfmt' "$out"
-
-          out="$(printf "thread 'tests::bad' panicked at crates/a/src/lib.rs:10:9:\nboom\n" | ci_awk_tests)"
-          expect "test panic → annotation" '::error file=crates/a/src/lib.rs,line=10,col=9,title=test failed%3A tests%3A%3Abad::boom' "$out"
-
-          out="$(printf 'a.sh:3:5: warning: Quote this. [SC2086]\n' | ci_awk_gcc)"
-          expect "shellcheck gcc → annotation" '::warning file=a.sh,line=3,col=5,title=SC2086::Quote this.' "$out"
-
-          out="$(printf 'Dockerfile:3 DL3025 warning: Use JSON notation\n' | ci_awk_hadolint)"
-          expect "hadolint → annotation" '::warning file=Dockerfile,line=3,title=DL3025' "$out"
-
-          out="$(printf 'Crate:     time\nVersion:   0.1.45\nTitle:     Segfault\nID:        RUSTSEC-2020-0071\nSolution:  Upgrade to >=0.2.23\n\nerror: 1 vulnerability found!\n' | ci_awk_audit)"
-          expect "cargo audit vulnerability → error on Cargo.lock" '::error file=Cargo.lock,title=RUSTSEC-2020-0071' "$out"
-          out="$(printf 'Crate:     atty\nVersion:   0.2.14\nWarning:   unmaintained\nTitle:     atty is unmaintained\nID:        RUSTSEC-2024-0375\n' | ci_awk_audit)"
-          expect "cargo audit unmaintained → warning" '::warning file=Cargo.lock,title=RUSTSEC-2024-0375' "$out"
-
-          out="$(printf 'braces  <3.0.3\nSeverity: high\nBad thing in braces\n' | ci_awk_npm app/package.json)"
-          expect "npm audit high → error" '::error file=app/package.json,title=npm audit high' "$out"
-          out="$(printf '%s/web/a.js:4\nfoo(\n   ^\n\nSyntaxError: Unexpected token\n' "$ws" | ci_awk_node)"
-          expect "node --check → annotation" '::error file=web/a.js,line=4,title=node --check' "$out"
-          out="$(printf 'x.sh: line 4: syntax error near unexpected token `fi\x27\n' | ci_awk_bashn)"
-          expect "bash -n → annotation" '::error file=x.sh,line=4,title=bash -n' "$out"
-          out="$(printf 'a.txt:2: trailing whitespace.\n' | ci_awk_diffcheck warning)"
-          expect "git diff --check → annotation" '::warning file=a.txt,line=2,title=whitespace' "$out"
-
-          expect "property escaping" 'a%3Ab%2Cc' "$(ci_escp 'a:b,c')"
-          if ci_run "intentional failure (exit code is propagated)" bash -c 'exit 7' > /dev/null; then echo "❌ ci_run swallowed a failure"; fail=1; else echo "✅ ci_run propagates failures"; fi
-          if CI_LEVEL=warning ci_run "advisory failure" bash -c 'exit 7' > /dev/null; then echo "✅ advisory runs do not fail"; else echo "❌ advisory run failed"; fail=1; fi
-          printf 'x' > "$RUNNER_TEMP/selftest.bin"
-          if ci_tool selftest 1 "file://$RUNNER_TEMP/selftest.bin" 0000 bin > /dev/null 2>&1; then echo "❌ checksum mismatch was accepted"; fail=1; else echo "✅ checksum mismatch is rejected"; fi
-          # The self-test deliberately produced failures: they must not leak into this job's report.
-          : > "$CI_ANNOT"; : > "$CI_TAILS"; : > "$CI_STEPS"
-          [ "$fail" -eq 0 ] || { ci_err "CI helper self-test failed: a log parser or helper is broken"; exit 1; }
-          echo "all helper self-tests passed"
+        run: bash scripts/ci/selftest.sh
       - *report
       - *logs
 
   # ───────────────────────────────────────────────────────── repository ──
   repository:
+    if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
     name: Repository hygiene and syntax
     needs: cargo-lock
     runs-on: *runner
@@ -1386,7 +642,7 @@ jobs:
   workflows:
     name: Workflow lint and security audit
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.workflows == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.workflows == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -1421,53 +677,6 @@ jobs:
           actionlint -version | head -n 1
           ci_run "actionlint" run_actionlint
 
-      - name: Verify Server, Desktop and migration release contracts
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          release = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-          cli = Path("crates/gitrun-cli/src/main.rs").read_text(encoding="utf-8")
-          checks = {
-              "1.9.0-only migration allowlist": 'if [ "$number" = "1.9.0" ]' in release,
-              "legacy Debian package identity": "Package: gitrun" in release and 'artifact="GitRun-$VERSION-linux-x86_64-deb.deb"' in release,
-              "legacy updater target retained": 'artifact_for("linux-x86_64-deb")' in release,
-              "legacy updater source tag": "--branch v1.8.23" in release,
-              "legacy trust anchor is matched to the release signing key": "test \"$GITRUN_UPDATE_PUBLIC_KEY_HEX\" = \"$legacy_key_hex\"" in release and "test \"$GITRUN_UPDATE_SIGNING_KEY_ID\" = \"$legacy_key_id\"" in release,
-              "actual legacy reinstall command is executed": '--no-cat --reinstall-latest-root' in release,
-              "legacy updater uses latest manifest resolution": 'latest_manifest_download_url("Vider06/GitRun")' in release,
-              "migration keeps 1.8.23 maintainer scripts": "gitrun-v1.8.23-packaging/packaging/gitrun-postinst" in release,
-              "legacy updater SHA verification": "download_and_verify(&download_url, &artifact.sha256" in release,
-              "migration release is staged as prerelease": "--prerelease" in release and "-F prerelease=true" in release,
-              "failed migration verification is demoted back to prerelease": "Revert failed migration verification to prerelease" in release and "-f make_latest=false" in release,
-              "migration is promoted only after package verification": release.index("legacy-updater-package/usr/share/gitrun/version.txt") < release.index("make_latest=true"),
-              "new Server package identity": "name: gitrun-server" in release and "GitRun-Server-$VERSION-" in release,
-              "Server package replaces legacy Debian package": "conflicts: [gitrun]" in release and "replaces: [gitrun]" in release,
-              "new CLI prefers the Server DEB target": 'artifact_for("linux-x86_64-server-deb")' in cli,
-              "new CLI validates gitrun-server package identity": '"gitrun-server"' in cli and "trim() != expected_package" in cli,
-              "new CLI detects the selected package for reinstall": ".arg(expected_package)" in cli,
-              "new CLI has reinstall target unit coverage": "prefers_new_server_deb_when_both_targets_exist" in cli and "retains_legacy_target_fallback_for_old_manifests" in cli,
-              "new CLI retains legacy manifest fallback": 'artifact_for("linux-x86_64-deb")' in cli and '"gitrun"' in cli,
-              "Desktop package remains independent": "name: gitrun-desktop" in release,
-              "Desktop excludes Server executable": "grep -Eq" in release and "usr/bin/gitrun$" in release,
-              "release notes include per-architecture ABI tables": '["Architecture", "ABI", "Package format", "Artifact", "SHA-256"]' in release,
-              "release notes are generated from signed manifest": "manifest = json.loads(manifest_path.read_text" in release,
-              "release notes verify asset checksums": 'digest != item["sha256"]' in release,
-              "migration notes include fresh-install warning": "DO NOT USE FOR FRESH INSTALL!" in release,
-              "standard release migration notice": "No migration needed, updater/release system has not been changed in a way that requires a migration package." in release,
-              "manifest contains separate Server package target": 'package_target[:-4] + "-server-deb"' in release,
-              "release asset inventory rejects unexpected files": "diff -u <(printf" in release,
-              "manifest requires the exact target set": "actual_targets != required" in release and "len(items) != len(required)" in release,
-          }
-          for label, passed in checks.items():
-              print(("PASS" if passed else "FAIL") + ": " + label)
-          failed = [label for label, passed in checks.items() if not passed]
-          if failed:
-              raise SystemExit("Release contract checks failed: " + "; ".join(failed))
-          PY
-
       - name: zizmor (security audit)
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
@@ -1486,7 +695,7 @@ jobs:
   shell:
     name: Shell validation
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.shell == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.shell == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -1514,7 +723,7 @@ jobs:
   powershell:
     name: PowerShell validation
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.powershell == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.powershell == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -1576,7 +785,7 @@ jobs:
   frontend:
     name: JavaScript, TypeScript and CSS validation
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.node == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.node == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -1691,6 +900,7 @@ jobs:
             echo "npm cache ${mb} MB (limit ${NPM_CACHE_MAX_MB} MB)"; echo "save=true" >> "$GITHUB_OUTPUT"
           fi
       - &s_npm
+        id: save_npm
         name: Save npm cache
         if: success() && steps.npm_prune.outputs.save == 'true' && steps.c_npm.outputs.cache-matched-key != steps.c_npm.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
@@ -1698,6 +908,40 @@ jobs:
         with:
           path: .gitrun-ci/npm-cache
           key: ${{ steps.c_npm.outputs.cache-primary-key }}
+      - &npm_cache_save_report
+        name: Report npm cache save activity
+        if: always()
+        env:
+          CACHE_EVENT: ${{ github.event_name }}
+          NPM_OUTCOME: ${{ steps.save_npm.outcome || 'skipped' }}
+          NPM_MATCH: ${{ steps.c_npm.outputs.cache-matched-key }}
+          NPM_PRIMARY: ${{ steps.c_npm.outputs.cache-primary-key }}
+          NPM_PRUNE_SAVE: ${{ steps.npm_prune.outputs.save || 'unknown' }}
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          case "$NPM_OUTCOME" in
+            success) result="saved" ;;
+            failure) result="save failed (continue-on-error)" ;;
+            *)
+              if [ "$CACHE_EVENT" = pull_request ]; then
+                result="not saved (pull-request cache-write policy)"
+              elif [ -n "$NPM_MATCH" ] && [ "$NPM_MATCH" = "$NPM_PRIMARY" ]; then
+                result="not saved (exact cache already restored)"
+              elif [ "$NPM_PRUNE_SAVE" != true ]; then
+                result="not saved (npm cache exceeded size limit)"
+              else
+                result="skipped (job did not reach cache save)"
+              fi
+              ;;
+          esac
+          {
+            echo "### Cache save activity"
+            echo
+            echo "| Cache | Save result |"
+            echo "|---|---|"
+            printf '| npm | %s |\n' "$result"
+            echo
+          } | ci_sum
       - *report
       - *logs
 
@@ -1705,7 +949,7 @@ jobs:
   audit-node:
     name: npm dependency audit
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.node == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.node == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -1744,7 +988,7 @@ jobs:
   rust-lint:
     name: Rust lint (fmt, clippy, docs)
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -1917,6 +1161,7 @@ jobs:
             echo "save=true" >> "$GITHUB_OUTPUT"
           fi
       - &s_tc
+        id: save_tc
         name: Save toolchain cache
         if: success() && steps.c_tc.outputs.cache-matched-key != steps.c_tc.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
@@ -1927,6 +1172,7 @@ jobs:
             .gitrun-ci/cargo/bin
           key: ${{ steps.c_tc.outputs.cache-primary-key }}
       - &s_reg
+        id: save_reg
         name: Save cargo registry cache
         if: success() && steps.c_reg.outputs.cache-matched-key != steps.c_reg.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
@@ -1938,6 +1184,7 @@ jobs:
             .gitrun-ci/cargo/git/db
           key: ${{ steps.c_reg.outputs.cache-primary-key }}
       - &s_tgt
+        id: save_tgt
         name: Save target cache
         if: success() && steps.prune.outputs.save == 'true' && steps.c_tgt.outputs.cache-matched-key != steps.c_tgt.outputs.cache-primary-key && github.event_name != 'pull_request'
         continue-on-error: true
@@ -1945,6 +1192,58 @@ jobs:
         with:
           path: target
           key: ${{ steps.c_tgt.outputs.cache-primary-key }}
+      - &cache_save_report
+        name: Report cache save activity
+        if: always()
+        env:
+          CACHE_EVENT: ${{ github.event_name }}
+          TC_OUTCOME: ${{ steps.save_tc.outcome || 'skipped' }}
+          REG_OUTCOME: ${{ steps.save_reg.outcome || 'skipped' }}
+          TGT_OUTCOME: ${{ steps.save_tgt.outcome || 'skipped' }}
+          TC_MATCH: ${{ steps.c_tc.outputs.cache-matched-key }}
+          TC_PRIMARY: ${{ steps.c_tc.outputs.cache-primary-key }}
+          REG_MATCH: ${{ steps.c_reg.outputs.cache-matched-key }}
+          REG_PRIMARY: ${{ steps.c_reg.outputs.cache-primary-key }}
+          TGT_MATCH: ${{ steps.c_tgt.outputs.cache-matched-key }}
+          TGT_PRIMARY: ${{ steps.c_tgt.outputs.cache-primary-key }}
+          PRUNE_SAVE: ${{ steps.prune.outputs.save || 'unknown' }}
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          save_state() {
+            local outcome="$1" matched="$2" primary="$3" reason="$4"
+            case "$outcome" in
+              success) echo "saved" ;;
+              failure) echo "save failed (continue-on-error)" ;;
+              *)
+                if [ "$CACHE_EVENT" = pull_request ]; then
+                  echo "not saved (pull-request cache-write policy)"
+                elif [ -n "$matched" ] && [ "$matched" = "$primary" ]; then
+                  echo "not saved (exact cache already restored)"
+                elif [ "$reason" = over-budget ]; then
+                  echo "not saved (target cache exceeded size limit)"
+                elif [ "$reason" = prune-unavailable ]; then
+                  echo "not determined (target cache pruning did not complete)"
+                else
+                  echo "skipped (job did not reach cache save)"
+                fi
+                ;;
+            esac
+          }
+          {
+            echo "### Cache save activity"
+            echo
+            echo "| Cache | Save result |"
+            echo "|---|---|"
+            printf '| Toolchain | %s |\n' "$(save_state "$TC_OUTCOME" "$TC_MATCH" "$TC_PRIMARY" "")"
+            printf '| Cargo registry | %s |\n' "$(save_state "$REG_OUTCOME" "$REG_MATCH" "$REG_PRIMARY" "")"
+            case "$PRUNE_SAVE" in
+              false) prune_reason=over-budget ;;
+              true) prune_reason="" ;;
+              *) prune_reason=prune-unavailable ;;
+            esac
+            printf '| Target artifacts | %s |\n' "$(save_state "$TGT_OUTCOME" "$TGT_MATCH" "$TGT_PRIMARY" "$prune_reason")"
+            echo
+          } | ci_sum
       - *report
       - *logs
 
@@ -1952,7 +1251,7 @@ jobs:
   security-hardening:
     name: Security hardening regression gate
     needs: [cargo-lock, rust-lint]
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -1996,6 +1295,7 @@ jobs:
       - *s_tc
       - *s_reg
       - *s_tgt
+      - *cache_save_report
       - *report
       - *logs
 
@@ -2003,7 +1303,7 @@ jobs:
   gsr-watchdog:
     name: GSR watchdog lifecycle and failure detection
     needs: [cargo-lock, rust-lint]
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2032,6 +1332,7 @@ jobs:
       - *s_tc
       - *s_reg
       - *s_tgt
+      - *cache_save_report
       - *report
       - *logs
 
@@ -2039,7 +1340,7 @@ jobs:
   runtime-contracts:
     name: Runtime contracts and configuration integration
     needs: [cargo-lock, rust-lint]
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2129,6 +1430,7 @@ jobs:
       - *s_tc
       - *s_reg
       - *s_tgt
+      - *cache_save_report
       - *report
       - *logs
 
@@ -2136,7 +1438,7 @@ jobs:
   systemd-verify:
     name: systemd-analyze unit verification
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2202,7 +1504,7 @@ jobs:
   platform-target-check:
     name: Server + updater · ${{ matrix.target }}
     needs: [cargo-lock, rust-build]
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2220,9 +1522,8 @@ jobs:
           - x86_64-unknown-linux-musl
           - aarch64-unknown-linux-musl
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
+      - *checkout
+      - *boot
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:
@@ -2237,58 +1538,79 @@ jobs:
           key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
           restore-keys: |
             gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-
+      - name: Record target cache restore
+        env:
+          TARGET_CACHE_PRIMARY: ${{ steps.target-cache.outputs.cache-primary-key }}
+          TARGET_CACHE_MATCHED: ${{ steps.target-cache.outputs.cache-matched-key }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_cache_note "target-$TARGET" "$TARGET_CACHE_PRIMARY" "$TARGET_CACHE_MATCHED" .gitrun-cargo target
       - name: Verify cross-build runtime
         run: |
-          set -euo pipefail
-          command -v docker >/dev/null 2>&1
-          docker info >/dev/null
-          command -v file
-          command -v readelf
+          source "$RUNNER_TEMP/ci-lib.sh"
+          verify_cross_build_runtime() {
+            set -euo pipefail
+            command -v docker >/dev/null 2>&1
+            docker info >/dev/null
+            command -v file
+            command -v readelf
+          }
+          ci_run "Verify cross-build runtime" verify_cross_build_runtime
       - name: Install pinned cross compiler
         run: |
-          set -euo pipefail
-          cargo install cross --locked --version 0.2.5
-          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+          source "$RUNNER_TEMP/ci-lib.sh"
+          install_cross() {
+            set -euo pipefail
+            cargo install cross --locked --version 0.2.5
+            echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+          }
+          ci_run "Install cross 0.2.5" install_cross
       - name: Build the complete headless server and updater for target
         env:
           TARGET: ${{ matrix.target }}
           CARGO_TERM_COLOR: always
         run: |
-          set -euo pipefail
-          cross build --locked --release -p gitrun-cli --bin gitrun --target "$TARGET"
-          cross test --locked -p gitrun-updater --no-run --target "$TARGET"
-          cross check --locked -p gitrun-management --target "$TARGET"
-          binary="target/$TARGET/release/gitrun"
-          test -x "$binary"
-          file "$binary"
-          case "$TARGET" in
-            x86_64-unknown-linux-gnu)
-              test "$("$binary" --version --gitrun)" = "GitRun $(tr -d '[:space:]' < version.txt)"
-              ;;
-            aarch64-unknown-linux-gnu)
-              readelf -h "$binary" | grep -Fq 'AArch64'
-              readelf -l "$binary" | grep -Fq 'ld-linux-aarch64.so.1'
-              ;;
-            x86_64-unknown-linux-musl)
-              readelf -h "$binary" | grep -Fq 'Advanced Micro Devices X86-64'
-              # musl static PIE binaries may be reported as "static-pie linked"
-              # by file(1). The ABI-level invariant is that no PT_INTERP loader
-              # is requested; checking the ELF program headers is stable.
-              if readelf -lW "$binary" | grep -Fq ' INTERP '; then
-                echo "musl binary unexpectedly requests a dynamic ELF interpreter" >&2
-                exit 1
-              fi
-              ;;
-            aarch64-unknown-linux-musl)
-              readelf -h "$binary" | grep -Fq 'AArch64'
-              # A static musl executable must not declare a PT_INTERP loader.
-              if readelf -lW "$binary" | grep -Fq ' INTERP '; then
-                echo "musl binary unexpectedly requests a dynamic ELF interpreter" >&2
-                exit 1
-              fi
-              ;;
-          esac
+          source "$RUNNER_TEMP/ci-lib.sh"
+          build_target() {
+            set -euo pipefail
+            cross build --locked --release -p gitrun-cli --bin gitrun --target "$TARGET"
+            cross test --locked -p gitrun-updater --no-run --target "$TARGET"
+            cross check --locked -p gitrun-management --target "$TARGET"
+            binary="target/$TARGET/release/gitrun"
+            test -x "$binary"
+            file "$binary"
+            case "$TARGET" in
+              x86_64-unknown-linux-gnu)
+                test "$("$binary" --version --gitrun)" = "GitRun $(tr -d '[:space:]' < version.txt)"
+                ;;
+              aarch64-unknown-linux-gnu)
+                readelf -h "$binary" | grep -Fq 'AArch64'
+                readelf -l "$binary" | grep -Fq 'ld-linux-aarch64.so.1'
+                ;;
+              x86_64-unknown-linux-musl)
+                readelf -h "$binary" | grep -Fq 'Advanced Micro Devices X86-64'
+                # musl static PIE binaries may be reported as "static-pie linked"
+                # by file(1). The ABI-level invariant is that no PT_INTERP loader
+                # is requested; checking the ELF program headers is stable.
+                if readelf -lW "$binary" | grep -Fq ' INTERP '; then
+                  echo "musl binary unexpectedly requests a dynamic ELF interpreter" >&2
+                  exit 1
+                fi
+                ;;
+              aarch64-unknown-linux-musl)
+                readelf -h "$binary" | grep -Fq 'AArch64'
+                # A static musl executable must not declare a PT_INTERP loader.
+                if readelf -lW "$binary" | grep -Fq ' INTERP '; then
+                  echo "musl binary unexpectedly requests a dynamic ELF interpreter" >&2
+                  exit 1
+                fi
+                ;;
+            esac
+          }
+          ci_run "Build and validate server + updater ($TARGET)" build_target
       - name: Save target-specific Cargo cache
+        id: target-cache-save
         if: success() && steps.target-cache.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -2297,12 +1619,28 @@ jobs:
             .gitrun-cargo
             target
           key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
+      - name: Record target cache save result
+        if: always()
+        env:
+          CACHE_SAVE_OUTCOME: ${{ steps.target-cache-save.outcome || 'skipped' }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          {
+            echo "### Target cache save"
+            echo
+            printf -- '- Target: `%s`\n' "$TARGET"
+            printf -- '- Save action result: `%s`\n' "$CACHE_SAVE_OUTCOME"
+            echo
+          } | ci_sum
+      - *report
+      - *logs
 
   # ───────────────────────────────────────────── Linux platform contracts ──
   platform-compatibility:
     name: Linux platform and updater target contracts
     needs: [cargo-lock, rust-lint]
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
@@ -2355,6 +1693,97 @@ jobs:
       - *s_tc
       - *s_reg
       - *s_tgt
+      - *cache_save_report
+      - *report
+      - *logs
+
+  # ───────────────────────────────────────────── multi-distro contracts ──
+  multi-distro-contracts:
+    name: Multi-distro portability contracts
+    needs: [cargo-lock, rust-lint]
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Test multi-distro portability contracts
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          rc=0
+          ci_run "Test platform detection contracts" cargo test --locked -p gitrun-platform || rc=1
+          ci_run "Test native recovery service-manager routing" cargo test --locked -p gitrun-recovery main_library_restore_routes_by_the_active_service_manager || rc=1
+          ci_run "Audit repository-wide multi-distro boundaries" python3 scripts/check-multidistro-contracts.py || rc=1
+          exit "$rc"
+      - *report
+      - *logs
+
+  # ───────────────────────────────────────────── release contracts ──
+  release-contracts:
+    name: Server, Desktop and migration release contracts
+    needs: cargo-lock
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.workflows == 'true') }}
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - name: Verify Server, Desktop and migration release contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          release = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+          cli = Path("crates/gitrun-cli/src/main.rs").read_text(encoding="utf-8")
+          checks = {
+              "1.9.0-only migration allowlist": 'if [ "$number" = "1.9.0" ]' in release,
+              "legacy Debian package identity": "Package: gitrun" in release and 'artifact="GitRun-$VERSION-linux-x86_64-deb.deb"' in release,
+              "legacy updater target retained": 'artifact_for("linux-x86_64-deb")' in release,
+              "legacy updater source tag": "--branch v1.8.23" in release,
+              "legacy trust anchor is matched to the release signing key": "test \"$GITRUN_UPDATE_PUBLIC_KEY_HEX\" = \"$legacy_key_hex\"" in release and "test \"$GITRUN_UPDATE_SIGNING_KEY_ID\" = \"$legacy_key_id\"" in release,
+              "actual legacy reinstall command is executed": '--no-cat --reinstall-latest-root' in release,
+              "legacy updater uses latest manifest resolution": 'latest_manifest_download_url("Vider06/GitRun")' in release,
+              "migration keeps 1.8.23 maintainer scripts": "gitrun-v1.8.23-packaging/packaging/gitrun-postinst" in release,
+              "legacy updater SHA verification": "download_and_verify(&download_url, &artifact.sha256" in release,
+              "migration release is staged as prerelease": "--prerelease" in release and "-F prerelease=true" in release,
+              "failed migration verification is demoted back to prerelease": "Revert failed migration verification to prerelease" in release and "-f make_latest=false" in release,
+              "migration is promoted only after package verification": release.index("legacy-updater-package/usr/share/gitrun/version.txt") < release.index("make_latest=true"),
+              "new Server package identity": "name: gitrun-server" in release and "GitRun-Server-$VERSION-" in release,
+              "Server package replaces legacy Debian package": "conflicts: [gitrun]" in release and "replaces: [gitrun]" in release,
+              "new CLI prefers the Server DEB target": 'artifact_for("linux-x86_64-server-deb")' in cli,
+              "new CLI validates gitrun-server package identity": '"gitrun-server"' in cli and "trim() != expected_package" in cli,
+              "new CLI detects the selected package for reinstall": ".arg(expected_package)" in cli,
+              "new CLI has reinstall target unit coverage": "prefers_new_server_deb_when_both_targets_exist" in cli and "retains_legacy_target_fallback_for_old_manifests" in cli,
+              "new CLI retains legacy manifest fallback": 'artifact_for("linux-x86_64-deb")' in cli and '"gitrun"' in cli,
+              "Desktop package remains independent": "name: gitrun-desktop" in release,
+              "Desktop excludes Server executable": "grep -Eq" in release and "usr/bin/gitrun$" in release,
+              "release notes include per-architecture ABI tables": '["Architecture", "ABI", "Package format", "Artifact", "SHA-256"]' in release,
+              "release notes are generated from signed manifest": "manifest = json.loads(manifest_path.read_text" in release,
+              "release notes verify asset checksums": 'digest != item["sha256"]' in release,
+              "migration notes include fresh-install warning": "DO NOT USE FOR FRESH INSTALL!" in release,
+              "standard release migration notice": "No migration needed, updater/release system has not been changed in a way that requires a migration package." in release,
+              "manifest contains separate Server package target": 'package_target[:-4] + "-server-deb"' in release,
+              "release asset inventory rejects unexpected files": "diff -u <(printf" in release,
+              "manifest requires the exact target set": "actual_targets != required" in release and "len(items) != len(required)" in release,
+          }
+          for label, passed in checks.items():
+              print(("PASS" if passed else "FAIL") + ": " + label)
+          failed = [label for label, passed in checks.items() if not passed]
+          if failed:
+              raise SystemExit("Release contract checks failed: " + "; ".join(failed))
+          PY
       - *report
       - *logs
 
@@ -2362,7 +1791,7 @@ jobs:
   rust-test:
     name: Rust tests
     needs: [cargo-lock, rust-lint]
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -2406,6 +1835,7 @@ jobs:
       - *s_tc
       - *s_reg
       - *s_tgt
+      - *cache_save_report
       - *report
       - *logs
 
@@ -2413,7 +1843,7 @@ jobs:
   rust-build:
     name: Rust release build
     needs: [cargo-lock, rust-test]
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -2465,6 +1895,7 @@ jobs:
       - *s_tc
       - *s_reg
       - *s_tgt
+      - *cache_save_report
       - *report
       - *logs
 
@@ -2472,7 +1903,7 @@ jobs:
   audit-rust:
     name: Cargo audit and deny
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.rust == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -2509,6 +1940,39 @@ jobs:
           exit "$rc"
       - *s_tc
       - *s_reg
+      - name: Report Rust audit cache saves
+        if: always()
+        env:
+          CACHE_EVENT: ${{ github.event_name }}
+          TC_OUTCOME: ${{ steps.save_tc.outcome || 'skipped' }}
+          REG_OUTCOME: ${{ steps.save_reg.outcome || 'skipped' }}
+          TC_MATCH: ${{ steps.c_tc.outputs.cache-matched-key }}
+          TC_PRIMARY: ${{ steps.c_tc.outputs.cache-primary-key }}
+          REG_MATCH: ${{ steps.c_reg.outputs.cache-matched-key }}
+          REG_PRIMARY: ${{ steps.c_reg.outputs.cache-primary-key }}
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          save_state() {
+            local outcome="$1" matched="$2" primary="$3"
+            case "$outcome" in
+              success) echo "saved" ;;
+              failure) echo "save failed (continue-on-error)" ;;
+              *)
+                if [ "$CACHE_EVENT" = pull_request ]; then echo "not saved (pull-request cache-write policy)"
+                elif [ -n "$matched" ] && [ "$matched" = "$primary" ]; then echo "not saved (exact cache already restored)"
+                else echo "skipped (job did not reach cache save)"; fi
+                ;;
+            esac
+          }
+          {
+            echo "### Cache save activity"
+            echo
+            echo "| Cache | Save result |"
+            echo "|---|---|"
+            printf '| Toolchain | %s |\n' "$(save_state "$TC_OUTCOME" "$TC_MATCH" "$TC_PRIMARY")"
+            printf '| Cargo registry | %s |\n' "$(save_state "$REG_OUTCOME" "$REG_MATCH" "$REG_PRIMARY")"
+            echo
+          } | ci_sum
       - *report
       - *logs
 
@@ -2516,7 +1980,7 @@ jobs:
   tauri:
     name: Tauri GUI build and package
     needs: [cargo-lock, rust-lint, frontend]
-    if: needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success') }}
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -2591,7 +2055,9 @@ jobs:
       - *s_tc
       - *s_reg
       - *s_tgt
+      - *cache_save_report
       - *s_npm
+      - *npm_cache_save_report
       - *report
       - *logs
 
@@ -2599,7 +2065,7 @@ jobs:
   tauri-recovery:
     name: Tauri GitRun Recovery GUI build and test
     needs: [cargo-lock, rust-lint, frontend]
-    if: needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success') }}
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -2644,7 +2110,9 @@ jobs:
       - *s_tc
       - *s_reg
       - *s_tgt
+      - *cache_save_report
       - *s_npm
+      - *npm_cache_save_report
       - *report
       - *logs
 
@@ -2652,7 +2120,7 @@ jobs:
   docker:
     name: Docker and Compose validation
     needs: cargo-lock
-    if: needs.cargo-lock.outputs.docker == 'true'
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.docker == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     env:
@@ -2914,7 +2382,7 @@ jobs:
   # ───────────────────────────────────────────────────────────── summary ──
   summary:
     name: Verification summary
-    if: ${{ always() }}
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (always()) }}
     needs:
       - variables-verification
       - environment
@@ -2935,8 +2403,10 @@ jobs:
       - gsr-watchdog
       - runtime-contracts
       - systemd-verify
-      - platform-compatibility
       - platform-target-check
+      - platform-compatibility
+      - multi-distro-contracts
+      - release-contracts
       - tauri
       - tauri-recovery
       - docker
@@ -2946,6 +2416,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
+      - *checkout
       - *boot
       - name: Verdict, pipeline map and PR report
         env:
@@ -2959,6 +2430,14 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
+          summary_started="$(date +%s)"
+          summary_record_step() {
+            rc=$?
+            local result=ok
+            [ "$rc" -eq 0 ] || result=fail
+            printf 'Build workflow verdict and pipeline report\t%s\t%s\n' "$result" "$(( $(date +%s) - summary_started ))" >> "$CI_STEPS"
+          }
+          trap summary_record_step EXIT
           J="$RUNNER_TEMP/needs.json"; printf '%s' "$NEEDS" > "$J"
           res() { jq -r --arg j "$1" '.[$j].result // "skipped"' "$J"; }
           out() { jq -r --arg j "$1" --arg k "$2" '.[$j].outputs[$k] // ""' "$J"; }
@@ -2985,8 +2464,10 @@ jobs:
           gsr-watchdog|GSR watchdog lifecycle and failure detection|rust|rust-lint
           runtime-contracts|Runtime contracts and configuration integration|rust|rust-lint
           systemd-verify|systemd-analyze unit verification|rust|
-          platform-compatibility|Linux platform and updater target contracts|rust|rust-lint
           platform-target-check|Server and updater Linux target matrix|rust|rust-build
+          platform-compatibility|Linux platform and updater target contracts|rust|rust-lint
+          multi-distro-contracts|Multi-distro portability contracts|rust|rust-lint
+          release-contracts|Server, Desktop and migration release contracts|workflows|
           tauri|Tauri GUI|tauri|rust-lint frontend
           tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend
           docker|Docker|docker|
@@ -3067,6 +2548,9 @@ jobs:
             for id in "${order[@]}"; do
               note=""
               case "${STATE[$id]}" in blocked) note="blocked by ${WHY[$id]}" ;; na) note="not applicable" ;; fail) note="${WHY[$id]:-}" ;; esac
+              if [ "$id" = platform-target-check ]; then
+                note="${note:+$note; }each target publishes an independent job report"
+              fi
               echo "| $(icon "${STATE[$id]}") | \`$id\` — ${LABEL[$id]} | $(dur "${SECS[$id]}") | ${DEPS[$id]} | ${CACHE[$id]:-–} | $note |"
             done
             echo
@@ -3121,25 +2605,36 @@ jobs:
             exit 1
           fi
           echo "Verdict: $verdict"
+      - *report
 
   # ──────────────────────────────────────────────────────────── cache-gc ──
   cache-gc:
     name: Cache garbage collection
     needs: summary
-    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (!cancelled() && github.event_name != 'pull_request') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:
       actions: write
       contents: read
     steps:
+      - *checkout
       - *boot
       - name: Remove superseded caches (never the newest ones)
+        id: gc
         env:
           GH_TOKEN: ${{ github.token }}
           DRY_RUN: ${{ env.CI_GC_DRY_RUN }}
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
+          gc_started="$(date +%s)"
+          gc_record_step() {
+            rc=$?
+            local result=ok
+            [ "$rc" -eq 0 ] || result=fail
+            printf 'Cache inventory and garbage collection\t%s\t%s\n' "$result" "$(( $(date +%s) - gc_started ))" >> "$CI_STEPS"
+          }
+          trap gc_record_step EXIT
           api() { curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "$@"; }
           base="https://api.github.com/repos/$GITHUB_REPOSITORY/actions"
           pages="$RUNNER_TEMP/cache-pages"; rm -rf "$pages"; mkdir -p "$pages"
@@ -3222,3 +2717,4 @@ jobs:
             used_after="$(api "$base/cache/usage" | jq -r '.active_caches_size_in_bytes // 0')"
             echo "cache usage: $((used_before / 1048576)) MB → $((used_after / 1048576)) MB"
           fi
+      - *report

@@ -23,6 +23,10 @@ Before adding files, check that they contain no credentials, personal addresses,
 
 Keep documentation close to the relevant subsystem. A distinct component or operational directory should have a concise local README when that improves discoverability. Update cross-links when files move, and avoid creating a second document that duplicates an existing maintained reference.
 
+## Accessibility
+
+For user-facing Dashboard, TUI and CLI changes, review [ACCESSIBILITY.md](ACCESSIBILITY.md). Consider keyboard-only operation, focus order, accessible names, form labels, dialog behavior, status announcements, reduced motion and color-independent status cues. Record the operating systems, webviews, terminals and assistive technologies that were actually used; distinguish tested behavior from assumptions and document unresolved barriers.
+
 ## Predictive scheduling
 
 Kitty forecasting, queueing, Future Mapping and Think changes need bounded deterministic tests for missing or stale data, configured limits and resource-pressure fallback. Offline queue replay must not use future observations or job durations to influence earlier decisions. Preserve shadow-mode behavior and the exact-revision GSR authorization boundary, and update the scheduler guide and affected component documentation when behavior changes.

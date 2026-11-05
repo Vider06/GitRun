@@ -382,7 +382,7 @@ jobs:
             runner: ubuntu-24.04-arm
             docker_platform: linux/arm64
             musl_distro: void
-            container_image: ghcr.io/void-linux/void-musl-full:20260801R1
+            container_image: ghcr.io/void-linux/void-musl-full:20260801r1
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}

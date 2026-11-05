@@ -47,6 +47,7 @@ jobs:
         id: version
         env:
           RELEASE_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+          MIGRATION_RELEASE_ENABLED: ${{ vars.GITRUN_ENABLE_MIGRATION_RELEASE }}
         shell: bash
         run: |
           set -euo pipefail
@@ -62,7 +63,11 @@ jobs:
           python3 scripts/check-version-consistency.py
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "version_number=$number" >> "$GITHUB_OUTPUT"
-          if [ "$number" = "1.9.0" ]; then migration_release=true; else migration_release=false; fi
+          if [ "$number" = "1.9.0" ] && [ "$MIGRATION_RELEASE_ENABLED" = "true" ]; then
+            migration_release=true
+          else
+            migration_release=false
+          fi
           echo "migration_release=$migration_release" >> "$GITHUB_OUTPUT"
       - name: Assemble shared release inputs
         shell: bash
@@ -608,7 +613,7 @@ jobs:
           retention-days: 3
 
   migration-package:
-    name: Build 1.8.23-compatible migration DEB
+    name: Build optional compatibility package
     needs: [prepare, collect]
     if: needs.prepare.outputs.migration_release == 'true'
     runs-on: ubuntu-24.04

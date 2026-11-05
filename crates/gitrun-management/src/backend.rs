@@ -2627,23 +2627,44 @@ fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>
             let logread = ["/sbin/logread", "/usr/sbin/logread", "/usr/bin/logread"]
                 .iter()
                 .map(PathBuf::from)
-                .find_map(|path| trusted_privileged_binary(&path))
-                .ok_or("OpenRC was detected, but no trusted logread executable is available")?;
-            let output = std::process::Command::new(logread)
-                .args(["-l", &(limit.saturating_mul(8)).to_string()])
-                .output()
-                .map_err(|error| format!("unable to read the OpenRC system log: {error}"))?;
-            if !output.status.success() {
-                return Err(format!("logread exited with status {}", output.status));
+                .find_map(|path| trusted_privileged_binary(&path));
+            let mut lines = if let Some(logread) = logread {
+                std::process::Command::new(logread)
+                    .args(["-l", &(limit.saturating_mul(8)).to_string()])
+                    .output()
+                    .ok()
+                    .filter(|output| output.status.success())
+                    .map(|output| {
+                        String::from_utf8_lossy(&output.stdout)
+                            .lines()
+                            .filter(|line| {
+                                let line = line.to_ascii_lowercase();
+                                line.contains("gitrun") || line.contains("gitrun-gsr")
+                            })
+                            .map(str::to_owned)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            if lines.is_empty() {
+                let mut paths = Vec::new();
+                if units.iter().any(|unit| *unit == "gitrun.service") {
+                    paths.push(PathBuf::from("/var/log/gitrun/scheduler.log"));
+                }
+                if units.iter().any(|unit| *unit == "gitrun-gsr.service") {
+                    paths.push(PathBuf::from("/var/log/gitrun/gsr.log"));
+                }
+                for path in paths {
+                    if path.is_file() {
+                        let contents = std::fs::read_to_string(&path).map_err(|error| {
+                            format!("unable to read OpenRC log {}: {error}", path.display())
+                        })?;
+                        lines.extend(contents.lines().map(str::to_owned));
+                    }
+                }
             }
-            let mut lines = String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .filter(|line| {
-                    let line = line.to_ascii_lowercase();
-                    line.contains("gitrun") || line.contains("gitrun-gsr")
-                })
-                .map(str::to_owned)
-                .collect::<Vec<_>>();
             if lines.len() > limit {
                 lines.drain(..lines.len() - limit);
             }

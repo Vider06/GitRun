@@ -740,6 +740,17 @@ mod tests {
     }
 
     #[test]
+    fn privilege_escalation_candidates_are_fixed_absolute_system_paths() {
+        assert_eq!(
+            privilege_escalation_candidates(),
+            ["/usr/bin/sudo", "/usr/bin/doas", "/usr/bin/pkexec"]
+        );
+        assert!(privilege_escalation_candidates()
+            .iter()
+            .all(|path| Path::new(path).is_absolute()));
+    }
+
+    #[test]
     fn service_actions_map_to_native_manager_commands_without_shells() {
         let systemd = service_command(
             ServiceManager::Systemd,

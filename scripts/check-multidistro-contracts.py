@@ -191,6 +191,9 @@ def check_portable_privilege_helpers(errors: list[str]) -> None:
             errors.append(f"{relative} contains Bash-only syntax")
         if "trusted_helper" not in source or "/usr/bin/doas" not in source:
             errors.append(f"{relative} must validate and support doas as a privilege helper")
+        syntax = subprocess.run(["sh", "-n", str(ROOT / relative)], check=False, capture_output=True, text=True)
+        if syntax.returncode:
+            errors.append(f"{relative} failed POSIX shell syntax validation: {syntax.stderr.strip()}")
 
 
 def check_dashboard_service_manager_contract(errors: list[str]) -> None:

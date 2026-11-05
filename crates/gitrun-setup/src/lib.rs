@@ -1030,9 +1030,6 @@ pub fn bootstrap_linux_with_auth_and_profile(
         secure_system_settings_file(&settings_path, Some(uid))?;
         chown_path(&vault_dir, uid)?;
         add_user_to_docker_group(uid)?;
-        if systemd_control_manager {
-            add_user_to_control_group(uid)?;
-        }
     }
 
     setup_progress(5, "Building gitrun-runner:latest");

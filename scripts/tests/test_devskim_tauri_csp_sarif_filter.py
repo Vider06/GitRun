@@ -3,7 +3,9 @@ from typing import Any
 
 from scripts.filter_devskim_tauri_csp_sarif import (
     EXPECTED_RULE_IDS,
-    RELEASE_LOOPBACK_LINES,
+    RELEASE_LOOPBACK_ANCHORS,
+    RELEASE_SUPPRESSION_MARKER,
+    release_migration_loopback_lines,
     RELEASE_TARGET,
     TARGET,
     filter_sarif,
@@ -32,30 +34,54 @@ def finding(
 
 
 class DevSkimTauriCspFilterTests(unittest.TestCase):
-    def test_filters_only_guarded_release_migration_loopback_lines(self) -> None:
-        self.assertEqual(RELEASE_LOOPBACK_LINES, {1656, 1665, 1685, 1726, 1730, 1732})
-        for line in RELEASE_LOOPBACK_LINES:
-            with self.subTest(line=line):
-                self.assertTrue(
-                    is_release_migration_loopback_fixture(
-                        finding("DS137138", path=RELEASE_TARGET, line=line)
-                    )
-                )
+    def test_resolves_release_suppressions_after_arbitrary_line_shifts(self) -> None:
+        anchors = RELEASE_LOOPBACK_ANCHORS
+        fixture = [
+            "ordinary workflow line",
+            *[f"inserted line {index}" for index in range(40)],
+            f"{anchors[0]} /* {RELEASE_SUPPRESSION_MARKER} */",
+            f"{anchors[1]} /* {RELEASE_SUPPRESSION_MARKER} */",
+            f"{anchors[1]} /* {RELEASE_SUPPRESSION_MARKER} */",
+            f"{anchors[2]} # {RELEASE_SUPPRESSION_MARKER}",
+            f"{anchors[3]} # {RELEASE_SUPPRESSION_MARKER}",
+            f"{anchors[4]} # {RELEASE_SUPPRESSION_MARKER}",
+        ]
+        allowed = release_migration_loopback_lines(fixture)
+        self.assertEqual(allowed, set(range(42, 48)))
+        self.assertTrue(
+            is_release_migration_loopback_fixture(
+                finding("DS137138", path=RELEASE_TARGET, line=42),
+                allowed,
+            )
+        )
+
+    def test_rejects_missing_or_misplaced_release_suppression_markers(self) -> None:
+        fixture = [
+            f'{anchor} # {RELEASE_SUPPRESSION_MARKER}'
+            for anchor in RELEASE_LOOPBACK_ANCHORS
+        ]
+        fixture.insert(2, f'{RELEASE_LOOPBACK_ANCHORS[1]} # {RELEASE_SUPPRESSION_MARKER}')
+        with self.assertRaises(ValueError):
+            release_migration_loopback_lines(fixture[:-1])
+        fixture[0] = f'ordinary HTTP operation # {RELEASE_SUPPRESSION_MARKER}'
+        with self.assertRaises(ValueError):
+            release_migration_loopback_lines(fixture)
 
     def test_preserves_other_release_findings(self) -> None:
+        allowed = {1661}
         self.assertFalse(
             is_release_migration_loopback_fixture(
-                finding("DS137138", path=RELEASE_TARGET, line=1657)
+                finding("DS137138", path=RELEASE_TARGET, line=1662), allowed
             )
         )
         self.assertFalse(
             is_release_migration_loopback_fixture(
-                finding("DS999999", path=RELEASE_TARGET, line=1656)
+                finding("DS999999", path=RELEASE_TARGET, line=1661), allowed
             )
         )
         self.assertFalse(
             is_release_migration_loopback_fixture(
-                finding("DS137138", path="src/network.rs", line=1647)
+                finding("DS137138", path="src/network.rs", line=1647), allowed
             )
         )
 

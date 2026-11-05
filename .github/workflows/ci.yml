@@ -1750,7 +1750,7 @@ jobs:
 
           release = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
           cli = Path("crates/gitrun-cli/src/main.rs").read_text(encoding="utf-8")
-          release_job = release.split("\\n  release:\\n", 1)[1]
+          release_job = release.rsplit("  release:", 1)[1]
           release_steps = [
               line.split("name: ", 1)[1]
               for line in release_job.splitlines()

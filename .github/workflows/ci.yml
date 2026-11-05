@@ -2119,6 +2119,18 @@ jobs:
           set -euo pipefail
           mkdir -p "$NPM_CONFIG_CACHE"
           npm --prefix crates/gitrun-dashboard-tauri ci
+      - name: Normalize ARM64 Tauri PNG icons
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          icons=(crates/gitrun-dashboard-tauri/src-tauri/icons/*.png)
+          (("${#icons[@]}" > 0))
+          for icon in "${icons[@]}"; do
+            tmp="$(mktemp --suffix=.png)"
+            convert "$icon" -alpha on -define png:color-type=6 "PNG32:$tmp"
+            mv "$tmp" "$icon"
+          done
       - name: Build native ARM64 Dashboard
         run: |
           set -euo pipefail

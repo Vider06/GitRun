@@ -670,12 +670,14 @@ fn cleanup_temp_artifacts() -> Result<(), SetupError> {
 }
 
 fn reload_systemd() -> Result<(), SetupError> {
-    if gitrun_platform::detect_service_manager() != Some(gitrun_platform::ServiceManager::Systemd)
-        || !command_exists("systemctl")
-    {
+    if gitrun_platform::detect_service_manager() != Some(gitrun_platform::ServiceManager::Systemd) {
         return Ok(());
     }
-    run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))
+    let systemctl = gitrun_platform::trusted_service_manager_binary(
+        gitrun_platform::ServiceManager::Systemd,
+    )
+    .ok_or_else(|| SetupError::Command("trusted systemctl executable was not found".into()))?;
+    run_command(Command::new(systemctl).args(["daemon-reload"]))
 }
 
 fn verify_uninstall_complete() -> Result<(), SetupError> {
@@ -2371,16 +2373,20 @@ pub fn ensure_control_manager_service_with_binary(
         &control_service,
         0o644,
     )?;
-    run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))?;
+    let systemctl = gitrun_platform::trusted_service_manager_binary(
+        gitrun_platform::ServiceManager::Systemd,
+    )
+    .ok_or_else(|| SetupError::Command("trusted systemctl executable was not found".into()))?;
+    run_command(Command::new(&systemctl).args(["daemon-reload"]))?;
 
     for service in [
         "gitrun-control.service",
         "gitrun.service",
         "gitrun-gsr.service",
     ] {
-        run_command(Command::new("/usr/bin/systemctl").args(["enable", service]))?;
-        run_command(Command::new("/usr/bin/systemctl").args(["restart", service]))?;
-        run_command(Command::new("/usr/bin/systemctl").args(["is-active", "--quiet", service]))?;
+        run_command(Command::new(&systemctl).args(["enable", service]))?;
+        run_command(Command::new(&systemctl).args(["restart", service]))?;
+        run_command(Command::new(&systemctl).args(["is-active", "--quiet", service]))?;
     }
     Ok(())
 }

@@ -35,15 +35,16 @@ def finding(
 
 class DevSkimTauriCspFilterTests(unittest.TestCase):
     def test_resolves_release_suppressions_after_arbitrary_line_shifts(self) -> None:
+        anchors = RELEASE_LOOPBACK_ANCHORS
         fixture = [
             "ordinary workflow line",
             *[f"inserted line {index}" for index in range(40)],
-            f'url.host_str() == Some("127.0.0.1") /* {RELEASE_SUPPRESSION_MARKER} */',
-            f'base_url.starts_with("http://127.0.0.1:") /* {RELEASE_SUPPRESSION_MARKER} */',
-            f'base_url.starts_with("http://127.0.0.1:") /* {RELEASE_SUPPRESSION_MARKER} */',
-            f'sock.bind(("127.0.0.1", 0)) # {RELEASE_SUPPRESSION_MARKER}',
-            f'python3 -m http.server "$port" --bind 127.0.0.1 # {RELEASE_SUPPRESSION_MARKER}',
-            f'base="http://127.0.0.1:$port" # {RELEASE_SUPPRESSION_MARKER}',
+            f"{anchors[0]} /* {RELEASE_SUPPRESSION_MARKER} */",
+            f"{anchors[1]} /* {RELEASE_SUPPRESSION_MARKER} */",
+            f"{anchors[1]} /* {RELEASE_SUPPRESSION_MARKER} */",
+            f"{anchors[2]} # {RELEASE_SUPPRESSION_MARKER}",
+            f"{anchors[3]} # {RELEASE_SUPPRESSION_MARKER}",
+            f"{anchors[4]} # {RELEASE_SUPPRESSION_MARKER}",
         ]
         allowed = release_migration_loopback_lines(fixture)
         self.assertEqual(allowed, set(range(42, 48)))

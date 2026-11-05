@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Precisely filter the documented Tauri local-IPC CSP false positives.
+"""Filter only two narrowly guarded classes of documented DevSkim false positives.
 
 Tauri's official v2 CSP example requires an HTTP loopback endpoint in
-`connect-src` alongside the `ipc:` scheme. DevSkim's generic transport and
-loopback rules misclassify that internal IPC origin. This exception is bound
-to one file, one line and two rule IDs; all other results are preserved.
+`connect-src` alongside the `ipc:` scheme. The release workflow also contains
+an isolated, disposable 1.8.23 migration-test HTTP fixture bound to loopback.
+Each exception is constrained to exact source locations and rule IDs; all
+other findings remain in SARIF. Both source guards fail closed on drift.
 
-If the CSP line changes, this script fails closed until the exception is
-re-reviewed. Reference: https://v2.tauri.app/security/csp/
+Reference: https://v2.tauri.app/security/csp/
 """
 
 from __future__ import annotations

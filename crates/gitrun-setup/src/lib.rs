@@ -1433,10 +1433,7 @@ fn start_host_service(service: &str) -> Result<(), SetupError> {
         gitrun_platform::ServiceManager::Runit => {
             ensure_runit_service_link(service)?;
             let link = Path::new("/var/service").join(service);
-            run_command(Command::new("/usr/bin/sv").args([
-                "up",
-                link.to_string_lossy().as_ref(),
-            ]))
+            run_command(Command::new("/usr/bin/sv").args(["up", link.to_string_lossy().as_ref()]))
         }
     }
 }

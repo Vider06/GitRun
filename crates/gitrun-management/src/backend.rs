@@ -2574,34 +2574,105 @@ fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>
             .map_err(|error| format!("decode service logs from Control Manager: {error}"));
     }
     if !cfg!(target_os = "linux") {
-        return Err("System journal logs are currently available only on Linux.".into());
+        return Err("GitRun service logs are currently available only on Linux.".into());
     }
     let units = journal_units(&source)?;
     let limit = limit.unwrap_or(200).clamp(1, 500);
-    let mut command = std::process::Command::new("/usr/bin/journalctl");
-    command
-        .arg("--no-pager")
-        .arg("--output=short-iso-precise")
-        .arg("--lines")
-        .arg(limit.to_string());
-    for unit in units {
-        command.arg("--unit").arg(unit);
+    let manager = gitrun_platform::detect_service_manager()
+        .ok_or("no supported active service manager was detected; service logs are unavailable")?;
+
+    match manager {
+        gitrun_platform::ServiceManager::Systemd => {
+            let journalctl = [
+                PathBuf::from("/usr/bin/journalctl"),
+                PathBuf::from("/bin/journalctl"),
+            ]
+            .into_iter()
+            .find_map(|path| trusted_privileged_binary(&path))
+            .ok_or("trusted journalctl executable was not found")?;
+            let mut command = std::process::Command::new(journalctl);
+            command
+                .arg("--no-pager")
+                .arg("--output=short-iso-precise")
+                .arg("--lines")
+                .arg(limit.to_string());
+            for unit in units {
+                command.arg("--unit").arg(unit);
+            }
+            let output = command.output().map_err(|error| {
+                format!("Unable to execute journalctl; GitRun service logs are unavailable: {error}")
+            })?;
+            if !output.status.success() {
+                let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                return Err(if detail.is_empty() {
+                    format!("journalctl exited with status {}", output.status)
+                } else {
+                    format!("Unable to read GitRun service journal: {detail}")
+                });
+            }
+            Ok(String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(str::to_owned)
+                .collect())
+        }
+        gitrun_platform::ServiceManager::OpenRc => {
+            let logread = ["/sbin/logread", "/usr/sbin/logread", "/usr/bin/logread"]
+                .iter()
+                .map(PathBuf::from)
+                .find_map(|path| trusted_privileged_binary(&path))
+                .ok_or("OpenRC was detected, but no trusted logread executable is available")?;
+            let output = std::process::Command::new(logread)
+                .args(["-l", &(limit.saturating_mul(8)).to_string()])
+                .output()
+                .map_err(|error| format!("unable to read the OpenRC system log: {error}"))?;
+            if !output.status.success() {
+                return Err(format!("logread exited with status {}", output.status));
+            }
+            let mut lines = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter(|line| {
+                    let line = line.to_ascii_lowercase();
+                    line.contains("gitrun") || line.contains("gitrun-gsr")
+                })
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            if lines.len() > limit {
+                lines.drain(..lines.len() - limit);
+            }
+            Ok(lines)
+        }
+        gitrun_platform::ServiceManager::Runit => {
+            let mut paths = Vec::new();
+            if units.iter().any(|unit| *unit == "gitrun.service") {
+                paths.extend([
+                    PathBuf::from("/var/service/gitrun/log/main/current"),
+                    PathBuf::from("/var/log/gitrun/current"),
+                ]);
+            }
+            if units.iter().any(|unit| *unit == "gitrun-gsr.service") {
+                paths.extend([
+                    PathBuf::from("/var/service/gitrun-gsr/log/main/current"),
+                    PathBuf::from("/var/log/gitrun-gsr/current"),
+                ]);
+            }
+            let mut entries = Vec::new();
+            for path in paths {
+                if !path.is_file() {
+                    continue;
+                }
+                let contents = std::fs::read_to_string(&path)
+                    .map_err(|error| format!("unable to read runit log {}: {error}", path.display()))?;
+                entries.extend(contents.lines().map(str::to_owned));
+            }
+            if entries.len() > limit {
+                entries.drain(..entries.len() - limit);
+            }
+            if entries.is_empty() {
+                return Err("runit is active, but no GitRun runsvdir log file was found at the standard service log locations".into());
+            }
+            Ok(entries)
+        }
     }
-    let output = command.output().map_err(|error| {
-        format!("Unable to execute journalctl; GitRun service logs are unavailable: {error}")
-    })?;
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(if detail.is_empty() {
-            format!("journalctl exited with status {}", output.status)
-        } else {
-            format!("Unable to read GitRun service journal: {detail}")
-        });
-    }
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::to_owned)
-        .collect())
 }
 
 #[cfg(test)]

@@ -1102,6 +1102,7 @@ jobs:
             "GitRun-Server-$VERSION-linux-x86_64-musl-apk.apk" \
             "GitRun-Server-$VERSION-linux-aarch64-musl-apk.apk" \
             "GitRun-Server-$VERSION-linux-x86_64-arch.pkg.tar.zst" \
+            "GitRun-Server-$VERSION-linux-aarch64-arch.pkg.tar.zst" \
             "GitRun-Server-$VERSION-linux-x86_64-xbps.xbps" \
             "GitRun-Server-$VERSION-linux-aarch64-xbps.xbps" \
             "GitRun-Server-$VERSION-linux-x86_64-musl-xbps.xbps" \
@@ -1140,6 +1141,13 @@ jobs:
             done
           done
           for arch in x86_64 aarch64; do
+            server_arch="$root/GitRun-Server-$VERSION-linux-$arch-arch.pkg.tar.zst"
+            server_pkginfo="$(tar --zstd -xOf "$server_arch" .PKGINFO)"
+            grep -Fq 'pkgname = gitrun-server' <<< "$server_pkginfo"
+            server_files="$(tar --zstd -tf "$server_arch")"
+            grep -Fq 'usr/bin/gitrun' <<< "$server_files"
+            grep -Fq 'usr/lib/systemd/system/gitrun.service' <<< "$server_files"
+
             gui="$root/GitRun-Desktop-$VERSION-linux-$arch-deb.deb"
             test "$(dpkg-deb -f "$gui" Package)" = gitrun-desktop
             gui_contents="$(dpkg-deb -c "$gui")"

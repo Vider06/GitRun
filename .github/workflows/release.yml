@@ -415,8 +415,8 @@ jobs:
             -e NPM_CONFIG_CACHE=/workspace/.gitrun-npm-cache \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace/crates/gitrun-dashboard-tauri \
-            rust:1.99-alpine bash -ec '
-              apk add --no-cache bash build-base pkgconf nodejs npm curl wget file openssl-dev \
+            rust:1.99-alpine sh -ec '
+              apk add --no-cache build-base pkgconf nodejs npm curl wget file openssl-dev \
                 webkit2gtk-4.1-dev libayatana-appindicator-dev librsvg font-dejavu imagemagick \
                 openssl-libs-static cairo-static harfbuzz-static glib-static wayland-static zlib-static
               node --version
@@ -435,9 +435,8 @@ jobs:
           fs.writeFileSync("package-lock.json", JSON.stringify(lock, null, 2) + "\n");
           NODE
               npm ci
-              shopt -s nullglob
-              icons=(src-tauri/icons/*.png)
-              for icon in "${icons[@]}"; do
+              for icon in src-tauri/icons/*.png; do
+                [ -f "$icon" ] || continue
                 tmp="$(mktemp --suffix=.png)"
                 convert "$icon" -alpha on -define png:color-type=6 "PNG32:$tmp"
                 mv "$tmp" "$icon"

@@ -1296,12 +1296,27 @@ jobs:
                   triple = name[len(f"GitRun-Server-{version}-"):-len("-server.tar.zst")]
                   cpu, abi = triple.split("-unknown-linux-")
                   target = f"linux-{cpu}-{abi}-tar-zst"
-              elif name.endswith(".AppImage"):
-                  arch = "aarch64" if "-linux-aarch64." in name else "x86_64"
-                  target = f"linux-{arch}-desktop-appimage"
-              elif "Desktop-" in name:
-                  arch = "aarch64" if "-linux-aarch64-" in name else "x86_64"
-                  target = f"linux-{arch}-desktop-deb"
+              elif name.startswith(f"GitRun-Desktop-{version}-"):
+                  if name.endswith(".AppImage"):
+                      arch = "aarch64" if "-linux-aarch64." in name else "x86_64"
+                      target = f"linux-{arch}-desktop-appimage"
+                  elif name.endswith("-unknown-linux-musl.bin"):
+                      arch = "aarch64" if "aarch64-unknown" in name else "x86_64"
+                      target = f"linux-{arch}-musl-desktop-bin"
+                  else:
+                      arch = "aarch64" if "-linux-aarch64-" in name else "x86_64"
+                      if name.endswith("-deb.deb"):
+                          target = f"linux-{arch}-desktop-deb"
+                      elif name.endswith("-rpm.rpm"):
+                          target = f"linux-{arch}-desktop-rpm"
+                      elif name.endswith("-archlinux.pkg.tar.zst"):
+                          target = f"linux-{arch}-desktop-arch"
+                      elif name.endswith("-musl-apk.apk"):
+                          target = f"linux-{arch}-musl-desktop-apk"
+                      elif name.endswith("-musl-xbps.xbps"):
+                          target = f"linux-{arch}-musl-desktop-xbps"
+                      else:
+                          raise SystemExit(f"Unknown Desktop package suffix: {name}")
               elif name == f"GitRun-{version}-linux-x86_64-deb.deb": target = "linux-x86_64-deb"
               elif name.startswith(f"GitRun-Server-{version}-linux-"):
                   package_target = name[len(f"GitRun-Server-{version}-"):]
@@ -1323,6 +1338,11 @@ jobs:
               "linux-x86_64-musl-tar-zst","linux-aarch64-musl-tar-zst",
               "linux-x86_64-desktop-appimage","linux-aarch64-desktop-appimage",
               "linux-x86_64-desktop-deb","linux-aarch64-desktop-deb",
+              "linux-x86_64-desktop-rpm","linux-aarch64-desktop-rpm",
+              "linux-x86_64-desktop-arch","linux-aarch64-desktop-arch",
+              "linux-x86_64-musl-desktop-bin","linux-aarch64-musl-desktop-bin",
+              "linux-x86_64-musl-desktop-apk","linux-aarch64-musl-desktop-apk",
+              "linux-x86_64-musl-desktop-xbps","linux-aarch64-musl-desktop-xbps",
               "linux-x86_64-server-deb","linux-aarch64-server-deb",
               "linux-x86_64-server-rpm","linux-aarch64-server-rpm",
               "linux-x86_64-musl-server-apk","linux-aarch64-musl-server-apk",

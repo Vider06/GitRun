@@ -42,7 +42,7 @@ RUNTIME_BASELINE = {
         "systemctl": 11, "systemd-path": 6,
     },
     "crates/gitrun-management/src/control_manager.rs": {
-        "systemctl": 2, "systemd-run": 1,
+        "systemctl": 2, "systemd-path": 3, "systemd-run": 1,
     },
     "crates/gitrun-cli/src/manage.rs": {"systemctl": 1},
 }

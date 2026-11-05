@@ -178,8 +178,10 @@ def check_release_package_boundaries(errors: list[str]) -> None:
 def check_portable_privilege_helpers(errors: list[str]) -> None:
     cli = (ROOT / "crates/gitrun-cli/src/main.rs").read_text(encoding="utf-8")
     updater = (ROOT / "crates/gitrun-updater/src/lib.rs").read_text(encoding="utf-8")
-    if 'Command::new("/bin/sh")' not in cli or "trusted_privilege_command()" not in cli:
-        errors.append("CLI privileged shell helpers must use POSIX sh and the trusted platform privilege helper")
+    if "run_privileged_cli_action(" not in cli or "trusted_privilege_command()" not in cli:
+        errors.append("CLI uninstall/reinstall must use the trusted platform privilege helper directly")
+    if "run_embedded_privileged_helper(" in cli:
+        errors.append("CLI must not execute user-owned temporary scripts with elevated privileges")
     if "trusted_privilege_escalation_binary()" not in updater:
         errors.append("updater dependency installation must support the platform privilege helper")
 

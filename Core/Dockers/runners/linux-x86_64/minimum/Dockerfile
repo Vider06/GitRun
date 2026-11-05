@@ -81,8 +81,8 @@ RUN chmod 0755 /entrypoint.sh \
 
 # GSR is mandatory: both standard shell entry points are replaced by the
 # agent, while the original shells are retained only as explicit delegates.
-# hadolint ignore=DL3002
 # PID 1 must bootstrap root-owned GSR policy and runner state; the GSR supervisor drops the workload to runner.
+# hadolint ignore=DL3002
 USER 0
 RUN mv /bin/sh /bin/sh.gitrun-real \
     && mv /bin/bash /bin/bash.gitrun-real \

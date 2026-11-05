@@ -3541,9 +3541,9 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
             .output()
             .map_err(|error| format!("unable to run {}: {error}", manager.as_str()))?
     } else {
-        let pkexec = pkexec_path()
-            .ok_or("trusted pkexec was not found; service operation cannot continue")?;
-        std::process::Command::new(pkexec)
+        let privilege_helper = gitrun_platform::trusted_privilege_escalation_binary()
+            .ok_or("trusted sudo, doas or pkexec executable was not found")?;
+        std::process::Command::new(privilege_helper)
             .arg(&program)
             .args(&args)
             .output()

@@ -284,7 +284,10 @@ fn persist_gitrun_settings_as_root(
 }
 
 #[cfg(not(target_os = "linux"))]
-fn persist_gitrun_settings_as_root(_settings: &GitRunSettings) -> Result<(), String> {
+fn persist_gitrun_settings_as_root(
+    _settings: &GitRunSettings,
+    _confirm_socket_opt_out: bool,
+) -> Result<(), String> {
     Err("administrator-authorized security-settings persistence is Linux-only".into())
 }
 

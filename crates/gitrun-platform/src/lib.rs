@@ -149,7 +149,11 @@ pub struct ServiceCommand {
 pub const fn service_command_candidates(manager: ServiceManager) -> &'static [&'static str] {
     match manager {
         ServiceManager::Systemd => &["/usr/bin/systemctl", "/bin/systemctl"],
-        ServiceManager::OpenRc => &["/sbin/rc-service", "/usr/sbin/rc-service", "/usr/bin/rc-service"],
+        ServiceManager::OpenRc => &[
+            "/sbin/rc-service",
+            "/usr/sbin/rc-service",
+            "/usr/bin/rc-service",
+        ],
         ServiceManager::Runit => &["/usr/bin/sv", "/bin/sv", "/usr/sbin/sv"],
     }
 }
@@ -168,7 +172,11 @@ pub fn service_command(
                 ServiceAction::Status => "is-active",
             };
             if action == "is-active" {
-                vec![action.to_owned(), "--quiet".to_owned(), service.systemd_unit().to_owned()]
+                vec![
+                    action.to_owned(),
+                    "--quiet".to_owned(),
+                    service.systemd_unit().to_owned(),
+                ]
             } else {
                 vec![action.to_owned(), service.systemd_unit().to_owned()]
             }
@@ -665,35 +673,66 @@ mod tests {
 
     #[test]
     fn service_actions_map_to_native_manager_commands_without_shells() {
-        let systemd = service_command(ServiceManager::Systemd, ServiceAction::Restart, ManagedService::Scheduler);
+        let systemd = service_command(
+            ServiceManager::Systemd,
+            ServiceAction::Restart,
+            ManagedService::Scheduler,
+        );
         assert_eq!(systemd.args, ["restart", "gitrun.service"]);
 
-        let openrc = service_command(ServiceManager::OpenRc, ServiceAction::Start, ManagedService::Gsr);
+        let openrc = service_command(
+            ServiceManager::OpenRc,
+            ServiceAction::Start,
+            ManagedService::Gsr,
+        );
         assert_eq!(openrc.args, ["gitrun-gsr", "start"]);
 
-        let runit = service_command(ServiceManager::Runit, ServiceAction::Stop, ManagedService::Scheduler);
+        let runit = service_command(
+            ServiceManager::Runit,
+            ServiceAction::Stop,
+            ManagedService::Scheduler,
+        );
         assert_eq!(runit.args, ["down", "/var/service/gitrun"]);
     }
 
     #[test]
     fn service_status_actions_are_read_only_and_manager_specific() {
         assert_eq!(
-            service_command(ServiceManager::Systemd, ServiceAction::Status, ManagedService::Gsr).args,
+            service_command(
+                ServiceManager::Systemd,
+                ServiceAction::Status,
+                ManagedService::Gsr
+            )
+            .args,
             ["is-active", "--quiet", "gitrun-gsr.service"]
         );
         assert_eq!(
-            service_command(ServiceManager::OpenRc, ServiceAction::Status, ManagedService::Scheduler).args,
+            service_command(
+                ServiceManager::OpenRc,
+                ServiceAction::Status,
+                ManagedService::Scheduler
+            )
+            .args,
             ["gitrun", "status"]
         );
         assert_eq!(
-            service_command(ServiceManager::Runit, ServiceAction::Status, ManagedService::Gsr).args,
+            service_command(
+                ServiceManager::Runit,
+                ServiceAction::Status,
+                ManagedService::Gsr
+            )
+            .args,
             ["status", "/var/service/gitrun-gsr"]
         );
     }
 
     #[test]
     fn service_manager_commands_never_use_a_shell() {
-        for manager in [ServiceManager::Systemd, ServiceManager::OpenRc, ServiceManager::Runit] {
+        for manager in [
+            ServiceManager::Systemd,
+            ServiceManager::OpenRc,
+            ServiceManager::Runit,
+        ] {
             let command = service_command(manager, ServiceAction::Start, ManagedService::Scheduler);
             assert!(!command.args.iter().any(|arg| arg.contains("sh -c")));
             assert!(command.candidates.iter().all(|path| path.starts_with('/')));

@@ -800,10 +800,18 @@ jobs:
             test "$(dpkg-deb -f "$deb" Conflicts)" = gitrun
             test "$(dpkg-deb -f "$deb" Replaces)" = gitrun
             dpkg-deb -c "$deb" | grep -Fq '/usr/lib/systemd/system/gitrun.service'
+            control="$RUNNER_TEMP/$(basename "$deb").control"
+            mkdir -p "$control"
+            dpkg-deb --control "$deb" "$control"
+            for script in postinst prerm; do
+              test -s "$control/$script"
+              sh -n "$control/$script"
+            done
           done
           gui="$root/GitRun-Desktop-$VERSION-linux-x86_64-deb.deb"
           test "$(dpkg-deb -f "$gui" Package)" = gitrun-desktop
           dpkg-deb -c "$gui" | grep -Fq '/opt/gitrun-desktop/GitRun.AppImage'
+          dpkg-deb -f "$gui" Depends | tr ',' '\n' | sed 's/^[[:space:]]*//' | grep -Fxq policykit-1
           if dpkg-deb -c "$gui" | grep -Eq '/usr/bin/gitrun$'; then
             echo "Desktop package unexpectedly contains /usr/bin/gitrun" >&2
             exit 1
@@ -849,6 +857,8 @@ jobs:
             rpm -qp --qf '%{NAME} %{VERSION}' "$rpm_file" | grep -Fx "gitrun-server $VERSION_NUMBER"
             rpm -qpl "$rpm_file" | grep -Fxq /usr/bin/gitrun
             rpm -qpl "$rpm_file" | grep -Fxq /usr/lib/systemd/system/gitrun.service
+            rpm -qp --requires "$rpm_file" | grep -Fxq glibc
+            rpm -qp --requires "$rpm_file" | grep -Fxq polkit
           done
           mapfile -d '' -t apk_files < <(find "$root" -maxdepth 1 -type f -name "GitRun-Server-$VERSION-linux-*-apk.apk" -print0)
           for apk_file in "${apk_files[@]}"; do
@@ -858,6 +868,9 @@ jobs:
           tar --zstd -tf "$arch_file" | grep -Fxq .PKGINFO
           tar --zstd -tf "$arch_file" | grep -Fxq usr/bin/gitrun
           tar --zstd -tf "$arch_file" | grep -Fxq usr/lib/systemd/system/gitrun.service
+          arch_pkginfo="$(tar --zstd -xOf "$arch_file" .PKGINFO)"
+          grep -Fxq 'depend = glibc' <<< "$arch_pkginfo"
+          grep -Fxq 'depend = polkit' <<< "$arch_pkginfo"
 
           mapfile -t library_members < <(unzip -Z1 "$root/library.zip")
           (("${#library_members[@]}" == 11))

@@ -420,6 +420,7 @@ jobs:
             -e TARGET="$TARGET" \
             -e RUST_VERSION="$RUST_VERSION" \
             -e MUSL_DISTRO="$MUSL_DISTRO" \
+            -e RUSTFLAGS="-C target-feature=-crt-static" \
             -e CARGO_HOME=/workspace/.gitrun-cargo \
             -e RUSTUP_HOME=/workspace/.gitrun-cargo/rustup \
             -e CARGO_TARGET_DIR=/workspace/target \
@@ -471,7 +472,13 @@ jobs:
                 mv "$tmp" "$icon"
               done
               npm run tauri build -- --ci --no-bundle
-              test -s /workspace/target/release/gitrun-dashboard-tauri
+              binary=/workspace/target/release/gitrun-dashboard-tauri
+              test -s "$binary"
+              ldd "$binary" > /tmp/gitrun-dashboard-ldd.txt
+              if grep -Fq "not found" /tmp/gitrun-dashboard-ldd.txt; then
+                cat /tmp/gitrun-dashboard-ldd.txt >&2
+                exit 1
+              fi
             '
           out="$RUNNER_TEMP/dashboard-musl-canonical"
           rm -rf "$out"

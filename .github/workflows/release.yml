@@ -375,8 +375,8 @@ jobs:
             runner: ubuntu-24.04
             docker_platform: linux/amd64
             musl_distro: alpine
-            cache_variant: alpine-rust-1.99
-            container_image: rust:1.99-alpine
+            cache_variant: alpine-rust-1.99-alpine3.24
+            container_image: rust:1.99-alpine3.24
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
             docker_platform: linux/arm64

@@ -3385,14 +3385,17 @@ mod tests {
     fn pacman_dependency_updates_do_not_upgrade_the_entire_system() {
         use gitrun_platform::PackageManager as P;
 
-        let (program, args) = linux_package_install_command(P::Pacman, &["docker", "docker-buildx"])
-            .expect("Pacman install command");
+        let (program, args) =
+            linux_package_install_command(P::Pacman, &["docker", "docker-buildx"])
+                .expect("Pacman install command");
         assert_eq!(program, "pacman");
         assert_eq!(
             args,
             ["-S", "--noconfirm", "--needed", "docker", "docker-buildx"]
         );
-        assert!(!args.iter().any(|argument| argument == "-u" || argument == "--sysupgrade"));
+        assert!(!args
+            .iter()
+            .any(|argument| argument == "-u" || argument == "--sysupgrade"));
     }
 
     #[test]

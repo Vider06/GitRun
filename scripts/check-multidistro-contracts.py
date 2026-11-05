@@ -155,16 +155,17 @@ def check_release_package_boundaries(errors: list[str]) -> None:
 def check_dashboard_service_manager_contract(errors: list[str]) -> None:
     backend = (ROOT / "crates/gitrun-management/src/backend.rs").read_text(encoding="utf-8")
     control = (ROOT / "crates/gitrun-management/src/control_manager.rs").read_text(encoding="utf-8")
+    platform = (ROOT / "crates/gitrun-platform/src/lib.rs").read_text(encoding="utf-8")
     required_backend = (
         "gitrun_platform::detect_service_manager()",
         "gitrun_platform::service_command(",
         "gitrun_platform::service_is_installed(",
         "gitrun_platform::ManagedService::Scheduler",
         "gitrun_platform::ManagedService::Gsr",
-        "ServiceManager::OpenRc",
-        "ServiceManager::Runit",
     )
-    missing = [item for item in required_backend if item not in backend and item not in control]
+    missing = [item for item in required_backend if item not in backend]
+    required_platform = ("ServiceManager::Systemd", "ServiceManager::OpenRc", "ServiceManager::Runit")
+    missing.extend(item for item in required_platform if item not in platform)
     if missing:
         errors.append("Dashboard service operations are missing native init-system routing: " + ", ".join(missing))
     if 'PathBuf::from("/usr/bin/systemctl")' in backend or 'PathBuf::from("/bin/systemctl")' in backend:

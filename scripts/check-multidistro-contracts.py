@@ -120,6 +120,21 @@ def check_release_package_boundaries(errors: list[str]) -> None:
         if target not in release:
             errors.append(f"release matrix no longer declares {target}")
 
+    desktop_targets = (
+        "target: x86_64-unknown-linux-gnu",
+        "target: aarch64-unknown-linux-gnu",
+        "runner: ubuntu-24.04-arm",
+        "linux-x86_64-desktop-appimage",
+        "linux-aarch64-desktop-appimage",
+        "linux-x86_64-desktop-deb",
+        "linux-aarch64-desktop-deb",
+    )
+    for target in desktop_targets:
+        if target not in release:
+            errors.append(f"Desktop release matrix is missing {target}")
+    if "pattern: dashboard-package-*" not in release:
+        errors.append("Desktop package collection must merge every target-specific package artifact")
+
     if 'xbps_stage="$RUNNER_TEMP/xbps-stage"' not in release:
         errors.append("XBPS must use a dedicated init-neutral staging directory")
     if 'cp -a "$stage" "$xbps_stage"' not in release:

@@ -1164,7 +1164,7 @@ jobs:
             test "$(rpm -qp --queryformat '%{NAME}' "$gui_rpm")" = gitrun-desktop
             rpm_requires="$(rpm -qp --requires "$gui_rpm")"
             grep -Fq webkit2gtk4.1 <<< "$rpm_requires"
-          grep -Fq libwebkit2gtk-4_1-0 <<< "$rpm_requires"
+            grep -Fq libwebkit2gtk-4_1-0 <<< "$rpm_requires"
 
             gui_arch="$root/GitRun-Desktop-$VERSION-linux-$arch-archlinux.pkg.tar.zst"
             arch_pkginfo="$(tar --zstd -xOf "$gui_arch" .PKGINFO)"

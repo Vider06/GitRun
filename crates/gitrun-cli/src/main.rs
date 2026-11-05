@@ -373,9 +373,8 @@ fn elevate_system_update(
 }
 
 #[cfg(target_os = "linux")]
-fn run_embedded_privileged_helper(
-    prefix: &str,
-    script: &str,
+fn run_privileged_cli_action(
+    action: &str,
     presenter: &mut presenter::CatPresenter,
 ) -> i32 {
     if system_install_paths().is_none() {
@@ -383,7 +382,6 @@ fn run_embedded_privileged_helper(
         return 2;
     }
 
-    use std::os::unix::fs::OpenOptionsExt;
     let executable = match std::env::current_exe() {
         Ok(path) => path,
         Err(error) => {
@@ -391,46 +389,36 @@ fn run_embedded_privileged_helper(
             return 1;
         }
     };
-    let nonce = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(value) => value.as_nanos(),
-        Err(error) => {
-            eprintln!("GitRun: unable to create a private helper name: {error}");
-            return 1;
+    presenter.prepare_for_external_process();
+
+    let mut command = if running_as_root() {
+        std::process::Command::new(executable)
+    } else {
+        match trusted_privilege_command() {
+            Ok(command) => command,
+            Err(error) => {
+                eprintln!("GitRun: unable to request administrator authorization: {error}");
+                return 1;
+            }
         }
     };
-    let script_path =
-        std::env::temp_dir().join(format!("{prefix}-{}-{nonce}.sh", std::process::id()));
-
-    let result = (|| -> Result<i32, Box<dyn std::error::Error>> {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o700)
-            .open(&script_path)?;
-        file.write_all(script.as_bytes())?;
-        file.sync_all()?;
-        presenter.prepare_for_external_process();
-        let status = std::process::Command::new("/bin/sh")
-            .arg(&script_path)
-            .arg(&executable)
-            .status()?;
-        Ok(status.code().unwrap_or(1))
-    })();
-
-    let _ = std::fs::remove_file(&script_path);
-    match result {
-        Ok(code) => code,
+    let status = command
+        .arg(executable)
+        .arg("--no-cat")
+        .arg(action)
+        .status();
+    match status {
+        Ok(status) => status.code().unwrap_or(1),
         Err(error) => {
-            eprintln!("GitRun {prefix}: failed to launch privileged helper: {error}");
+            eprintln!("GitRun {action}: failed to launch privileged operation: {error}");
             1
         }
     }
 }
 
 #[cfg(not(target_os = "linux"))]
-fn run_embedded_privileged_helper(
-    _prefix: &str,
-    _script: &str,
+fn run_privileged_cli_action(
+    _action: &str,
     _presenter: &mut presenter::CatPresenter,
 ) -> i32 {
     eprintln!("GitRun uninstall/reinstall currently supports Linux only.");
@@ -1793,16 +1781,8 @@ fn main() {
             }
         },
         Command::Doctor => run_doctor(),
-        Command::Uninstall => run_embedded_privileged_helper(
-            "gitrun-uninstall",
-            include_str!("../../../scripts/uninstall.sh"),
-            &mut presenter,
-        ),
-        Command::Reinstall => run_embedded_privileged_helper(
-            "gitrun-reinstall",
-            include_str!("../../../scripts/reinstall-latest.sh"),
-            &mut presenter,
-        ),
+        Command::Uninstall => run_privileged_cli_action("--uninstall-root", &mut presenter),
+        Command::Reinstall => run_privileged_cli_action("--reinstall-latest-root", &mut presenter),
         Command::Update {
             manifest_url,
             check: true,

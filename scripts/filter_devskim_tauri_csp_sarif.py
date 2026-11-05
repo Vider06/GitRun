@@ -85,7 +85,7 @@ def is_release_migration_loopback_fixture(result: dict[str, Any]) -> bool:
     for location in result.get("locations", []):
         physical = location.get("physicalLocation", {})
         artifact = physical.get("artifactLocation", {})
-        uri = str(artifact.get("uri", "")).replace("\\\\", "/")
+        uri = str(artifact.get("uri", "")).replace("\\", "/")
         if not uri.endswith(RELEASE_TARGET):
             continue
         line = physical.get("region", {}).get("startLine")

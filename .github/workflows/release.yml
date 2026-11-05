@@ -392,6 +392,10 @@ jobs:
         with:
           name: canonical-release-inputs
           path: canonical
+      - name: Restore canonical binary permissions
+        run: |
+          set -euo pipefail
+          find canonical -maxdepth 1 -type f -name 'gitrun-*' -exec chmod 0755 {} +
       - name: Synchronize Markdown source-version markers
         run: |
           set -euo pipefail
@@ -639,6 +643,10 @@ jobs:
         with:
           name: canonical-release-inputs
           path: canonical
+      - name: Restore canonical binary permissions
+        run: |
+          set -euo pipefail
+          chmod 0755 canonical/gitrun-x86_64-unknown-linux-gnu
       - name: Checkout exact 1.8.23 packaging contract
         run: git clone --quiet --depth 1 --branch v1.8.23 "https://github.com/$GITHUB_REPOSITORY.git" "$RUNNER_TEMP/gitrun-v1.8.23-packaging"
       - name: Assemble legacy-layout migration package

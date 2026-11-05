@@ -230,7 +230,8 @@ ci_ensure_cargo_deny() {
 }
 ci_ensure_cargo_audit() {
   command -v cargo-audit >/dev/null 2>&1 && cargo-audit --version 2>/dev/null | grep -q ' 0.22.2' && return 0
-  local source_root="${RUNNER_TOOL_CACHE:-$CI_DIR/tools}/gitrun-tools/cargo-audit/0.22.2-source-$(ci_arch)"
+  local source_root
+  source_root="${RUNNER_TOOL_CACHE:-$CI_DIR/tools}/gitrun-tools/cargo-audit/0.22.2-source-$(ci_arch)"
   if [ -x "$source_root/bin/cargo-audit" ] && "$source_root/bin/cargo-audit" --version 2>/dev/null | grep -q ' 0.22.2'; then
     export PATH="$source_root/bin:$PATH"
     [ -z "${GITHUB_PATH:-}" ] || echo "$source_root/bin" >> "$GITHUB_PATH"

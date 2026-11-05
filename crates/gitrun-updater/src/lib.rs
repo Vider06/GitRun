@@ -2218,65 +2218,42 @@ fn linux_dependency_packages(
     Ok(packages)
 }
 
-fn update_linux_dependency(name: &str) -> Result<(), UpdateError> {
+fn linux_package_install_command(
+    manager: gitrun_platform::PackageManager,
+    packages: &[&str],
+) -> Result<(&'static str, Vec<String>), UpdateError> {
     use gitrun_platform::PackageManager as P;
-    let manager = current_linux_package_manager()?;
-    let packages = linux_dependency_packages(manager, name)?;
-    let (program, args): (&str, Vec<String>) = match manager {
-        P::Apt => (
-            "apt-get",
-            std::iter::once("install".to_owned())
-                .chain(["-y".to_owned()])
-                .chain(packages.iter().map(|package| (*package).to_owned()))
-                .collect(),
-        ),
-        P::Dnf => (
-            "dnf",
-            std::iter::once("install".to_owned())
-                .chain(["-y".to_owned()])
-                .chain(packages.iter().map(|package| (*package).to_owned()))
-                .collect(),
-        ),
-        P::Zypper => (
-            "zypper",
-            std::iter::once("--non-interactive".to_owned())
-                .chain(["install".to_owned()])
-                .chain(packages.iter().map(|package| (*package).to_owned()))
-                .collect(),
-        ),
-        P::Pacman => (
-            "pacman",
-            std::iter::once("-Syu".to_owned())
-                .chain(["--noconfirm".to_owned(), "--needed".to_owned()])
-                .chain(packages.iter().map(|package| (*package).to_owned()))
-                .collect(),
-        ),
-        P::Apk => (
-            "apk",
-            std::iter::once("add".to_owned())
-                .chain(["--upgrade".to_owned()])
-                .chain(packages.iter().map(|package| (*package).to_owned()))
-                .collect(),
-        ),
-        P::Xbps => (
-            "xbps-install",
-            std::iter::once("-S".to_owned())
-                .chain(packages.iter().map(|package| (*package).to_owned()))
-                .collect(),
-        ),
-        P::Emerge => (
-            "emerge",
-            std::iter::once("--ask=n".to_owned())
-                .chain(["--update".to_owned()])
-                .chain(packages.iter().map(|package| (*package).to_owned()))
-                .collect(),
-        ),
+    let args = |prefix: &[&str]| {
+        prefix
+            .iter()
+            .map(|value| (*value).to_owned())
+            .chain(packages.iter().map(|package| (*package).to_owned()))
+            .collect()
+    };
+    let command = match manager {
+        P::Apt => ("apt-get", args(&["install", "-y"])),
+        P::Dnf => ("dnf", args(&["install", "-y"])),
+        P::Zypper => ("zypper", args(&["--non-interactive", "install"])),
+        // Do not run a full Arch system upgrade from GitRun's dependency updater.
+        // Install/update only the dependency set requested by the caller.
+        P::Pacman => ("pacman", args(&["-S", "--noconfirm", "--needed"])),
+        P::Apk => ("apk", args(&["add", "--upgrade"])),
+        P::Xbps => ("xbps-install", args(&["-S"])),
+        P::Emerge => ("emerge", args(&["--ask=n", "--update"])),
         P::Rpm => {
             return Err(UpdateError::Command(
                 "rpm is a query tool, not a package installer".into(),
             ));
         }
     };
+    Ok(command)
+}
+
+fn update_linux_dependency(name: &str) -> Result<(), UpdateError> {
+    use gitrun_platform::PackageManager as P;
+    let manager = current_linux_package_manager()?;
+    let packages = linux_dependency_packages(manager, name)?;
+    let (program, args) = linux_package_install_command(manager, packages)?;
 
     if manager == P::Apt {
         run_linux_package_command("apt-get", &["update"])?;
@@ -3402,6 +3379,20 @@ mod tests {
         );
         assert!(linux_dependency_packages(P::Rpm, "Docker").is_err());
         assert!(linux_dependency_packages(P::Apt, "unknown").is_err());
+    }
+
+    #[test]
+    fn pacman_dependency_updates_do_not_upgrade_the_entire_system() {
+        use gitrun_platform::PackageManager as P;
+
+        let (program, args) = linux_package_install_command(P::Pacman, &["docker", "docker-buildx"])
+            .expect("Pacman install command");
+        assert_eq!(program, "pacman");
+        assert_eq!(
+            args,
+            ["-S", "--noconfirm", "--needed", "docker", "docker-buildx"]
+        );
+        assert!(!args.iter().any(|argument| argument == "-u" || argument == "--sysupgrade"));
     }
 
     #[test]

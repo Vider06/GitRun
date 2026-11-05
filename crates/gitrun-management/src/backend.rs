@@ -2714,7 +2714,7 @@ fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>
             });
             let mut lines = if let Some(logread) = logread {
                 let mut args = Vec::new();
-                if logread.file_name().is_some_and(|name| name == "busybox") {
+                if logread.file_name().is_some_and(|name| name.to_string_lossy() == "busybox") {
                     args.push("logread".to_owned());
                 }
                 args.extend(["-l".to_owned(), limit.saturating_mul(8).to_string()]);

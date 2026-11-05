@@ -135,8 +135,6 @@ jobs:
       VERSION: ${{ needs.prepare.outputs.version }}
       VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
       TARGET: ${{ matrix.target }}
-      MUSL_DISTRO: ${{ matrix.musl_distro }}
-      CONTAINER_IMAGE: ${{ matrix.container_image }}
       CARGO_HOME: ${{ github.workspace }}/.gitrun-cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       CARGO_INCREMENTAL: "0"

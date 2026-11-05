@@ -128,7 +128,6 @@ def check_release_package_boundaries(errors: list[str]) -> None:
         "target: x86_64-unknown-linux-musl",
         "target: aarch64-unknown-linux-musl",
         "build-dashboard-musl:",
-        "package-dashboard-musl:",
         "runner: ubuntu-24.04-arm",
         "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb",
         "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm",
@@ -142,6 +141,8 @@ def check_release_package_boundaries(errors: list[str]) -> None:
             errors.append(f"Desktop release matrix is missing {target}")
     native_package_contracts = (
         "package-server:\n    name: Package Server target matrix\n    needs: [prepare, collect]\n    runs-on: ${{ matrix.runner }}",
+        "package-dashboard-musl:",
+        "runs-on: ${{ matrix.runner }}",
         "package-dashboard-musl:\\n    name: Package independent musl Desktop · ${{ matrix.target }}\n    needs: [prepare, collect]\\n    runs-on: ${{ matrix.runner }}",
         "xbps_static_arch: aarch64",
         "XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}",

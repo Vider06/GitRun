@@ -654,19 +654,7 @@ fn update_command(
         // no image refresh is needed, so a newly scheduled run cannot race the
         // executable replacement or the subsequent systemd reconciliation.
         println!("GitRun update: stopping scheduler before completing the system update");
-        if let Err(error) = std::process::Command::new("/usr/bin/systemctl")
-            .args(["stop", "gitrun.service"])
-            .status()
-            .and_then(|status| {
-                if status.success() {
-                    Ok(())
-                } else {
-                    Err(std::io::Error::other(format!(
-                        "systemctl stop gitrun.service exited with status {status}"
-                    )))
-                }
-            })
-        {
+        if let Err(error) = stop_scheduler_service_for_update() {
             let rollback_error = rollback_installed_update_with_config(
                 &backup,
                 &artifacts,
@@ -909,20 +897,80 @@ fn verify_post_update_doctor(binary: &Path) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-fn restart_scheduler_service() -> Result<(), Box<dyn std::error::Error>> {
-    if !cfg!(target_os = "linux") || !Path::new("/etc/systemd/system/gitrun.service").is_file() {
+fn run_managed_service_action(
+    service: gitrun_platform::ManagedService,
+    action: gitrun_platform::ServiceAction,
+) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+    let manager = gitrun_platform::detect_service_manager()
+        .ok_or_else(|| std::io::Error::other("no supported active service manager was detected"))?;
+    if !gitrun_platform::service_is_installed(manager, service) {
+        return Err(std::io::Error::other(format!(
+            "GitRun service definition is not installed for {}",
+            manager.as_str()
+        ))
+        .into());
+    }
+    let spec = gitrun_platform::service_command(manager, action, service);
+    let program = gitrun_platform::trusted_service_manager_binary(manager).ok_or_else(|| {
+        std::io::Error::other(format!(
+            "trusted {} service-control executable was not found",
+            manager.as_str()
+        ))
+    })?;
+    Command::new(program)
+        .args(spec.args)
+        .output()
+        .map_err(Into::into)
+}
+
+fn stop_scheduler_service_for_update() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(manager) = gitrun_platform::detect_service_manager() else {
+        return Ok(());
+    };
+    if !gitrun_platform::service_is_installed(
+        manager,
+        gitrun_platform::ManagedService::Scheduler,
+    ) {
         return Ok(());
     }
-    let output = std::process::Command::new("systemctl")
-        .args(["restart", "gitrun.service"])
-        .output()?;
+    let output = run_managed_service_action(
+        gitrun_platform::ManagedService::Scheduler,
+        gitrun_platform::ServiceAction::Stop,
+    )?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(if detail.is_empty() {
-            "systemctl restart gitrun.service failed".into()
+        return Err(std::io::Error::other(if detail.is_empty() {
+            format!("{} could not stop the GitRun scheduler", manager.as_str())
         } else {
-            detail.into()
-        });
+            detail
+        })
+        .into());
+    }
+    Ok(())
+}
+
+fn restart_scheduler_service() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(manager) = gitrun_platform::detect_service_manager() else {
+        return Ok(());
+    };
+    if !gitrun_platform::service_is_installed(
+        manager,
+        gitrun_platform::ManagedService::Scheduler,
+    ) {
+        return Ok(());
+    }
+    let output = run_managed_service_action(
+        gitrun_platform::ManagedService::Scheduler,
+        gitrun_platform::ServiceAction::Restart,
+    )?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(std::io::Error::other(if detail.is_empty() {
+            format!("{} could not restart the GitRun scheduler", manager.as_str())
+        } else {
+            detail
+        })
+        .into());
     }
     Ok(())
 }

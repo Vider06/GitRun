@@ -3,7 +3,9 @@ from typing import Any
 
 from scripts.filter_devskim_tauri_csp_sarif import (
     EXPECTED_RULE_IDS,
-    RELEASE_LOOPBACK_LINES,
+    RELEASE_LOOPBACK_ANCHORS,
+    RELEASE_SUPPRESSION_MARKER,
+    release_migration_loopback_lines,
     RELEASE_TARGET,
     TARGET,
     filter_sarif,
@@ -32,30 +34,53 @@ def finding(
 
 
 class DevSkimTauriCspFilterTests(unittest.TestCase):
-    def test_filters_only_guarded_release_migration_loopback_lines(self) -> None:
-        self.assertEqual(RELEASE_LOOPBACK_LINES, {1661, 1670, 1690, 1731, 1735, 1737})
-        for line in RELEASE_LOOPBACK_LINES:
-            with self.subTest(line=line):
-                self.assertTrue(
-                    is_release_migration_loopback_fixture(
-                        finding("DS137138", path=RELEASE_TARGET, line=line)
-                    )
-                )
+    def test_resolves_release_suppressions_after_arbitrary_line_shifts(self) -> None:
+        fixture = [
+            "ordinary workflow line",
+            *[f"inserted line {index}" for index in range(40)],
+            f'url.host_str() == Some("127.0.0.1") /* {RELEASE_SUPPRESSION_MARKER} */',
+            f'base_url.starts_with("http://127.0.0.1:") /* {RELEASE_SUPPRESSION_MARKER} */',
+            f'base_url.starts_with("http://127.0.0.1:") /* {RELEASE_SUPPRESSION_MARKER} */',
+            f'sock.bind(("127.0.0.1", 0)) # {RELEASE_SUPPRESSION_MARKER}',
+            f'python3 -m http.server "$port" --bind 127.0.0.1 # {RELEASE_SUPPRESSION_MARKER}',
+            f'base="http://127.0.0.1:$port" # {RELEASE_SUPPRESSION_MARKER}',
+        ]
+        allowed = release_migration_loopback_lines(fixture)
+        self.assertEqual(allowed, set(range(42, 48)))
+        self.assertTrue(
+            is_release_migration_loopback_fixture(
+                finding("DS137138", path=RELEASE_TARGET, line=42),
+                allowed,
+            )
+        )
+
+    def test_rejects_missing_or_misplaced_release_suppression_markers(self) -> None:
+        fixture = [
+            f'{anchor} # {RELEASE_SUPPRESSION_MARKER}'
+            for anchor in RELEASE_LOOPBACK_ANCHORS
+        ]
+        fixture.insert(2, f'{RELEASE_LOOPBACK_ANCHORS[1]} # {RELEASE_SUPPRESSION_MARKER}')
+        with self.assertRaises(ValueError):
+            release_migration_loopback_lines(fixture[:-1])
+        fixture[0] = f'ordinary HTTP operation # {RELEASE_SUPPRESSION_MARKER}'
+        with self.assertRaises(ValueError):
+            release_migration_loopback_lines(fixture)
 
     def test_preserves_other_release_findings(self) -> None:
+        allowed = {1661}
         self.assertFalse(
             is_release_migration_loopback_fixture(
-                finding("DS137138", path=RELEASE_TARGET, line=1662)
+                finding("DS137138", path=RELEASE_TARGET, line=1662), allowed
             )
         )
         self.assertFalse(
             is_release_migration_loopback_fixture(
-                finding("DS999999", path=RELEASE_TARGET, line=1661)
+                finding("DS999999", path=RELEASE_TARGET, line=1661), allowed
             )
         )
         self.assertFalse(
             is_release_migration_loopback_fixture(
-                finding("DS137138", path="src/network.rs", line=1647)
+                finding("DS137138", path="src/network.rs", line=1647), allowed
             )
         )
 
@@ -83,7 +108,7 @@ class DevSkimTauriCspFilterTests(unittest.TestCase):
         expected = finding("DS137138")
         unrelated = finding("DS137138", path="src/network.rs")
         data = {"runs": [{"results": [expected, unrelated]}]}
-        self.assertEqual(filter_sarif(data), 1)
+        self.assertEqual(filter_sarif(data), 0)
         self.assertEqual(data["runs"][0]["results"], [unrelated])
 
 

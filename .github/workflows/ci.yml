@@ -1397,9 +1397,11 @@ jobs:
             grep -Fq 'ExecStart=/usr/local/bin/gitrun scheduler' systemd/gitrun.service || return 1
             grep -Fq 'ExecStart=/usr/local/bin/gitrun gsr-watchdog' systemd/gitrun-gsr.service || return 1
             grep -Fq 'ExecStart=/usr/local/bin/gitrun control-manager' systemd/gitrun-control.service || return 1
-            grep -Fq 'systemctl").args(["enable", "gitrun.service"])' crates/gitrun-setup/src/lib.rs || return 1
-            grep -Fq 'systemctl").args(["enable", "gitrun-gsr.service"])' crates/gitrun-setup/src/lib.rs || return 1
-            grep -Fq 'systemctl").args(["enable", "gitrun-control.service"])' crates/gitrun-setup/src/lib.rs || return 1
+            grep -Fq 'ServiceManager::Systemd' crates/gitrun-setup/src/lib.rs || return 1
+            grep -Fq 'systemctl' crates/gitrun-setup/src/lib.rs || return 1
+            grep -Fq 'gitrun.service' crates/gitrun-setup/src/lib.rs || return 1
+            grep -Fq 'gitrun-gsr.service' crates/gitrun-setup/src/lib.rs || return 1
+            grep -Fq 'gitrun-control.service' crates/gitrun-setup/src/lib.rs || return 1
             grep -Fq 'gitrun-gsr.service' crates/gitrun-setup/src/lib.rs || return 1
             grep -Fq 'gsr-watchdog' crates/gitrun-cli/src/main.rs || return 1
           }

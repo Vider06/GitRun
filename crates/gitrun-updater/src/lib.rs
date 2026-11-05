@@ -2298,9 +2298,13 @@ fn run_linux_package_command(program: &str, args: &[&str]) -> Result<(), UpdateE
     let mut command = if is_root() {
         Command::new(executable)
     } else {
-        let sudo = linux_system_command("sudo")
-            .ok_or_else(|| UpdateError::Command("trusted /usr/bin/sudo was not found".into()))?;
-        let mut command = Command::new(sudo);
+        let privilege_helper = gitrun_platform::trusted_privilege_escalation_binary()
+            .ok_or_else(|| {
+                UpdateError::Command(
+                    "no trusted sudo, doas or pkexec executable was found".into(),
+                )
+            })?;
+        let mut command = Command::new(privilege_helper);
         command.arg(executable);
         command
     };
@@ -2361,7 +2365,6 @@ fn linux_system_command(name: &str) -> Option<&'static str> {
         "apk" => Some("/sbin/apk"),
         "xbps-install" => Some("/usr/bin/xbps-install"),
         "emerge" => Some("/usr/bin/emerge"),
-        "sudo" => Some("/usr/bin/sudo"),
         "id" => Some("/usr/bin/id"),
         _ => None,
     }
@@ -3359,7 +3362,6 @@ mod tests {
             Some("/usr/bin/xbps-install")
         );
         assert_eq!(linux_system_command("emerge"), Some("/usr/bin/emerge"));
-        assert_eq!(linux_system_command("sudo"), Some("/usr/bin/sudo"));
         assert_eq!(linux_system_command("id"), Some("/usr/bin/id"));
         assert_eq!(linux_system_command("custom"), None);
     }

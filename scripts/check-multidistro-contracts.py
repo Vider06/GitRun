@@ -209,6 +209,7 @@ def check_dashboard_service_manager_contract(errors: list[str]) -> None:
         "gitrun_platform::detect_service_manager()",
         "gitrun_platform::service_command(",
         "gitrun_platform::service_is_installed(",
+        "gitrun_platform::trusted_privilege_escalation_binary()",
         "gitrun_platform::ManagedService::Scheduler",
         "gitrun_platform::ManagedService::Gsr",
     )

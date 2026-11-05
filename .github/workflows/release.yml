@@ -801,6 +801,124 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  package-dashboard-musl:
+    name: Package independent musl Desktop · ${{ matrix.target }}
+    needs: [prepare, collect]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            arch: x86_64
+            package_arch: amd64
+            xbps_arch: x86_64-musl
+          - target: aarch64-unknown-linux-musl
+            arch: aarch64
+            package_arch: arm64
+            xbps_arch: aarch64-musl
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+      TARGET: ${{ matrix.target }}
+      DESKTOP_ARCH: ${{ matrix.arch }}
+      PACKAGE_ARCH: ${{ matrix.package_arch }}
+      XBPS_ARCH: ${{ matrix.xbps_arch }}
+    steps:
+      - name: Checkout packaging metadata
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Download canonical Dashboard build
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: canonical-release-inputs
+          path: canonical
+      - name: Set up pinned Go toolchain for nFPM
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.26.4"
+          check-latest: false
+          cache: false
+      - name: Build musl APK and XBPS packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="$GITHUB_WORKSPACE/canonical/GitRun-Desktop-$VERSION-$TARGET.bin"
+          test -s "$binary"
+          stage="$RUNNER_TEMP/dashboard-musl-stage"
+          out="$RUNNER_TEMP/dashboard-musl-packages"
+          rm -rf "$stage" "$out"
+          mkdir -p "$stage/usr/bin" "$stage/usr/share/applications" "$out"
+          install -m 0755 "$binary" "$stage/usr/bin/gitrun-desktop"
+          cat > "$stage/usr/share/applications/gitrun-desktop.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=GitRun Desktop
+          Comment=GitRun desktop management interface
+          Exec=/usr/bin/gitrun-desktop
+          Terminal=false
+          Categories=Development;System;
+          DESKTOP
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          cat > "$RUNNER_TEMP/dashboard-musl-nfpm.yaml" <<NFPM
+          name: gitrun-desktop
+          arch: $PACKAGE_ARCH
+          platform: linux
+          version: $VERSION_NUMBER
+          maintainer: Vider06
+          description: GitRun Tauri Dashboard for musl Linux, independently installable from the server
+          license: Apache-2.0
+          depends: [musl]
+          overrides:
+            apk:
+              depends: [musl, webkit2gtk-4.1, polkit]
+          contents:
+            - src: $stage/usr/bin/gitrun-desktop
+              dst: /usr/bin/gitrun-desktop
+              file_info:
+                mode: 0755
+            - src: $stage/usr/share/applications/gitrun-desktop.desktop
+              dst: /usr/share/applications/gitrun-desktop.desktop
+          NFPM
+          nfpm package --config "$RUNNER_TEMP/dashboard-musl-nfpm.yaml" --packager apk --target "$out"
+          apk="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.apk' -print -quit)"
+          test -n "$apk"
+          mv "$apk" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk"
+          apk_contents="$(tar -tzf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk")"
+          grep -Fq '.PKGINFO' <<< "$apk_contents"
+
+          xbps_stage="$RUNNER_TEMP/dashboard-xbps-stage"
+          cp -a "$stage" "$xbps_stage"
+          xbps_root="$RUNNER_TEMP/xbps-static"
+          mkdir -p "$xbps_root"
+          curl --fail --silent --show-error --location \
+            https://repo-default.voidlinux.org/static/xbps-static-latest.x86_64-musl.tar.xz \
+            -o "$RUNNER_TEMP/xbps-static.tar.xz"
+          tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
+          xbps_create="$xbps_root/usr/bin/xbps-create"
+          xbps_rindex="$xbps_root/usr/bin/xbps-rindex"
+          test -x "$xbps_create" && test -x "$xbps_rindex"
+          (cd "$out" && "$xbps_create" -A "$XBPS_ARCH" \
+            -n "gitrun-desktop-$VERSION_NUMBER_1" -D "musl webkit2gtk polkit" \
+            -H https://github.com/Vider06/GitRun -l Apache-2.0 -m Vider06 \
+            -s "GitRun Desktop for musl Linux" "$xbps_stage")
+          xbps="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.xbps' -print -quit)"
+          test -n "$xbps"
+          mv "$xbps" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-xbps.xbps"
+          "$xbps_rindex" -a "$out"/*.xbps
+      - name: Upload musl Desktop packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dashboard-package-${{ matrix.target }}
+          path: ${{ runner.temp }}/dashboard-musl-packages/*
+          if-no-files-found: error
+          retention-days: 3
+
   migration-package:
     name: Build optional compatibility package
     needs: [prepare, collect]

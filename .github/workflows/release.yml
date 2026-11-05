@@ -1496,6 +1496,7 @@ jobs:
           trap 'rm -f "$key" "$public" "$payload" "$sigfile"' EXIT
           printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
           chmod 600 "$key"
+          chmod 600 "$key"
           openssl pkey -inform DER -in "$key" -pubout -outform DER -out "$public"
           public_hex="$(tail -c 32 "$public" | od -An -v -tx1 | tr -d '[:space:]')"
           echo "GITRUN_UPDATE_PUBLIC_KEY_HEX=$public_hex" >> "$GITHUB_ENV"
@@ -1583,6 +1584,15 @@ jobs:
 
           key="$RUNNER_TEMP/migration-key.der"
           public="$RUNNER_TEMP/migration-public.der"
+          server_pid=""
+          cleanup() {
+            if [ -n "$server_pid" ]; then
+              kill "$server_pid" 2>/dev/null || true
+              wait "$server_pid" 2>/dev/null || true
+            fi
+            rm -f "$key" "$public"
+          }
+          trap cleanup EXIT
           printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
           openssl pkey -inform DER -in "$key" -pubout -outform DER -out "$public"
           GITRUN_UPDATE_PUBLIC_KEY_HEX="$(tail -c 32 "$public" | od -An -v -tx1 | tr -d '[:space:]')"
@@ -1630,7 +1640,7 @@ jobs:
 
           lib = replace_pattern(
               lib,
-              r"fn is_https_url\\(url: &reqwest::Url\\) -> bool \\{\\s*url\\.scheme\\(\\) == \\"https\\"\\s*\\}",
+              r'fn is_https_url\(url: &reqwest::Url\) -> bool \{\s*url\.scheme\(\) == "https"\s*\}',
               """fn is_https_url(url: &reqwest::Url) -> bool {
               url.scheme() == "https"
                   || (url.scheme() == "http"
@@ -1641,7 +1651,7 @@ jobs:
           )
           lib = replace_pattern(
               lib,
-              r"    Ok\\(format!\\(\\s*\\"https://github\\.com/\\{\\}/releases/latest/download/release-manifest\\.json\\",\\s*repository\\.trim_end_matches\\('/'\\)\\s*\\)\\)",
+              r"    Ok\(format!\(\s*\"https://github\.com/\{\}/releases/latest/download/release-manifest\.json\",\s*repository\.trim_end_matches\('/'\)\s*\)\)",
               """    if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
               if not base_url.startswith("http://127.0.0.1:"):
                   return Err(UpdateError::InvalidManifest(
@@ -1661,7 +1671,7 @@ jobs:
           )
           cli = replace_pattern(
               cli,
-              r"    let url = format!\\(\\s*\\"https://github\\.com/Vider06/GitRun/releases/download/\\{\\}/\\{\\}\\",\\s*version, artifact_name\\s*\\);",
+              r"    let url = format!\(\s*\"https://github\.com/Vider06/GitRun/releases/download/\{\}/\{\}\",\s*version, artifact_name\s*\);",
               """    let url = if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
               if !base_url.starts_with("http://127.0.0.1:") {
                   return Err("migration test URL must use loopback HTTP".into());

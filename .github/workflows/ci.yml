@@ -1351,7 +1351,9 @@ jobs:
           expect "standard report shows requested and matched cache keys" "restored-partial-key" "$(cat "$GITHUB_STEP_SUMMARY")"
           expect "standard report preserves job-specific details" "Runtime-generated detail fixture" "$(cat "$GITHUB_STEP_SUMMARY")"
           expect "ci_check and ci_gate append timed rows" "report self-test gate" "$(cat "$CI_STEPS")"
-          expect "ci_check records warning result" 
+          expect "ci_check records warning result" "report self-test warning" "$(cat "$CI_STEPS")"
+          expect "standard report marks warning step" "| report self-test warning | warning |" "$(cat "$GITHUB_STEP_SUMMARY")"
+          CI_DIR="$saved_ci_dir"; CI_STEPS="$saved_ci_steps"; CI_CACHES="$saved_ci_caches"
           CI_CHECKS="$saved_ci_checks"; CI_ANNOT="$saved_ci_annot"; CI_TAILS="$saved_ci_tails"
           CI_DETAILS="$saved_ci_details"; GITHUB_STEP_SUMMARY="$saved_summary"
           unset GITRUN_JOB_STATUS

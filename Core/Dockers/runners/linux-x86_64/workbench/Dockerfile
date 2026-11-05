@@ -131,8 +131,8 @@ RUN install -d -o root -g root -m 0755 /run/gitrun \
     && chown root:root /run/gitrun/gsr-policy.env \
     && chmod 0444 /run/gitrun/gsr-policy.env
 
-# hadolint ignore=DL3002
 # PID 1 must bootstrap root-owned GSR policy and runner state; the GSR supervisor drops the workload to runner.
+# hadolint ignore=DL3002
 USER 0
 
 # Install the GSR agent as both shell entry points. The original binaries are

@@ -407,10 +407,7 @@ fn validate_uninstall_host() -> Result<(), SetupError> {
     Ok(())
 }
 
-fn package_is_registered(
-    manager: gitrun_platform::PackageManager,
-    name: &str,
-) -> bool {
+fn package_is_registered(manager: gitrun_platform::PackageManager, name: &str) -> bool {
     let result = match manager {
         gitrun_platform::PackageManager::Apt => Command::new("/usr/bin/dpkg-query")
             .args(["-W", "-f=${db:Status-Status}", name])
@@ -423,12 +420,12 @@ fn package_is_registered(
         gitrun_platform::PackageManager::Pacman => {
             Command::new("/usr/bin/pacman").args(["-Q", name]).output()
         }
-        gitrun_platform::PackageManager::Apk => {
-            Command::new("/sbin/apk").args(["info", "-e", name]).output()
-        }
-        gitrun_platform::PackageManager::Xbps => {
-            Command::new("/usr/bin/xbps-query").args(["-p", "pkgver", name]).output()
-        }
+        gitrun_platform::PackageManager::Apk => Command::new("/sbin/apk")
+            .args(["info", "-e", name])
+            .output(),
+        gitrun_platform::PackageManager::Xbps => Command::new("/usr/bin/xbps-query")
+            .args(["-p", "pkgver", name])
+            .output(),
         gitrun_platform::PackageManager::Emerge => return false,
     };
     let Ok(output) = result else {
@@ -449,22 +446,19 @@ fn package_remove_spec(
     name: &str,
 ) -> Result<(&'static str, Vec<String>), SetupError> {
     let (program, mut args): (&str, Vec<String>) = match manager {
-        gitrun_platform::PackageManager::Apt => (
-            "/usr/bin/apt-get",
-            vec!["purge".into(), "-y".into()],
-        ),
-        gitrun_platform::PackageManager::Dnf => (
-            "/usr/bin/dnf",
-            vec!["remove".into(), "-y".into()],
-        ),
+        gitrun_platform::PackageManager::Apt => {
+            ("/usr/bin/apt-get", vec!["purge".into(), "-y".into()])
+        }
+        gitrun_platform::PackageManager::Dnf => {
+            ("/usr/bin/dnf", vec!["remove".into(), "-y".into()])
+        }
         gitrun_platform::PackageManager::Zypper => (
             "/usr/bin/zypper",
             vec!["--non-interactive".into(), "remove".into()],
         ),
-        gitrun_platform::PackageManager::Pacman => (
-            "/usr/bin/pacman",
-            vec!["-Rns".into(), "--noconfirm".into()],
-        ),
+        gitrun_platform::PackageManager::Pacman => {
+            ("/usr/bin/pacman", vec!["-Rns".into(), "--noconfirm".into()])
+        }
         gitrun_platform::PackageManager::Apk => ("/sbin/apk", vec!["del".into()]),
         gitrun_platform::PackageManager::Xbps => ("/usr/bin/xbps-remove", vec!["-y".into()]),
         gitrun_platform::PackageManager::Emerge => {

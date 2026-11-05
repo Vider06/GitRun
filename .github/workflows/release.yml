@@ -904,7 +904,7 @@ jobs:
           xbps_rindex="$xbps_root/usr/bin/xbps-rindex"
           test -x "$xbps_create" && test -x "$xbps_rindex"
           (cd "$out" && "$xbps_create" -A "$XBPS_ARCH" \
-            -n "gitrun-desktop-$VERSION_NUMBER_1" -D "musl webkit2gtk polkit" \
+            -n "gitrun-desktop-${VERSION_NUMBER}_1" -D "musl webkit2gtk polkit" \
             -H https://github.com/Vider06/GitRun -l Apache-2.0 -m Vider06 \
             -s "GitRun Desktop for musl Linux" "$xbps_stage")
           xbps="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.xbps' -print -quit)"

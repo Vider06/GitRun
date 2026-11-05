@@ -907,7 +907,7 @@ fn run_managed_service_action(
             manager.as_str()
         ))
     })?;
-    Command::new(program)
+    std::process::Command::new(program)
         .args(spec.args)
         .output()
         .map_err(Into::into)
@@ -4240,7 +4240,9 @@ fn reinstall_latest_root_command() -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
         return Err("verified GitRun reinstall requires administrator privileges".into());
     }
-    let package_manager = gitrun_platform::detect_package_manager().ok_or_else(|| {
+    let package_manager = gitrun_platform::inspect_linux()
+        .and_then(|platform| platform.package_manager)
+        .ok_or_else(|| {
         "unable to identify a supported native Linux package manager for reinstall".to_owned()
     })?;
     if package_manager != gitrun_platform::PackageManager::Apt

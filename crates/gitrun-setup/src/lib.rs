@@ -1234,26 +1234,27 @@ fn package_install_spec(
     packages: &[&str],
 ) -> Result<(&'static str, Vec<String>), SetupError> {
     let (program, mut args): (&str, Vec<String>) = match manager {
-        gitrun_platform::PackageManager::Apt => (
-            "/usr/bin/apt-get",
-            vec!["install".into(), "-y".into()],
-        ),
-        gitrun_platform::PackageManager::Dnf => (
-            "/usr/bin/dnf",
-            vec!["install".into(), "-y".into()],
-        ),
+        gitrun_platform::PackageManager::Apt => {
+            ("/usr/bin/apt-get", vec!["install".into(), "-y".into()])
+        }
+        gitrun_platform::PackageManager::Dnf => {
+            ("/usr/bin/dnf", vec!["install".into(), "-y".into()])
+        }
         gitrun_platform::PackageManager::Zypper => (
             "/usr/bin/zypper",
-            vec!["--non-interactive".into(), "install".into(), "--no-recommends".into()],
+            vec![
+                "--non-interactive".into(),
+                "install".into(),
+                "--no-recommends".into(),
+            ],
         ),
         gitrun_platform::PackageManager::Pacman => (
             "/usr/bin/pacman",
             vec!["-Syu".into(), "--noconfirm".into(), "--needed".into()],
         ),
-        gitrun_platform::PackageManager::Apk => (
-            "/sbin/apk",
-            vec!["add".into(), "--no-cache".into()],
-        ),
+        gitrun_platform::PackageManager::Apk => {
+            ("/sbin/apk", vec!["add".into(), "--no-cache".into()])
+        }
         gitrun_platform::PackageManager::Xbps => ("/usr/bin/xbps-install", vec!["-Sy".into()]),
         gitrun_platform::PackageManager::Emerge => ("/usr/bin/emerge", vec!["--ask=n".into()]),
         gitrun_platform::PackageManager::Rpm => {
@@ -2893,13 +2894,41 @@ mod tests {
     #[test]
     fn package_install_commands_are_native_to_each_supported_distribution() {
         let cases = [
-            (PackageManager::Apt, "/usr/bin/apt-get", vec!["install", "-y", "docker.io"]),
-            (PackageManager::Dnf, "/usr/bin/dnf", vec!["install", "-y", "docker"]),
-            (PackageManager::Zypper, "/usr/bin/zypper", vec!["--non-interactive", "install", "--no-recommends", "docker"]),
-            (PackageManager::Pacman, "/usr/bin/pacman", vec!["-Syu", "--noconfirm", "--needed", "docker"]),
-            (PackageManager::Apk, "/sbin/apk", vec!["add", "--no-cache", "docker"]),
-            (PackageManager::Xbps, "/usr/bin/xbps-install", vec!["-Sy", "docker"]),
-            (PackageManager::Emerge, "/usr/bin/emerge", vec!["--ask=n", "docker"]),
+            (
+                PackageManager::Apt,
+                "/usr/bin/apt-get",
+                vec!["install", "-y", "docker.io"],
+            ),
+            (
+                PackageManager::Dnf,
+                "/usr/bin/dnf",
+                vec!["install", "-y", "docker"],
+            ),
+            (
+                PackageManager::Zypper,
+                "/usr/bin/zypper",
+                vec!["--non-interactive", "install", "--no-recommends", "docker"],
+            ),
+            (
+                PackageManager::Pacman,
+                "/usr/bin/pacman",
+                vec!["-Syu", "--noconfirm", "--needed", "docker"],
+            ),
+            (
+                PackageManager::Apk,
+                "/sbin/apk",
+                vec!["add", "--no-cache", "docker"],
+            ),
+            (
+                PackageManager::Xbps,
+                "/usr/bin/xbps-install",
+                vec!["-Sy", "docker"],
+            ),
+            (
+                PackageManager::Emerge,
+                "/usr/bin/emerge",
+                vec!["--ask=n", "docker"],
+            ),
         ];
 
         for (manager, expected_program, expected_args) in cases {
@@ -2915,11 +2944,26 @@ mod tests {
 
     #[test]
     fn docker_package_names_match_native_package_managers() {
-        assert_eq!(docker_packages(PackageManager::Apt), ["docker.io", "docker-compose-v2"]);
-        assert_eq!(docker_packages(PackageManager::Dnf), ["docker", "docker-compose"]);
-        assert_eq!(docker_packages(PackageManager::Pacman), ["docker", "docker-compose"]);
-        assert_eq!(docker_packages(PackageManager::Apk), ["docker", "docker-cli-compose"]);
-        assert_eq!(docker_packages(PackageManager::Xbps), ["docker", "docker-compose"]);
+        assert_eq!(
+            docker_packages(PackageManager::Apt),
+            ["docker.io", "docker-compose-v2"]
+        );
+        assert_eq!(
+            docker_packages(PackageManager::Dnf),
+            ["docker", "docker-compose"]
+        );
+        assert_eq!(
+            docker_packages(PackageManager::Pacman),
+            ["docker", "docker-compose"]
+        );
+        assert_eq!(
+            docker_packages(PackageManager::Apk),
+            ["docker", "docker-cli-compose"]
+        );
+        assert_eq!(
+            docker_packages(PackageManager::Xbps),
+            ["docker", "docker-compose"]
+        );
         assert!(docker_packages(PackageManager::Rpm).is_empty());
     }
 

@@ -1111,8 +1111,8 @@ fn stream_privileged_command(
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
 async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
-    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
-        return Err("graphical uninstall currently targets Linux x86_64".into());
+    if !cfg!(target_os = "linux") {
+        return Err("graphical uninstall currently targets Linux".into());
     }
     if control_manager_enabled() {
         let scheduled = control_manager_request(
@@ -1257,8 +1257,8 @@ fn stream_unprivileged_command(
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
 async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
-    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
-        return Err("graphical reinstall currently targets Linux x86_64".into());
+    if !cfg!(target_os = "linux") {
+        return Err("graphical reinstall currently targets Linux".into());
     }
     if control_manager_enabled() {
         let scheduled = control_manager_request(
@@ -1356,8 +1356,8 @@ async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(
         reinstall,
     } = request;
 
-    if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
-        return Err("graphical first-run setup currently targets Linux x86_64".into());
+    if !cfg!(target_os = "linux") {
+        return Err("graphical first-run setup currently targets Linux".into());
     }
     if reinstall {
         if configured_config_path().is_none() {

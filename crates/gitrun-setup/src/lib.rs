@@ -2159,6 +2159,13 @@ pub fn ensure_control_manager_service_with_binary(
     desktop_uid: Option<u32>,
     binary_path: &Path,
 ) -> Result<(), SetupError> {
+    if gitrun_platform::detect_service_manager()
+        != Some(gitrun_platform::ServiceManager::Systemd)
+    {
+        // OpenRC and runit use the Dashboard's explicit pkexec fallback; the
+        // systemd-only Control Manager socket/service is intentionally absent.
+        return Ok(());
+    }
     if !cfg!(target_os = "linux") || !supported_linux_architecture() {
         return Err(SetupError::UnsupportedPlatform);
     }

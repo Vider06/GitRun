@@ -257,6 +257,8 @@ def check_setup_native_lifecycle_contract(errors: list[str]) -> None:
         )
     if 'Command::new("/usr/bin/apt-get").args(["install"' in setup:
         errors.append("Docker bootstrap must not invoke apt-get outside the Apt package-manager branch")
+    if '"-Syu"' in setup:
+        errors.append("Docker bootstrap must not trigger a full Arch system upgrade")
 
 
 def check_updater_native_package_contract(errors: list[str]) -> None:
@@ -280,6 +282,8 @@ def check_updater_native_package_contract(errors: list[str]) -> None:
             "Dependency updates must use native Linux package managers; missing: "
             + ", ".join(missing)
         )
+    if '"-Syu"' in updater:
+        errors.append("Dependency updates must not trigger a full Arch system upgrade")
 
 
 def check_recovery_service_manager_contract(errors: list[str]) -> None:

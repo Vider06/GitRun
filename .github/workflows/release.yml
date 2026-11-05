@@ -679,7 +679,8 @@ jobs:
           tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
           xbps_create="$xbps_root/usr/bin/xbps-create"
           xbps_rindex="$xbps_root/usr/bin/xbps-rindex"
-          test -x "$xbps_create" && test -x "$xbps_rindex"
+          xbps_query="$xbps_root/usr/bin/xbps-query"
+          test -x "$xbps_create" && test -x "$xbps_rindex" && test -x "$xbps_query"
           export XBPS_ARCH="$xbps_arch"
           (cd "$out" && "$xbps_create" -A "$xbps_arch" -n "gitrun-server-${VERSION_NUMBER}_1" \
             -D "$xbps_dep" -H https://github.com/Vider06/GitRun \
@@ -690,6 +691,8 @@ jobs:
           mv "$xbps_file" "$out/GitRun-Server-$VERSION-linux-$cpu-xbps.xbps"
           # Indexing the local repository parses the XBPS archive and validates its metadata.
           "$xbps_rindex" -a "$out"/*.xbps
+          server_deps="$("$xbps_query" -R --repository="$out" -x "gitrun-server-${VERSION_NUMBER}_1")"
+          grep -Fq "$xbps_dep" <<< "$server_deps"
           test "$(find "$out" -maxdepth 1 -type f -name '*.xbps' | wc -l)" -eq 1
           test "$(find "$out" -maxdepth 1 -type f | wc -l)" -ge 3
       - name: Upload immutable target packages
@@ -925,7 +928,8 @@ jobs:
           tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
           xbps_create="$xbps_root/usr/bin/xbps-create"
           xbps_rindex="$xbps_root/usr/bin/xbps-rindex"
-          test -x "$xbps_create" && test -x "$xbps_rindex"
+          xbps_query="$xbps_root/usr/bin/xbps-query"
+          test -x "$xbps_create" && test -x "$xbps_rindex" && test -x "$xbps_query"
           (cd "$out" && "$xbps_create" -A "$XBPS_ARCH" \
             -n "gitrun-desktop-${VERSION_NUMBER}_1" -D "musl libwebkit2gtk41 polkit" \
             -H https://github.com/Vider06/GitRun -l Apache-2.0 -m Vider06 \
@@ -934,6 +938,10 @@ jobs:
           test -n "$xbps"
           mv "$xbps" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-xbps.xbps"
           "$xbps_rindex" -a "$out"/*.xbps
+          desktop_deps="$("$xbps_query" -R --repository="$out" -x "gitrun-desktop-${VERSION_NUMBER}_1")"
+          grep -Fq musl <<< "$desktop_deps"
+          grep -Fq libwebkit2gtk41 <<< "$desktop_deps"
+          grep -Fq polkit <<< "$desktop_deps"
       - name: Upload musl Desktop packages
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

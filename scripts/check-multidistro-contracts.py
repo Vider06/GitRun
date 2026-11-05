@@ -102,7 +102,7 @@ def check_platform_catalog(errors: list[str]) -> None:
         "Apt", "Dnf", "Zypper", "Pacman", "Apk", "Xbps", "Emerge",
         "Systemd", "OpenRc", "Runit",
         "ManagedService", "ServiceAction", "service_command_candidates",
-        "service_command", "service_is_installed",
+        "service_command", "service_is_installed", "trusted_privilege_escalation_binary",
         "known_distributions_prefer_their_native_package_manager",
     )
     missing = [item for item in required if item not in source]
@@ -170,6 +170,27 @@ def check_release_package_boundaries(errors: list[str]) -> None:
             errors.append("XBPS archive creation must consume the init-neutral stage")
         if '"$xbps_create"' in block and '"$package_stage"' in block:
             errors.append("XBPS archive must not consume the systemd-enabled package stage")
+
+
+def check_portable_privilege_helpers(errors: list[str]) -> None:
+    cli = (ROOT / "crates/gitrun-cli/src/main.rs").read_text(encoding="utf-8")
+    updater = (ROOT / "crates/gitrun-updater/src/lib.rs").read_text(encoding="utf-8")
+    if 'Command::new("/bin/sh")' not in cli or "trusted_privilege_command()" not in cli:
+        errors.append("CLI privileged shell helpers must use POSIX sh and the trusted platform privilege helper")
+    if "trusted_privilege_escalation_binary()" not in updater:
+        errors.append("updater dependency installation must support the platform privilege helper")
+
+    for relative in ("scripts/uninstall.sh", "scripts/reinstall-latest.sh"):
+        source = read_text(ROOT / relative)
+        if source is None:
+            errors.append(f"missing portable privilege script: {relative}")
+            continue
+        if not source.startswith("#!/bin/sh"):
+            errors.append(f"{relative} must use the POSIX shell")
+        if "[[ " in source or "(( " in source or "bash" in source:
+            errors.append(f"{relative} contains Bash-only syntax")
+        if "trusted_helper" not in source or "/usr/bin/doas" not in source:
+            errors.append(f"{relative} must validate and support doas as a privilege helper")
 
 
 def check_dashboard_service_manager_contract(errors: list[str]) -> None:
@@ -329,6 +350,7 @@ def main() -> int:
     check_platform_catalog(errors)
     check_release_package_boundaries(errors)
     check_dashboard_service_manager_contract(errors)
+    check_portable_privilege_helpers(errors)
     check_setup_native_lifecycle_contract(errors)
     check_updater_native_package_contract(errors)
     check_recovery_service_manager_contract(errors)

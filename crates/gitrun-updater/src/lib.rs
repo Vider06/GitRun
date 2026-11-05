@@ -405,7 +405,7 @@ pub fn latest_manifest_download_url(repository: &str) -> Result<String, UpdateEr
 }
 
 /// Build the immutable, version-specific manifest URL used after an
-/// unprivileged preflight so sudo does not have to resolve "latest" again.
+/// unprivileged preflight so the privileged retry does not have to resolve "latest" again.
 pub fn release_manifest_download_url(
     repository: &str,
     version: &str,

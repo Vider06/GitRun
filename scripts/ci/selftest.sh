@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# shellcheck disable=SC1090
+# shellcheck disable=SC1090,SC1091
 source "$RUNNER_TEMP/ci-lib.sh"
 fail=0
 expect() { # name needle haystack

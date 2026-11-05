@@ -1278,7 +1278,7 @@ fn package_install_spec(
         ),
         gitrun_platform::PackageManager::Pacman => (
             "/usr/bin/pacman",
-            vec!["-Syu".into(), "--noconfirm".into(), "--needed".into()],
+            vec!["-S".into(), "--noconfirm".into(), "--needed".into()],
         ),
         gitrun_platform::PackageManager::Apk => {
             ("/sbin/apk", vec!["add".into(), "--no-cache".into()])
@@ -3236,7 +3236,7 @@ mod tests {
             (
                 PackageManager::Pacman,
                 "/usr/bin/pacman",
-                vec!["-Syu", "--noconfirm", "--needed", "docker"],
+                vec!["-S", "--noconfirm", "--needed", "docker"],
             ),
             (
                 PackageManager::Apk,

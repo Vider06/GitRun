@@ -3493,7 +3493,7 @@ fn run_doctor() -> i32 {
             control_unit
                 .map(|path| Ok((*path).to_owned()))
                 .unwrap_or_else(|| {
-                    Err("missing gitrun-control.service; run sudo gitrun fix-update".into())
+                    Err("missing gitrun-control.service; run gitrun fix-update as root".into())
                 }),
             &mut failures,
             &mut warnings,

@@ -105,7 +105,7 @@ jobs:
             '{spdxVersion:"SPDX-2.3",dataLicense:"CC0-1.0",SPDXID:"SPDXRef-DOCUMENT",name:"GitRun",documentNamespace:("https://github.com/Vider06/GitRun/spdx/" + $commit),creationInfo:{created:$created,creators:["Tool: GitRun CI"]},packages:[.packages | to_entries[] | {SPDXID:("SPDXRef-Package-" + (.key|tostring)),name:.value.name,versionInfo:.value.version,downloadLocation:(.value.source // "NOASSERTION")}]}' \
             "$root/cargo-metadata.json" > "$root/sbom.spdx.json"
           jq -n --arg commit "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" \
-            '{schema:"gitrun.provenance.v2",git_commit:$commit,run_id:$run,server_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],updater_archive:"tar.gz",package_formats:["deb","rpm","apk","archlinux","xbps","tar.zst"],desktop:"GitRun-Desktop",desktop_target:"x86_64-unknown-linux-gnu"}' \
+            '{schema:"gitrun.provenance.v2",git_commit:$commit,run_id:$run,server_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],updater_archive:"tar.gz",package_formats:["deb","rpm","apk","archlinux","xbps","tar.zst"],desktop:"GitRun-Desktop",desktop_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu"]}' \
             > "$root/provenance.json"
       - name: Upload shared inputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -664,8 +664,8 @@ jobs:
           nfpm package --config "$RUNNER_TEMP/dashboard-nfpm.yaml" --packager deb --target "$out"
           deb="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop_*.deb' -print -quit)"
           test -n "$deb"
-          mv "$deb" "$out/GitRun-Desktop-$VERSION-linux-x86_64-deb.deb"
-          test "$(dpkg-deb -f "$out/GitRun-Desktop-$VERSION-linux-x86_64-deb.deb" Package)" = gitrun-desktop
+          mv "$deb" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb"
+          test "$(dpkg-deb -f "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb" Package)" = gitrun-desktop
       - name: Upload separate Dashboard package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
@@ -790,7 +790,7 @@ jobs:
       - name: Download independent Dashboard package
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
-          name: dashboard-package
+          pattern: dashboard-package-*
           path: all-assets
           merge-multiple: true
       - name: Download one-off legacy migration package
@@ -1006,8 +1006,12 @@ jobs:
                   triple = name[len(f"GitRun-Server-{version}-"):-len("-server.tar.zst")]
                   cpu, abi = triple.split("-unknown-linux-")
                   target = f"linux-{cpu}-{abi}-tar-zst"
-              elif name.endswith(".AppImage"): target = "linux-x86_64-desktop-appimage"
-              elif "Desktop-" in name: target = "linux-x86_64-desktop-deb"
+              elif name.endswith(".AppImage"):
+                  arch = "aarch64" if "-linux-aarch64." in name else "x86_64"
+                  target = f"linux-{arch}-desktop-appimage"
+              elif "Desktop-" in name:
+                  arch = "aarch64" if "-linux-aarch64-" in name else "x86_64"
+                  target = f"linux-{arch}-desktop-deb"
               elif name == f"GitRun-{version}-linux-x86_64-deb.deb": target = "linux-x86_64-deb"
               elif name.startswith(f"GitRun-Server-{version}-linux-"):
                   package_target = name[len(f"GitRun-Server-{version}-"):]
@@ -1027,7 +1031,8 @@ jobs:
               "x86_64-unknown-linux-musl","aarch64-unknown-linux-musl",
               "linux-x86_64-gnu-tar-zst","linux-aarch64-gnu-tar-zst",
               "linux-x86_64-musl-tar-zst","linux-aarch64-musl-tar-zst",
-              "linux-x86_64-desktop-appimage","linux-x86_64-desktop-deb",
+              "linux-x86_64-desktop-appimage","linux-aarch64-desktop-appimage",
+              "linux-x86_64-desktop-deb","linux-aarch64-desktop-deb",
               "linux-x86_64-server-deb","linux-aarch64-server-deb",
               "linux-x86_64-server-rpm","linux-aarch64-server-rpm",
               "linux-x86_64-musl-server-apk","linux-aarch64-musl-server-apk",
@@ -1251,7 +1256,8 @@ jobs:
                   native_packages.append((arch, abi, fmt, link(name), digest_cell(item)))
               elif name.startswith(f"GitRun-Desktop-{version}-"):
                   fmt = "AppImage" if name.endswith(".AppImage") else "DEB"
-                  desktop_assets.append(("x86_64", fmt, link(name), digest_cell(item)))
+                  arch = "aarch64" if "-linux-aarch64" in name else "x86_64"
+                  desktop_assets.append((arch, fmt, link(name), digest_cell(item)))
               elif name == f"GitRun-{version}-linux-x86_64-deb.deb":
                   migration_assets.append(("x86_64", "Debian / Ubuntu", "Legacy DEB; package gitrun", link(name), digest_cell(item)))
               else:

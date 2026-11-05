@@ -3544,7 +3544,16 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
         // Prefer PolicyKit for GUI-launched operations; fall back to a trusted
         // terminal privilege helper when pkexec is not installed.
         let privilege_helper = pkexec_path()
-            .or_else(gitrun_platform::trusted_privilege_escalation_binary)
+            .or_else(|| {
+                #[cfg(unix)]
+                {
+                    gitrun_platform::trusted_privilege_escalation_binary()
+                }
+                #[cfg(not(unix))]
+                {
+                    None
+                }
+            })
             .ok_or("trusted pkexec, sudo or doas executable was not found")?;
         std::process::Command::new(privilege_helper)
             .arg(&program)

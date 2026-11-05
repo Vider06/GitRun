@@ -410,7 +410,7 @@ fn run_embedded_privileged_helper(
         file.write_all(script.as_bytes())?;
         file.sync_all()?;
         presenter.prepare_for_external_process();
-        let status = std::process::Command::new("/bin/bash")
+        let status = std::process::Command::new("/bin/sh")
             .arg(&script_path)
             .arg(&executable)
             .status()?;
@@ -433,7 +433,7 @@ fn run_embedded_privileged_helper(
     _script: &str,
     _presenter: &mut presenter::CatPresenter,
 ) -> i32 {
-    eprintln!("GitRun uninstall/reinstall currently supports Linux x86_64 only.");
+    eprintln!("GitRun uninstall/reinstall currently supports Linux only.");
     2
 }
 

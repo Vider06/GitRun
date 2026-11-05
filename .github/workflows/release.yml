@@ -335,13 +335,19 @@ jobs:
         with:
           path: canonical-inputs
           merge-multiple: true
-      - name: Gate complete canonical target set
+      - name: Restore executable permissions and gate canonical target set
         shell: bash
         run: |
           set -euo pipefail
+          # GitHub artifact ZIP extraction does not preserve Unix executable bits.
+          # Restore the executable mode before downstream package jobs consume the binaries.
+          find canonical-inputs -maxdepth 1 -type f -name 'gitrun-*' -exec chmod 0755 {} +
           for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
-            test -x "canonical-inputs/gitrun-$target"
-            test -s "canonical-inputs/GitRun-Server-${{ needs.prepare.outputs.version }}-$target-server.tar.gz"
+            binary="canonical-inputs/gitrun-$target"
+            archive="canonical-inputs/GitRun-Server-${{ needs.prepare.outputs.version }}-$target-server.tar.gz"
+            test -s "$binary"
+            test -x "$binary"
+            test -s "$archive"
           done
           test -s "canonical-inputs/GitRun-Desktop-${{ needs.prepare.outputs.version }}-linux-x86_64.AppImage"
           test -s canonical-inputs/library.zip

@@ -213,6 +213,28 @@ def check_setup_native_lifecycle_contract(errors: list[str]) -> None:
         errors.append("Docker bootstrap must not invoke apt-get outside the Apt package-manager branch")
 
 
+def check_updater_native_package_contract(errors: list[str]) -> None:
+    updater = (ROOT / "crates/gitrun-updater/src/lib.rs").read_text(encoding="utf-8")
+    required = (
+        "current_linux_package_manager()",
+        "linux_dependency_packages(",
+        "run_linux_package_command(",
+        "PackageManager::Apt",
+        "PackageManager::Dnf",
+        "PackageManager::Zypper",
+        "PackageManager::Pacman",
+        "PackageManager::Apk",
+        "PackageManager::Xbps",
+        "PackageManager::Emerge",
+    )
+    missing = [item for item in required if item not in updater]
+    if missing:
+        errors.append(
+            "Dependency updates must use native Linux package managers; missing: "
+            + ", ".join(missing)
+        )
+
+
 def check_recovery_service_manager_contract(errors: list[str]) -> None:
     recovery = (ROOT / "crates/gitrun-recovery/src/json_recovery.rs").read_text(encoding="utf-8")
     required = (
@@ -294,6 +316,7 @@ def main() -> int:
     check_release_package_boundaries(errors)
     check_dashboard_service_manager_contract(errors)
     check_setup_native_lifecycle_contract(errors)
+    check_updater_native_package_contract(errors)
     check_recovery_service_manager_contract(errors)
 
     summary = [

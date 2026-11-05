@@ -35,11 +35,17 @@ EXPECTED_CSP_LINE = (
 EXPECTED_RULE_IDS = {"DS137138", "DS162092"}
 
 # The release workflow embeds a disposable 1.8.23 migration-test fixture. Its
-# loopback-only HTTP endpoint is not shipped or enabled in production. Keep
-# this exception tied to the exact six source lines and DS137138 only.
+# loopback-only HTTP endpoint is not shipped or enabled in production. Resolve
+# the exception from explicit markers and semantic anchors, never line numbers.
 RELEASE_TARGET = ".github/workflows/release.yml"
-RELEASE_LOOPBACK_LINES = {1661, 1670, 1690, 1731, 1735, 1737}
 RELEASE_SUPPRESSION_MARKER = "DevSkim: ignore DS137138"
+RELEASE_LOOPBACK_ANCHORS = (
+    'url.host_str() == Some("127.0.0.1")',
+    'base_url.starts_with("http://127.0.0.1:")',
+    'sock.bind(("127.0.0.1", 0))',
+    'python3 -m http.server "$port" --bind 127.0.0.1',
+    'base="http://127.0.0.1:$port"',
+)
 
 
 def is_tauri_ipc_csp_false_positive(result: dict[str, Any]) -> bool:
@@ -71,8 +77,39 @@ def is_tauri_ipc_csp_false_positive(result: dict[str, Any]) -> bool:
     return False
 
 
-def is_release_migration_loopback_fixture(result: dict[str, Any]) -> bool:
-    """Match only DS137138 at one of the six guarded migration-test lines."""
+def release_migration_loopback_lines(source_lines: list[str]) -> set[int]:
+    """Resolve guarded fixture lines by marker and validate their semantics."""
+    marked = {
+        index
+        for index, line in enumerate(source_lines, start=1)
+        if RELEASE_SUPPRESSION_MARKER in line
+    }
+    if len(marked) != 6:
+        raise ValueError(
+            "Expected six explicitly marked release migration loopback locations; "
+            f"found {len(marked)}."
+        )
+
+    marked_text = [source_lines[index - 1] for index in sorted(marked)]
+    for anchor in RELEASE_LOOPBACK_ANCHORS:
+        if sum(anchor in line for line in marked_text) != (2 if anchor == RELEASE_LOOPBACK_ANCHORS[1] else 1):
+            raise ValueError(
+                "Release migration loopback fixture changed: re-review its semantic anchors."
+            )
+    if any(
+        not any(anchor in line for anchor in RELEASE_LOOPBACK_ANCHORS)
+        for line in marked_text
+    ):
+        raise ValueError(
+            "A DevSkim suppression marker is not attached to an approved loopback operation."
+        )
+    return marked
+
+
+def is_release_migration_loopback_fixture(
+    result: dict[str, Any], allowed_lines: set[int]
+) -> bool:
+    """Match DS137138 only at dynamically resolved, explicitly marked lines."""
     if result.get("ruleId") != "DS137138":
         return False
 
@@ -83,18 +120,21 @@ def is_release_migration_loopback_fixture(result: dict[str, Any]) -> bool:
         if not uri.endswith(RELEASE_TARGET):
             continue
         line = physical.get("region", {}).get("startLine")
-        if line in RELEASE_LOOPBACK_LINES:
+        if line in allowed_lines:
             return True
     return False
 
 
-def filter_sarif(data: dict[str, Any]) -> int:
+def filter_sarif(data: dict[str, Any], release_loopback_lines: set[int] | None = None) -> int:
     """Remove only known false positives in-place; preserve all other results."""
     removed = 0
     for run in data.get("runs", []):
         kept = []
         for result in run.get("results", []):
-            if is_tauri_ipc_csp_false_positive(result) or is_release_migration_loopback_fixture(result):
+            if is_tauri_ipc_csp_false_positive(result) or (
+                release_loopback_lines is not None
+                and is_release_migration_loopback_fixture(result, release_loopback_lines)
+            ):
                 removed += 1
             else:
                 kept.append(result)
@@ -104,11 +144,10 @@ def filter_sarif(data: dict[str, Any]) -> int:
 
 def main() -> None:
     release_lines = Path(RELEASE_TARGET).read_text(encoding="utf-8").splitlines()
-    for line_number in RELEASE_LOOPBACK_LINES:
-        if len(release_lines) < line_number or RELEASE_SUPPRESSION_MARKER not in release_lines[line_number - 1]:
-            raise SystemExit(
-                "Release migration loopback fixture changed: re-review the narrow DevSkim exception."
-            )
+    try:
+        allowed_release_lines = release_migration_loopback_lines(release_lines)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
 
     config_lines = Path(TARGET).read_text(encoding="utf-8").splitlines()
     if len(config_lines) < TARGET_LINE or config_lines[TARGET_LINE - 1] != EXPECTED_CSP_LINE:
@@ -131,7 +170,7 @@ def main() -> None:
                         physical.get("region", {}).get("startLine"),
                     ))
     print(f"DevSkim release.yml findings before filtering: {release_findings}")
-    removed = filter_sarif(data)
+    removed = filter_sarif(data, allowed_release_lines)
     if removed:
         # DevSkim's container may create a root-owned, read-only SARIF file.
         # Write a sibling file then atomically replace its directory entry.

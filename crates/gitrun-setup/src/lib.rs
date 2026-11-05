@@ -477,7 +477,10 @@ fn stop_gitrun_services() -> Result<(), SetupError> {
         return Ok(());
     };
     let program = gitrun_platform::trusted_service_manager_binary(manager).ok_or_else(|| {
-        SetupError::Command(format!("trusted {} executable was not found", manager.as_str()))
+        SetupError::Command(format!(
+            "trusted {} executable was not found",
+            manager.as_str()
+        ))
     })?;
     match manager {
         gitrun_platform::ServiceManager::Systemd => {
@@ -493,9 +496,7 @@ fn stop_gitrun_services() -> Result<(), SetupError> {
         }
         gitrun_platform::ServiceManager::OpenRc => {
             for service in ["gitrun-gsr", "gitrun"] {
-                let _ = Command::new(&program)
-                    .args([service, "stop"])
-                    .status();
+                let _ = Command::new(&program).args([service, "stop"]).status();
                 let _ = Command::new("/sbin/rc-update")
                     .args(["del", service, "default"])
                     .status();
@@ -1375,7 +1376,10 @@ fn start_host_service_temporary(service: &str) -> Result<(), SetupError> {
         SetupError::Command("no supported active service manager was detected".into())
     })?;
     let program = gitrun_platform::trusted_service_manager_binary(manager).ok_or_else(|| {
-        SetupError::Command(format!("trusted {} executable was not found", manager.as_str()))
+        SetupError::Command(format!(
+            "trusted {} executable was not found",
+            manager.as_str()
+        ))
     })?;
     match manager {
         gitrun_platform::ServiceManager::Systemd => {
@@ -1406,7 +1410,10 @@ fn stop_host_service(service: &str) -> Result<(), SetupError> {
         SetupError::Command("no supported active service manager was detected".into())
     })?;
     let program = gitrun_platform::trusted_service_manager_binary(manager).ok_or_else(|| {
-        SetupError::Command(format!("trusted {} executable was not found", manager.as_str()))
+        SetupError::Command(format!(
+            "trusted {} executable was not found",
+            manager.as_str()
+        ))
     })?;
     match manager {
         gitrun_platform::ServiceManager::Systemd => {
@@ -1432,7 +1439,10 @@ fn start_host_service(service: &str) -> Result<(), SetupError> {
         SetupError::Command("no supported active service manager was detected".into())
     })?;
     let program = gitrun_platform::trusted_service_manager_binary(manager).ok_or_else(|| {
-        SetupError::Command(format!("trusted {} executable was not found", manager.as_str()))
+        SetupError::Command(format!(
+            "trusted {} executable was not found",
+            manager.as_str()
+        ))
     })?;
     match manager {
         gitrun_platform::ServiceManager::Systemd => {
@@ -1681,7 +1691,10 @@ fn start_gitrun_services() -> Result<(), SetupError> {
         SetupError::Command("no supported active service manager was detected".into())
     })?;
     let program = gitrun_platform::trusted_service_manager_binary(manager).ok_or_else(|| {
-        SetupError::Command(format!("trusted {} executable was not found", manager.as_str()))
+        SetupError::Command(format!(
+            "trusted {} executable was not found",
+            manager.as_str()
+        ))
     })?;
     match manager {
         gitrun_platform::ServiceManager::Systemd => {
@@ -1693,11 +1706,7 @@ fn start_gitrun_services() -> Result<(), SetupError> {
             ] {
                 run_command(Command::new(&program).args(["enable", service]))?;
                 run_command(Command::new(&program).args(["restart", service]))?;
-                run_command(Command::new(&program).args([
-                    "is-active",
-                    "--quiet",
-                    service,
-                ]))?;
+                run_command(Command::new(&program).args(["is-active", "--quiet", service]))?;
             }
         }
         gitrun_platform::ServiceManager::OpenRc => {

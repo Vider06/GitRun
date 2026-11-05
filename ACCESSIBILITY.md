@@ -35,12 +35,11 @@ These are implementation details, not proof that every control or interaction is
 
 The management console is designed for keyboard operation. The current controls include:
 
-- Arrow keys or `j`/`k` to move through the focused list or scroll details.
-- `Tab` and `Shift+Tab` to switch between sections, operations and details.
-- `Left`/`Right` or `h`/`l` to move focus.
+- Arrow keys or `j`/`k` to move through the interface.
+- `Tab` to change focus between sections and controls.
 - `Enter` to run the selected operation.
-- `Esc` to go back, `?` to open help, and `q` or `Ctrl+C` to exit.
-- `Home` and `End` to move to the beginning or end of the focused list or details.
+- `r` to refresh, `Esc` to go back, and `?` to open help.
+- `q` or `Ctrl+C` to exit; number shortcuts jump directly to sections.
 
 See the [CLI management-console guide](crates/gitrun-cli/README.md#terminal-management-console) for the full interaction model.
 

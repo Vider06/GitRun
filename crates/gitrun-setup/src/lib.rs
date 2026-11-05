@@ -940,9 +940,14 @@ pub fn bootstrap_linux_with_auth_and_profile(
     }
     validate_bootstrap_auth(&auth)?;
 
-    ensure_control_manager_group()?;
-    if let Some(uid) = owner_uid {
-        add_user_to_control_group(uid)?;
+    let systemd_control_manager =
+        gitrun_platform::detect_service_manager()
+            == Some(gitrun_platform::ServiceManager::Systemd);
+    if systemd_control_manager {
+        ensure_control_manager_group()?;
+        if let Some(uid) = owner_uid {
+            add_user_to_control_group(uid)?;
+        }
     }
 
     setup_progress(1, "Checking Docker and system prerequisites");
@@ -1004,26 +1009,7 @@ pub fn bootstrap_linux_with_auth_and_profile(
         install_binary(source, installed_recovery, owner_uid)?;
     }
 
-    let service = if recovery_source.is_some() {
-        resources::SYSTEMD_SERVICE
-    } else {
-        resources::SYSTEMD_SERVICE_DIRECT
-    };
-    write_resource(
-        Path::new("/etc/systemd/system/gitrun.service"),
-        service,
-        0o644,
-    )?;
-    write_resource(
-        Path::new("/etc/systemd/system/gitrun-gsr.service"),
-        resources::SYSTEMD_GSR_SERVICE,
-        0o644,
-    )?;
-    write_resource(
-        Path::new("/etc/systemd/system/gitrun-control.service"),
-        resources::SYSTEMD_CONTROL_MANAGER_SERVICE,
-        0o644,
-    )?;
+    install_gitrun_service_definitions(recovery_source.is_some())?;
 
     setup_progress(4, "Writing GitRun configuration");
     let config_path = config_dir.join("gitrun.env");
@@ -1044,6 +1030,9 @@ pub fn bootstrap_linux_with_auth_and_profile(
         secure_system_settings_file(&settings_path, Some(uid))?;
         chown_path(&vault_dir, uid)?;
         add_user_to_docker_group(uid)?;
+        if systemd_control_manager {
+            add_user_to_control_group(uid)?;
+        }
     }
 
     setup_progress(5, "Building gitrun-runner:latest");
@@ -1066,9 +1055,9 @@ pub fn bootstrap_linux_with_auth_and_profile(
 
     // Mark the installation complete before starting the scheduler. The
     // scheduler's recovery preflight requires this flag, so writing it only
-    // after systemctl reports the service active creates a bootstrap deadlock:
-    // the service cannot start until setup is complete, while setup waits for
-    // the service to start before declaring completion.
+    // after the service manager reports the service active creates a bootstrap
+    // deadlock: the service cannot start until setup is complete, while setup
+    // waits for the service to start before declaring completion.
     setup_progress(8, "Recording completed setup state");
     write_setup_flag()?;
     if !setup_flag_is_valid() {
@@ -1077,32 +1066,8 @@ pub fn bootstrap_linux_with_auth_and_profile(
         ));
     }
 
-    setup_progress(
-        9,
-        "Enabling and starting the GitRun Control Manager and services",
-    );
-    run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun-control.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun-control.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args([
-        "is-active",
-        "--quiet",
-        "gitrun-control.service",
-    ]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args([
-        "is-active",
-        "--quiet",
-        "gitrun.service",
-    ]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["enable", "gitrun-gsr.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["restart", "gitrun-gsr.service"]))?;
-    run_command(Command::new("/usr/bin/systemctl").args([
-        "is-active",
-        "--quiet",
-        "gitrun-gsr.service",
-    ]))?;
+    setup_progress(9, "Enabling and starting GitRun services");
+    start_gitrun_services()?;
 
     Ok(SetupReport {
         dependencies: check_dependencies(),

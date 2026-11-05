@@ -3391,10 +3391,7 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
     }
     let manager = gitrun_platform::detect_service_manager()
         .ok_or("no supported active service manager was detected on this host")?;
-    if !gitrun_platform::service_is_installed(
-        manager,
-        gitrun_platform::ManagedService::Scheduler,
-    ) {
+    if !gitrun_platform::service_is_installed(manager, gitrun_platform::ManagedService::Scheduler) {
         return Err(format!(
             "GitRun has no installed service definition for the active {} service manager; run the platform-specific setup before controlling the service.",
             manager.as_str()

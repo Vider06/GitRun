@@ -133,8 +133,9 @@ def check_release_package_boundaries(errors: list[str]) -> None:
         "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm",
         "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst",
         "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk",
+        'if [ "$DESKTOP_ARCH" = "x86_64" ]',
         "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-xbps.xbps",
-        "desktop_package_formats:[\"deb\",\"rpm\",\"archlinux\",\"appimage\",\"apk\",\"xbps\"]",
+        "desktop_package_formats:[\"deb\",\"rpm\",\"archlinux\",\"appimage\",\"apk\",\"xbps\"],desktop_package_arches:{apk:[\"x86_64\"],xbps:[\"x86_64\",\"aarch64\"]}",
         'depends: ["(webkit2gtk4.1 or libwebkit2gtk-4_1-0)", polkit]',
         "grep -Fq libwebkit2gtk-4_1-0",
     )

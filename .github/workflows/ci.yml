@@ -1537,7 +1537,7 @@ jobs:
           path: |
             .gitrun-cargo
             target
-          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}
           restore-keys: |
             gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-
       - name: Record target cache restore
@@ -1620,7 +1620,7 @@ jobs:
           path: |
             .gitrun-cargo
             target
-          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}-run${{ github.run_id }}-attempt${{ github.run_attempt }}
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-target-check-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml') }}
       - name: Record target cache save result
         if: always()
         env:

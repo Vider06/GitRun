@@ -727,6 +727,37 @@ mod tests {
     }
 
     #[test]
+    fn managed_service_definitions_match_each_init_system() {
+        assert_eq!(ManagedService::Scheduler.systemd_unit(), "gitrun.service");
+        assert_eq!(ManagedService::Gsr.systemd_unit(), "gitrun-gsr.service");
+        assert_eq!(ManagedService::Scheduler.openrc_service(), "gitrun");
+        assert_eq!(ManagedService::Gsr.openrc_service(), "gitrun-gsr");
+        assert_eq!(ManagedService::Scheduler.runit_service_path(), "/var/service/gitrun");
+        assert_eq!(ManagedService::Gsr.runit_service_path(), "/var/service/gitrun-gsr");
+
+        assert!(ManagedService::Scheduler.systemd_unit_paths().iter().any(|path| path.ends_with("gitrun.service")));
+        assert!(ManagedService::Gsr.openrc_service_paths().iter().any(|path| path.ends_with("gitrun-gsr")));
+        assert!(ManagedService::Gsr.runit_service_paths().iter().any(|path| path.ends_with("gitrun-gsr/run")));
+    }
+
+    #[test]
+    fn service_manager_candidates_are_absolute_and_specific() {
+        assert_eq!(
+            service_command_candidates(ServiceManager::Systemd),
+            ["/usr/bin/systemctl", "/bin/systemctl"]
+        );
+        assert!(service_command_candidates(ServiceManager::OpenRc)
+            .iter()
+            .any(|path| path.ends_with("rc-service")));
+        assert!(service_command_candidates(ServiceManager::Runit)
+            .iter()
+            .any(|path| path.ends_with("/sv")));
+        for manager in [ServiceManager::Systemd, ServiceManager::OpenRc, ServiceManager::Runit] {
+            assert!(service_command_candidates(manager).iter().all(|path| path.starts_with('/')));
+        }
+    }
+
+    #[test]
     fn service_manager_commands_never_use_a_shell() {
         for manager in [
             ServiceManager::Systemd,

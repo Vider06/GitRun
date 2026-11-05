@@ -3274,26 +3274,55 @@ fn current_process_is_root() -> bool {
         .is_some_and(|effective_uid| effective_uid == 0)
 }
 
-fn trusted_systemctl_path() -> Option<PathBuf> {
-    [
-        PathBuf::from("/usr/bin/systemctl"),
-        PathBuf::from("/bin/systemctl"),
-    ]
-    .into_iter()
-    .find_map(|path| trusted_privileged_binary(&path))
+fn trusted_service_command(
+    manager: gitrun_platform::ServiceManager,
+) -> Option<PathBuf> {
+    gitrun_platform::service_command_candidates(manager)
+        .iter()
+        .map(PathBuf::from)
+        .find_map(|path| trusted_privileged_binary(&path))
+}
+
+fn service_action_name(action: ServiceAction) -> &'static str {
+    match action {
+        ServiceAction::Start => "start",
+        ServiceAction::Stop => "stop",
+        ServiceAction::Restart => "restart",
+    }
+}
+
+fn service_status(
+    service: gitrun_platform::ManagedService,
+) -> (bool, bool, Option<gitrun_platform::ServiceManager>) {
+    let Some(manager) = gitrun_platform::detect_service_manager() else {
+        return (false, false, None);
+    };
+    let installed = gitrun_platform::service_is_installed(manager, service);
+    let spec = gitrun_platform::service_command(
+        manager,
+        gitrun_platform::ServiceAction::Status,
+        service,
+    );
+    let active = spec.candidates.iter().any(|candidate| {
+        trusted_privileged_binary(Path::new(candidate)).is_some_and(|program| {
+            let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
+            command_success_with_timeout(
+                program.to_string_lossy().as_ref(),
+                &args,
+                Duration::from_secs(3),
+            )
+        })
+    });
+    (installed, active, Some(manager))
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
     if !cfg!(target_os = "linux") {
-        return Err("GitRun system service controls currently target Linux".into());
+        return Err("GitRun service controls are currently available only on Linux".into());
     }
     if control_manager_enabled() && !current_process_is_root() {
-        let action_arg = match action {
-            ServiceAction::Start => "start",
-            ServiceAction::Stop => "stop",
-            ServiceAction::Restart => "restart",
-        };
+        let action_arg = service_action_name(action);
         let value = control_manager_request(
             "write",
             "service_control",
@@ -3304,38 +3333,45 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
             .map(str::to_owned)
             .ok_or_else(|| "Control Manager returned an invalid service-control result".into());
     }
-    let systemctl = trusted_systemctl_path()
-        .ok_or("trusted systemctl binary was not found at a root-owned system path")?;
-    let action_arg = match action {
-        ServiceAction::Start => "start",
-        ServiceAction::Stop => "stop",
-        ServiceAction::Restart => "restart",
+
+    let manager = gitrun_platform::detect_service_manager()
+        .ok_or("no supported active service manager was detected on this host")?;
+    let native_action = match action {
+        ServiceAction::Start => gitrun_platform::ServiceAction::Start,
+        ServiceAction::Stop => gitrun_platform::ServiceAction::Stop,
+        ServiceAction::Restart => gitrun_platform::ServiceAction::Restart,
     };
+    let spec = gitrun_platform::service_command(
+        manager,
+        native_action,
+        gitrun_platform::ManagedService::Scheduler,
+    );
+    let program = spec.candidates.iter()
+        .map(PathBuf::from)
+        .find_map(|path| trusted_privileged_binary(&path))
+        .ok_or_else(|| format!("trusted {} service-control executable was not found", manager.as_str()))?;
+    let action_arg = service_action_name(action);
+    let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
     let output = if current_process_is_root() {
-        std::process::Command::new(&systemctl)
-            .args([action_arg, "gitrun.service"])
+        std::process::Command::new(&program)
+            .args(&args)
             .output()
-            .map_err(|error| format!("unable to run systemctl: {error}"))?
+            .map_err(|error| format!("unable to run {}: {error}", manager.as_str()))?
     } else {
         let pkexec = pkexec_path()
             .ok_or("trusted pkexec was not found; service operation cannot continue")?;
         std::process::Command::new(pkexec)
-            .arg(&systemctl)
-            .args([action_arg, "gitrun.service"])
+            .arg(&program)
+            .args(&args)
             .output()
-            .map_err(|error| {
-                format!("unable to request privileged system service control: {error}")
-            })?
+            .map_err(|error| format!("unable to request privileged {} service control: {error}", manager.as_str()))?
     };
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if detail.is_empty() {
-            format!(
-                "systemctl {action_arg} gitrun.service exited with {}",
-                output.status
-            )
+            format!("{} {} GitRun service exited with {}", manager.as_str(), action_arg, output.status)
         } else {
-            format!("systemctl {action_arg} gitrun.service failed: {detail}")
+            format!("{} {} GitRun service failed: {detail}", manager.as_str(), action_arg)
         });
     }
     if let Some(cache) = DASHBOARD_HEALTH_CACHE.get() {
@@ -3343,7 +3379,7 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
             *cached = None;
         }
     }
-    Ok(format!("Requested system service action: {action_arg}"))
+    Ok(format!("Requested GitRun service action through {}: {action_arg}", manager.as_str()))
 }
 
 fn connect_repository_through_manager(repository: String) -> Result<serde_json::Value, String> {

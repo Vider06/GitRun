@@ -1630,7 +1630,7 @@ jobs:
 
           lib = replace_pattern(
               lib,
-              r'fn is_https_url\\(url: &reqwest::Url\\) -> bool \\{\\s*url\\.scheme\\(\\) == "https"\\s*\\}',
+              r"fn is_https_url\\(url: &reqwest::Url\\) -> bool \\{\\s*url\\.scheme\\(\\) == \\"https\\"\\s*\\}",
               """fn is_https_url(url: &reqwest::Url) -> bool {
               url.scheme() == "https"
                   || (url.scheme() == "http"
@@ -1641,9 +1641,9 @@ jobs:
           )
           lib = replace_pattern(
               lib,
-              r'    Ok\\(format!\\(\\s*"https://github\\.com/\\{\\}/releases/latest/download/release-manifest\\.json",\\s*repository\\.trim_end_matches\\(\'/\'\\)\\s*\\)\\)',
+              r"    Ok\\(format!\\(\\s*\\"https://github\\.com/\\{\\}/releases/latest/download/release-manifest\\.json\\",\\s*repository\\.trim_end_matches\\('/'\\)\\s*\\)\\)",
               """    if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
-              if !base_url.starts_with("http://127.0.0.1:") {
+              if not base_url.startswith("http://127.0.0.1:"):
                   return Err(UpdateError::InvalidManifest(
                       "migration test URL must use loopback HTTP".into(),
                   ));
@@ -1661,7 +1661,7 @@ jobs:
           )
           cli = replace_pattern(
               cli,
-              r'    let url = format!\\(\\s*"https://github\\.com/Vider06/GitRun/releases/download/\\{\\}/\\{\\}",\\s*version, artifact_name\\s*\\);',
+              r"    let url = format!\\(\\s*\\"https://github\\.com/Vider06/GitRun/releases/download/\\{\\}/\\{\\}\\",\\s*version, artifact_name\\s*\\);",
               """    let url = if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
               if !base_url.starts_with("http://127.0.0.1:") {
                   return Err("migration test URL must use loopback HTTP".into());
@@ -1711,13 +1711,6 @@ jobs:
           python3 -m http.server "$port" --bind 127.0.0.1 --directory "$mock_root" \
             > "$RUNNER_TEMP/migration-http.log" 2>&1 &
           server_pid=$!
-          chmod 600 "$key"
-          cleanup() {
-            kill "$server_pid" 2>/dev/null || true
-            wait "$server_pid" 2>/dev/null || true
-            rm -f "$key" "$public"
-          }
-          trap cleanup EXIT
           base="http://127.0.0.1:$port"
           ready=false
           for _ in 1 2 3 4 5 6 7 8 9 10; do

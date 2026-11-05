@@ -180,6 +180,39 @@ def check_dashboard_service_manager_contract(errors: list[str]) -> None:
         errors.append("Control Manager IPC must be gated to its installed systemd service backend")
 
 
+def check_setup_native_lifecycle_contract(errors: list[str]) -> None:
+    setup = (ROOT / "crates/gitrun-setup/src/lib.rs").read_text(encoding="utf-8")
+    required = (
+        "current_package_manager()",
+        "package_install_spec(",
+        "docker_packages(",
+        "buildx_packages(",
+        "package_remove_spec(",
+        "package_is_registered(",
+        "install_gitrun_service_definitions(",
+        "start_gitrun_services()",
+        "stop_gitrun_services()",
+        "PackageManager::Apt",
+        "PackageManager::Dnf",
+        "PackageManager::Zypper",
+        "PackageManager::Pacman",
+        "PackageManager::Apk",
+        "PackageManager::Xbps",
+        "PackageManager::Emerge",
+        "ServiceManager::Systemd",
+        "ServiceManager::OpenRc",
+        "ServiceManager::Runit",
+    )
+    missing = [item for item in required if item not in setup]
+    if missing:
+        errors.append(
+            "Setup must use native package/service manager lifecycle operations; "
+            "missing: " + ", ".join(missing)
+        )
+    if 'Command::new("/usr/bin/apt-get").args(["install"' in setup:
+        errors.append("Docker bootstrap must not invoke apt-get outside the Apt package-manager branch")
+
+
 def check_recovery_service_manager_contract(errors: list[str]) -> None:
     recovery = (ROOT / "crates/gitrun-recovery/src/json_recovery.rs").read_text(encoding="utf-8")
     required = (
@@ -260,6 +293,7 @@ def main() -> int:
     check_platform_catalog(errors)
     check_release_package_boundaries(errors)
     check_dashboard_service_manager_contract(errors)
+    check_setup_native_lifecycle_contract(errors)
     check_recovery_service_manager_contract(errors)
 
     summary = [

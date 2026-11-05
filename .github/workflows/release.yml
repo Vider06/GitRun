@@ -118,7 +118,7 @@ jobs:
   build-server:
     name: Server target matrix
     needs: prepare
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -126,15 +126,24 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        target:
-          - x86_64-unknown-linux-gnu
-          - aarch64-unknown-linux-gnu
-          - x86_64-unknown-linux-musl
-          - aarch64-unknown-linux-musl
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            xbps_static_arch: x86_64
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            xbps_static_arch: aarch64
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            xbps_static_arch: x86_64
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            xbps_static_arch: aarch64
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
       TARGET: ${{ matrix.target }}
+      XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}
       CARGO_HOME: ${{ github.workspace }}/.gitrun-cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       CARGO_INCREMENTAL: "0"
@@ -595,7 +604,7 @@ jobs:
 
           case "$TARGET" in
             x86_64-unknown-linux-gnu) arch=amd64; formats="deb rpm archlinux"; xbps_arch=x86_64; xbps_dep=glibc; base_dep=libc6; cpu=x86_64 ;;
-            aarch64-unknown-linux-gnu) arch=arm64; formats="deb rpm"; xbps_arch=aarch64; xbps_dep=glibc; base_dep=libc6; cpu=aarch64 ;;
+            aarch64-unknown-linux-gnu) arch=arm64; formats="deb rpm archlinux"; xbps_arch=aarch64; xbps_dep=glibc; base_dep=libc6; cpu=aarch64 ;;
             x86_64-unknown-linux-musl) arch=amd64; formats="apk"; xbps_arch=x86_64-musl; xbps_dep=musl; base_dep=musl; cpu=x86_64-musl ;;
             aarch64-unknown-linux-musl) arch=arm64; formats="apk"; xbps_arch=aarch64-musl; xbps_dep=musl; base_dep=musl; cpu=aarch64-musl ;;
             *) echo "Unsupported package target: $TARGET" >&2; exit 1 ;;
@@ -665,7 +674,7 @@ jobs:
           xbps_root="$RUNNER_TEMP/xbps"
           mkdir -p "$xbps_root"
           curl --fail --silent --show-error --location \
-            https://repo-default.voidlinux.org/static/xbps-static-latest.x86_64-musl.tar.xz \
+            https://repo-default.voidlinux.org/static/xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz \
             -o "$RUNNER_TEMP/xbps-static.tar.xz"
           tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
           xbps_create="$xbps_root/usr/bin/xbps-create"
@@ -812,7 +821,7 @@ jobs:
   package-dashboard-musl:
     name: Package independent musl Desktop · ${{ matrix.target }}
     needs: [prepare, collect]
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -821,10 +830,14 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            xbps_static_arch: x86_64
             arch: x86_64
             package_arch: amd64
             xbps_arch: x86_64-musl
           - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            xbps_static_arch: aarch64
             arch: aarch64
             package_arch: arm64
             xbps_arch: aarch64-musl
@@ -835,6 +848,7 @@ jobs:
       DESKTOP_ARCH: ${{ matrix.arch }}
       PACKAGE_ARCH: ${{ matrix.package_arch }}
       XBPS_ARCH: ${{ matrix.xbps_arch }}
+      XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}
     steps:
       - name: Checkout packaging metadata
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -905,7 +919,7 @@ jobs:
           xbps_root="$RUNNER_TEMP/xbps-static"
           mkdir -p "$xbps_root"
           curl --fail --silent --show-error --location \
-            https://repo-default.voidlinux.org/static/xbps-static-latest.x86_64-musl.tar.xz \
+            https://repo-default.voidlinux.org/static/xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz \
             -o "$RUNNER_TEMP/xbps-static.tar.xz"
           tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
           xbps_create="$xbps_root/usr/bin/xbps-create"

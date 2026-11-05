@@ -108,7 +108,7 @@ class DevSkimTauriCspFilterTests(unittest.TestCase):
         expected = finding("DS137138")
         unrelated = finding("DS137138", path="src/network.rs")
         data = {"runs": [{"results": [expected, unrelated]}]}
-        self.assertEqual(filter_sarif(data), 0)
+        self.assertEqual(filter_sarif(data), 1)
         self.assertEqual(data["runs"][0]["results"], [unrelated])
 
 

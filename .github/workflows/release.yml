@@ -41,6 +41,7 @@ jobs:
       - name: Install metadata tools
         run: |
           set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq zip
       - name: Resolve version and synchronize Markdown markers
@@ -157,6 +158,7 @@ jobs:
         run: |
           set -euo pipefail
           docker info >/dev/null
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends file binutils
           command -v readelf
@@ -273,6 +275,7 @@ jobs:
       - name: Install Tauri Linux dependencies
         run: |
           set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev \
@@ -653,6 +656,7 @@ jobs:
             aarch64-unknown-linux-musl) arch=arm64; formats="apk"; xbps_arch=aarch64-musl; xbps_dep=musl; base_dep=musl; cpu=aarch64-musl ;;
             *) echo "Unsupported package target: $TARGET" >&2; exit 1 ;;
           esac
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm zstd
           command -v go >/dev/null
@@ -782,6 +786,7 @@ jobs:
       - name: Install package inspection tools
         run: |
           set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm zstd
       - name: Set up pinned Go toolchain for nFPM
@@ -1027,6 +1032,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dpkg-dev imagemagick
           test "$VERSION" = v1.9.0
@@ -1149,6 +1155,7 @@ jobs:
       - name: Install release verification tools
         run: |
           set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq zstd unzip zip rpm
       - name: Verify required artifacts and create checksums
@@ -1362,6 +1369,7 @@ jobs:
       - name: Install release manifest tools
         run: |
           set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq
       - name: Install Rust toolchain for updater verification
@@ -1558,6 +1566,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             build-essential curl wget file pkg-config libssl-dev \

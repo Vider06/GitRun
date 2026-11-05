@@ -2416,6 +2416,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
+      - *checkout
       - *boot
       - name: Verdict, pipeline map and PR report
         env:
@@ -2617,6 +2618,7 @@ jobs:
       actions: write
       contents: read
     steps:
+      - *checkout
       - *boot
       - name: Remove superseded caches (never the newest ones)
         id: gc

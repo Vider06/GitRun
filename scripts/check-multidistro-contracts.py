@@ -101,6 +101,8 @@ def check_platform_catalog(errors: list[str]) -> None:
     required = (
         "Apt", "Dnf", "Zypper", "Pacman", "Apk", "Xbps", "Emerge",
         "Systemd", "OpenRc", "Runit",
+        "ManagedService", "ServiceAction", "service_command_candidates",
+        "service_command", "service_is_installed",
         "known_distributions_prefer_their_native_package_manager",
     )
     missing = [item for item in required if item not in source]
@@ -148,6 +150,27 @@ def check_release_package_boundaries(errors: list[str]) -> None:
             errors.append("XBPS archive creation must consume the init-neutral stage")
         if '"$xbps_create"' in block and '"$package_stage"' in block:
             errors.append("XBPS archive must not consume the systemd-enabled package stage")
+
+
+def check_dashboard_service_manager_contract(errors: list[str]) -> None:
+    backend = (ROOT / "crates/gitrun-management/src/backend.rs").read_text(encoding="utf-8")
+    control = (ROOT / "crates/gitrun-management/src/control_manager.rs").read_text(encoding="utf-8")
+    required_backend = (
+        "gitrun_platform::detect_service_manager()",
+        "gitrun_platform::service_command(",
+        "gitrun_platform::service_is_installed(",
+        "gitrun_platform::ManagedService::Scheduler",
+        "gitrun_platform::ManagedService::Gsr",
+        "ServiceManager::OpenRc",
+        "ServiceManager::Runit",
+    )
+    missing = [item for item in required_backend if item not in backend and item not in control]
+    if missing:
+        errors.append("Dashboard service operations are missing native init-system routing: " + ", ".join(missing))
+    if 'PathBuf::from("/usr/bin/systemctl")' in backend or 'PathBuf::from("/bin/systemctl")' in backend:
+        errors.append("Dashboard service controls must not hardcode systemctl executable paths")
+    if "detect_service_manager()" not in control or "ServiceManager::Systemd" not in control:
+        errors.append("Control Manager IPC must be gated to its installed systemd service backend")
 
 
 def check_recovery_service_manager_contract(errors: list[str]) -> None:
@@ -229,6 +252,7 @@ def main() -> int:
 
     check_platform_catalog(errors)
     check_release_package_boundaries(errors)
+    check_dashboard_service_manager_contract(errors)
     check_recovery_service_manager_contract(errors)
 
     summary = [

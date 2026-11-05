@@ -1208,23 +1208,146 @@ fn validate_env_value(value: &str, key: &str) -> Result<(), SetupError> {
     Ok(())
 }
 
+fn current_package_manager() -> Result<gitrun_platform::PackageManager, SetupError> {
+    let release = ["/etc/os-release", "/usr/lib/os-release"]
+        .iter()
+        .find_map(|path| fs::read_to_string(path).ok())
+        .unwrap_or_default();
+    let value = |key: &str| {
+        release
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{key}=")))
+            .map(|value| value.trim_matches(['"', '\'']).to_owned())
+            .unwrap_or_default()
+    };
+    let id = value("ID");
+    let id_like = value("ID_LIKE");
+    gitrun_platform::detect_package_manager(&id, &id_like).ok_or_else(|| {
+        SetupError::Command(format!(
+            "no supported package manager was detected for Linux distribution ID={id:?} ID_LIKE={id_like:?}"
+        ))
+    })
+}
+
+fn package_install_spec(
+    manager: gitrun_platform::PackageManager,
+    packages: &[&str],
+) -> Result<(&'static str, Vec<String>), SetupError> {
+    let (program, mut args): (&str, Vec<String>) = match manager {
+        gitrun_platform::PackageManager::Apt => ("/usr/bin/apt-get", vec!["install".into(), "-y".into()]),
+        gitrun_platform::PackageManager::Dnf => ("/usr/bin/dnf", vec!["install".into(), "-y".into()]),
+        gitrun_platform::PackageManager::Zypper => (
+            "/usr/bin/zypper",
+            vec!["--non-interactive".into(), "install".into(), "--no-recommends".into()],
+        ),
+        gitrun_platform::PackageManager::Pacman => (
+            "/usr/bin/pacman",
+            vec!["-Sy".into(), "--noconfirm".into(), "--needed".into()],
+        ),
+        gitrun_platform::PackageManager::Apk => ("/sbin/apk", vec!["add".into(), "--no-cache".into()]),
+        gitrun_platform::PackageManager::Xbps => ("/usr/bin/xbps-install", vec!["-Sy".into()]),
+        gitrun_platform::PackageManager::Emerge => ("/usr/bin/emerge", vec!["--ask=n".into()]),
+        gitrun_platform::PackageManager::Rpm => {
+            return Err(SetupError::Command(
+                "the rpm query tool is not a package installer; install dnf or zypper".into(),
+            ));
+        }
+    };
+    args.extend(packages.iter().map(|package| (*package).to_owned()));
+    Ok((program, args))
+}
+
+fn install_distribution_packages(packages: &[&str]) -> Result<(), SetupError> {
+    let manager = current_package_manager()?;
+    if manager == gitrun_platform::PackageManager::Apt {
+        run_command(Command::new("/usr/bin/apt-get").args(["update"]))?;
+    }
+    let (program, args) = package_install_spec(manager, packages)?;
+    run_command(Command::new(program).args(args))
+}
+
+fn docker_packages(manager: gitrun_platform::PackageManager) -> &'static [&'static str] {
+    match manager {
+        gitrun_platform::PackageManager::Apt => &["docker.io", "docker-compose-v2"],
+        gitrun_platform::PackageManager::Dnf => &["docker", "docker-compose"],
+        gitrun_platform::PackageManager::Zypper => &["docker", "docker-compose"],
+        gitrun_platform::PackageManager::Pacman => &["docker", "docker-compose"],
+        gitrun_platform::PackageManager::Apk => &["docker", "docker-cli-compose"],
+        gitrun_platform::PackageManager::Xbps => &["docker", "docker-compose"],
+        gitrun_platform::PackageManager::Emerge => {
+            &["app-containers/docker", "app-containers/docker-compose"]
+        }
+        gitrun_platform::PackageManager::Rpm => &[],
+    }
+}
+
+fn buildx_packages(manager: gitrun_platform::PackageManager) -> &'static [&'static [&'static str]] {
+    match manager {
+        gitrun_platform::PackageManager::Apt => &[&["docker-buildx-plugin"], &["docker-buildx"]],
+        gitrun_platform::PackageManager::Dnf => &[&["docker-buildx"]],
+        gitrun_platform::PackageManager::Zypper => &[&["docker-buildx"]],
+        gitrun_platform::PackageManager::Pacman => &[&["docker-buildx"]],
+        gitrun_platform::PackageManager::Apk => &[&["docker-cli-buildx"]],
+        gitrun_platform::PackageManager::Xbps => &[&["docker-buildx"]],
+        gitrun_platform::PackageManager::Emerge => &[&["app-containers/docker-buildx"]],
+        gitrun_platform::PackageManager::Rpm => &[],
+    }
+}
+
+fn start_host_service(service: &str) -> Result<(), SetupError> {
+    let manager = gitrun_platform::detect_service_manager()
+        .ok_or_else(|| SetupError::Command("no supported active service manager was detected".into()))?;
+    match manager {
+        gitrun_platform::ServiceManager::Systemd => {
+            let unit = if service.ends_with(".service") {
+                service.to_owned()
+            } else {
+                format!("{service}.service")
+            };
+            run_command(Command::new("/usr/bin/systemctl").args(["enable", "--now", &unit]))
+        }
+        gitrun_platform::ServiceManager::OpenRc => {
+            run_command(Command::new("/sbin/rc-update").args(["add", service, "default"]))?;
+            run_command(Command::new("/sbin/rc-service").args([service, "start"]))
+        }
+        gitrun_platform::ServiceManager::Runit => {
+            use std::os::unix::fs::symlink;
+            let source = Path::new("/etc/sv").join(service);
+            if !source.is_dir() {
+                return Err(SetupError::Command(format!(
+                    "runit service definition {} is missing",
+                    source.display()
+                )));
+            }
+            let service_dir = Path::new("/var/service");
+            fs::create_dir_all(service_dir)?;
+            let link = service_dir.join(service);
+            if !link.exists() {
+                symlink(&source, &link)?;
+            }
+            run_command(Command::new("/usr/bin/sv").args(["up", link.to_string_lossy().as_ref()]))
+        }
+    }
+}
+
 fn ensure_docker() -> Result<(), SetupError> {
-    if command_exists("docker") && docker_daemon_ready() && compose_ready() {
-        return Ok(());
+    if command_exists("docker") {
+        let _ = start_host_service("docker");
+        if docker_daemon_ready() && compose_ready() {
+            return Ok(());
+        }
+    } else {
+        let manager = current_package_manager()?;
+        let packages = docker_packages(manager);
+        if packages.is_empty() {
+            return Err(SetupError::Command(format!(
+                "Docker installation is not configured for package manager {}",
+                manager.as_str()
+            )));
+        }
+        install_distribution_packages(packages)?;
+        start_host_service("docker")?;
     }
-
-    if !command_exists("apt-get") {
-        return Err(SetupError::MissingCommand("apt-get".into()));
-    }
-
-    run_command(Command::new("/usr/bin/apt-get").args(["update"]))?;
-    run_command(Command::new("/usr/bin/apt-get").args([
-        "install",
-        "-y",
-        "docker.io",
-        "docker-compose-v2",
-    ]))?;
-    run_command(Command::new("/usr/bin/systemctl").args(["enable", "--now", "docker"]))?;
 
     if !docker_daemon_ready() || !compose_ready() {
         return Err(SetupError::Command(
@@ -1249,24 +1372,27 @@ fn ensure_buildx() -> Result<(), SetupError> {
         return Ok(());
     }
 
-    if !command_exists("apt-get") {
-        return Err(SetupError::MissingCommand(
-            "docker buildx (BuildKit support)".into(),
-        ));
+    let manager = current_package_manager()?;
+    let candidates = buildx_packages(manager);
+    if candidates.is_empty() {
+        return Err(SetupError::Command(format!(
+            "Docker Buildx installation is not configured for package manager {}",
+            manager.as_str()
+        )));
     }
 
     println!("[GitRun setup] Docker Buildx is missing; installing the distro plugin");
-    run_command(Command::new("/usr/bin/apt-get").args(["update"]))?;
-
-    let plugin_status = Command::new("/usr/bin/apt-get")
-        .args(["install", "-y", "docker-buildx-plugin"])
-        .status()?;
-    if !plugin_status.success() {
-        // Ubuntu/Debian may package the same plugin under this name instead.
-        run_command(Command::new("/usr/bin/apt-get").args(["install", "-y", "docker-buildx"]))?;
+    let mut installed = false;
+    for packages in candidates {
+        if install_distribution_packages(packages).is_ok() {
+            installed = true;
+            if docker_buildx_ready() {
+                break;
+            }
+        }
     }
 
-    if !docker_buildx_ready() {
+    if !installed || !docker_buildx_ready() {
         return Err(SetupError::Command(
             "Docker Buildx installation finished, but docker buildx version still fails".into(),
         ));

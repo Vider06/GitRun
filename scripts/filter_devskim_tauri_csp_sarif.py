@@ -123,7 +123,7 @@ def main() -> None:
             for location in result.get("locations", []):
                 physical = location.get("physicalLocation", {})
                 artifact = physical.get("artifactLocation", {})
-                uri = str(artifact.get("uri", "")).replace("\\\\", "/")
+                uri = str(artifact.get("uri", "")).replace("\\", "/")
                 if uri.endswith(RELEASE_TARGET) or "release.yml" in uri:
                     release_findings.append((
                         result.get("ruleId"),

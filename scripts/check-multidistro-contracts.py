@@ -141,8 +141,8 @@ def check_release_package_boundaries(errors: list[str]) -> None:
         if target not in release:
             errors.append(f"Desktop release matrix is missing {target}")
     native_package_contracts = (
-        "package-server:\\n    name: Package Server target matrix\\n    needs: [prepare, collect]\\n    runs-on: ${{ matrix.runner }}",
-        "package-dashboard-musl:\\n    name: Package independent musl Desktop · ${{ matrix.target }}\\n    needs: [prepare, collect]\\n    runs-on: ${{ matrix.runner }}",
+        "package-server:\n    name: Package Server target matrix\n    needs: [prepare, collect]\n    runs-on: ${{ matrix.runner }}",
+        "package-dashboard-musl:\\n    name: Package independent musl Desktop · ${{ matrix.target }}\n    needs: [prepare, collect]\\n    runs-on: ${{ matrix.runner }}",
         "xbps_static_arch: aarch64",
         "XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}",
         "xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz",

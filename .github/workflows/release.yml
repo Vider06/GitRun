@@ -1006,8 +1006,8 @@ jobs:
 
   validate:
     name: Validate collected package matrix
-    needs: [prepare, collect, package-server, package-dashboard, migration-package]
-    if: always() && needs.prepare.result == 'success' && needs.collect.result == 'success' && needs.package-server.result == 'success' && needs.package-dashboard.result == 'success' && (needs.migration-package.result == 'success' || (needs.prepare.outputs.migration_release != 'true' && needs.migration-package.result == 'skipped'))
+    needs: [prepare, collect, package-server, package-dashboard, package-dashboard-musl, migration-package]
+    if: always() && needs.prepare.result == 'success' && needs.collect.result == 'success' && needs.package-server.result == 'success' && needs.package-dashboard.result == 'success' && needs.package-dashboard-musl.result == 'success' && (needs.migration-package.result == 'success' || (needs.prepare.outputs.migration_release != 'true' && needs.migration-package.result == 'skipped'))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -1092,6 +1092,12 @@ jobs:
             "GitRun-Desktop-$VERSION-linux-aarch64-archlinux.pkg.tar.zst" \
             "GitRun-Desktop-$VERSION-linux-x86_64.AppImage" \
             "GitRun-Desktop-$VERSION-linux-aarch64.AppImage" \
+            "GitRun-Desktop-$VERSION-linux-x86_64-unknown-linux-musl.bin" \
+            "GitRun-Desktop-$VERSION-linux-aarch64-unknown-linux-musl.bin" \
+            "GitRun-Desktop-$VERSION-linux-x86_64-musl-apk.apk" \
+            "GitRun-Desktop-$VERSION-linux-aarch64-musl-apk.apk" \
+            "GitRun-Desktop-$VERSION-linux-x86_64-musl-xbps.xbps" \
+            "GitRun-Desktop-$VERSION-linux-aarch64-musl-xbps.xbps" \
             library.zip cargo-metadata.json sbom.spdx.json provenance.json; do
             expected_files+=("$file")
             test -s "$root/$file" || { echo "Missing required artifact: $file" >&2; exit 1; }
@@ -1826,6 +1832,17 @@ jobs:
             grep -Fxq 'depend = webkit2gtk-4.1' <<< "$gui_pkginfo"
             gui_files="$(tar --zstd -tf "$gui_arch")"
             grep -Fq 'opt/gitrun-desktop/GitRun.AppImage' <<< "$gui_files"
+          done
+          for arch in x86_64 aarch64; do
+            gui_apk="$root/GitRun-Desktop-$VERSION-linux-$arch-musl-apk.apk"
+            apk_listing="$(tar -tzf "$gui_apk")"
+            grep -Fq '.PKGINFO' <<< "$apk_listing"
+            apk_metadata="$(tar -xOzf "$gui_apk" .PKGINFO)"
+            grep -Fxq 'pkgname = gitrun-desktop' <<< "$apk_metadata"
+            grep -Fxq 'depend = webkit2gtk-4.1' <<< "$apk_metadata"
+            grep -Fxq 'depend = polkit' <<< "$apk_metadata"
+            test -s "$root/GitRun-Desktop-$VERSION-linux-$arch-musl-xbps.xbps"
+            test -x "$root/GitRun-Desktop-$VERSION-linux-$arch-unknown-linux-musl.bin"
           done
           server_deb_contents="$(dpkg-deb -c "$root/GitRun-Server-$VERSION-linux-x86_64-deb.deb")"
           if grep -Eq '/GitRun\.AppImage$' <<< "$server_deb_contents"; then

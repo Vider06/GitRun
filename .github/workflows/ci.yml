@@ -988,7 +988,7 @@ jobs:
   rust-lint:
     name: Rust lint (fmt, clippy, docs)
     needs: cargo-lock
-    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true' || needs.cargo-lock.outputs.workflows == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     env:

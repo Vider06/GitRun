@@ -349,7 +349,7 @@ fn elevate_system_update(
     force: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> Result<i32, Box<dyn std::error::Error>> {
-    // sudo writes its password prompt directly to the inherited TTY. End the
+    // Privilege helpers write their authorization prompt directly to the inherited TTY. End the
     // parent's Ratatui inline viewport first so its render thread cannot race
     // with raw child output and corrupt the cat/prompt layout.
     presenter.prepare_for_external_process();
@@ -367,7 +367,7 @@ fn elevate_system_update(
         command.arg(url);
     }
     // Use an explicit CLI flag instead of an environment variable because
-    // sudo may filter custom environment variables.
+    // Privilege helpers may filter custom environment variables.
     let status = command.status()?;
     Ok(status.code().unwrap_or(1))
 }
@@ -3006,7 +3006,7 @@ fn doctor_json_tree_check(root: &Path, failures: &mut usize, warnings: &mut usiz
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
             let detail = if doctor_expected_protected_json_permissions() {
                 format!(
-                    "INFO: protected system directory is not readable by this account; run `sudo gitrun doctor` for full JSON validation ({error})"
+                    "INFO: protected system directory is not readable by this account; run `gitrun doctor` as root for full JSON validation ({error})"
                 )
             } else {
                 format!(
@@ -3926,7 +3926,7 @@ fn run_update(
 ) -> i32 {
     // Installed-system invocations must never inherit caller-selected update
     // keys, signature policy, or config paths. Direct-root and --only-containers
-    // paths bypass sudo's normal signing-key hand-off, so initialize the fixed
+    // paths bypass the privilege helper's normal signing-key hand-off, so initialize the fixed
     // trust anchors and service config before branching.
     let system_install = system_install_paths().is_some();
     if system_install || only_containers {
@@ -3987,7 +3987,7 @@ fn run_update(
     }
 
     if system_install_paths().is_some() && !running_as_root() {
-        // Resolve and verify the release before invoking sudo. This avoids an
+        // Resolve and verify the release before requesting administrator authorization. This avoids an
         // unnecessary password prompt when GitHub is unreachable or the
         // release cannot be applied on this host.
         println!(

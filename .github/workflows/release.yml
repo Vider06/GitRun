@@ -1496,9 +1496,6 @@ jobs:
           trap 'rm -f "$key" "$public" "$payload" "$sigfile"' EXIT
           printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
           chmod 600 "$key"
-          chmod 600 "$key"
-          chmod 600 "$key"
-          chmod 600 "$key"
           openssl pkey -inform DER -in "$key" -pubout -outform DER -out "$public"
           public_hex="$(tail -c 32 "$public" | od -An -v -tx1 | tr -d '[:space:]')"
           echo "GITRUN_UPDATE_PUBLIC_KEY_HEX=$public_hex" >> "$GITHUB_ENV"
@@ -1596,6 +1593,7 @@ jobs:
           }
           trap cleanup EXIT
           printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
+          chmod 600 "$key"
           openssl pkey -inform DER -in "$key" -pubout -outform DER -out "$public"
           GITRUN_UPDATE_PUBLIC_KEY_HEX="$(tail -c 32 "$public" | od -An -v -tx1 | tr -d '[:space:]')"
           export GITRUN_UPDATE_PUBLIC_KEY_HEX

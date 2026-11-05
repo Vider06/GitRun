@@ -33,7 +33,7 @@ def finding(
 
 class DevSkimTauriCspFilterTests(unittest.TestCase):
     def test_filters_only_guarded_release_migration_loopback_lines(self) -> None:
-        self.assertEqual(RELEASE_LOOPBACK_LINES, {1656, 1665, 1685, 1726, 1730, 1732})
+        self.assertEqual(RELEASE_LOOPBACK_LINES, {1661, 1670, 1690, 1731, 1735, 1737})
         for line in RELEASE_LOOPBACK_LINES:
             with self.subTest(line=line):
                 self.assertTrue(
@@ -45,12 +45,12 @@ class DevSkimTauriCspFilterTests(unittest.TestCase):
     def test_preserves_other_release_findings(self) -> None:
         self.assertFalse(
             is_release_migration_loopback_fixture(
-                finding("DS137138", path=RELEASE_TARGET, line=1657)
+                finding("DS137138", path=RELEASE_TARGET, line=1662)
             )
         )
         self.assertFalse(
             is_release_migration_loopback_fixture(
-                finding("DS999999", path=RELEASE_TARGET, line=1656)
+                finding("DS999999", path=RELEASE_TARGET, line=1661)
             )
         )
         self.assertFalse(

@@ -125,11 +125,17 @@ def check_release_package_boundaries(errors: list[str]) -> None:
     desktop_targets = (
         "target: x86_64-unknown-linux-gnu",
         "target: aarch64-unknown-linux-gnu",
+        "target: x86_64-unknown-linux-musl",
+        "target: aarch64-unknown-linux-musl",
+        "build-dashboard-musl:",
+        "package-dashboard-musl:",
         "runner: ubuntu-24.04-arm",
-        "linux-x86_64-desktop-appimage",
-        "linux-aarch64-desktop-appimage",
-        "linux-x86_64-desktop-deb",
-        "linux-aarch64-desktop-deb",
+        "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb",
+        "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm",
+        "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst",
+        "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk",
+        "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-xbps.xbps",
+        "desktop_package_formats:[\"deb\",\"rpm\",\"archlinux\",\"appimage\",\"apk\",\"xbps\"]",
     )
     for target in desktop_targets:
         if target not in release:

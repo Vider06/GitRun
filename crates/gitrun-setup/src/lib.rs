@@ -418,24 +418,47 @@ fn deb_package_registered() -> bool {
         )
 }
 
-fn cleanup_uninstall_resources(package_owned_files: bool) -> Result<(), SetupError> {
-    println!("[GitRun uninstall] Stopping and disabling GitRun systemd units");
-    for unit in [
-        "gitrun-control.service",
-        "gitrun-gsr.service",
-        "gitrun.service",
-    ] {
-        let _ = Command::new("/usr/bin/systemctl")
-            .args(["disable", "--now", unit])
-            .status();
-        if Command::new("/usr/bin/systemctl")
-            .args(["is-active", "--quiet", unit])
-            .status()
-            .is_ok_and(|status| status.success())
-        {
-            run_command(Command::new("/usr/bin/systemctl").args(["stop", unit]))?;
+fn stop_gitrun_services() -> Result<(), SetupError> {
+    let Some(manager) = gitrun_platform::detect_service_manager() else {
+        return Ok(());
+    };
+    match manager {
+        gitrun_platform::ServiceManager::Systemd => {
+            for unit in [
+                "gitrun-control.service",
+                "gitrun-gsr.service",
+                "gitrun.service",
+            ] {
+                let _ = Command::new("/usr/bin/systemctl")
+                    .args(["disable", "--now", unit])
+                    .status();
+            }
+        }
+        gitrun_platform::ServiceManager::OpenRc => {
+            for service in ["gitrun-gsr", "gitrun"] {
+                let _ = Command::new("/sbin/rc-service")
+                    .args([service, "stop"])
+                    .status();
+                let _ = Command::new("/sbin/rc-update")
+                    .args(["del", service, "default"])
+                    .status();
+            }
+        }
+        gitrun_platform::ServiceManager::Runit => {
+            for service in ["gitrun-gsr", "gitrun"] {
+                let path = format!("/var/service/{service}");
+                let _ = Command::new("/usr/bin/sv")
+                    .args(["down", &path])
+                    .status();
+            }
         }
     }
+    Ok(())
+}
+
+fn cleanup_uninstall_resources(package_owned_files: bool) -> Result<(), SetupError> {
+    println!("[GitRun uninstall] Stopping GitRun services through the active init system");
+    stop_gitrun_services()?;
 
     println!("[GitRun uninstall] Removing GitRun-owned Docker resources");
     remove_gitrun_docker_resources()?;
@@ -585,7 +608,10 @@ fn cleanup_temp_artifacts() -> Result<(), SetupError> {
 }
 
 fn reload_systemd() -> Result<(), SetupError> {
-    if !command_exists("systemctl") {
+    if gitrun_platform::detect_service_manager()
+        != Some(gitrun_platform::ServiceManager::Systemd)
+        || !command_exists("systemctl")
+    {
         return Ok(());
     }
     run_command(Command::new("/usr/bin/systemctl").args(["daemon-reload"]))

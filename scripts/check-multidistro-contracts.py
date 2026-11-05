@@ -140,6 +140,20 @@ def check_release_package_boundaries(errors: list[str]) -> None:
     for target in desktop_targets:
         if target not in release:
             errors.append(f"Desktop release matrix is missing {target}")
+    native_package_contracts = (
+        "package-server:\\n    name: Package Server target matrix\\n    needs: [prepare, collect]\\n    runs-on: ${{ matrix.runner }}",
+        "package-dashboard-musl:\\n    name: Package independent musl Desktop · ${{ matrix.target }}\\n    needs: [prepare, collect]\\n    runs-on: ${{ matrix.runner }}",
+        "xbps_static_arch: aarch64",
+        "XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}",
+        "xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz",
+        'aarch64-unknown-linux-gnu) arch=arm64; formats="deb rpm archlinux"',
+        '"GitRun-Server-$VERSION-linux-aarch64-arch.pkg.tar.zst"',
+    )
+    for contract in native_package_contracts:
+        if contract not in release:
+            errors.append(f"Native package matrix is missing {contract}")
+    if "xbps-static-latest.x86_64-musl.tar.xz" in release:
+        errors.append("XBPS packaging must not hardcode the x86_64 static tool for ARM64 jobs")
     if "pattern: dashboard-package-*" not in release:
         errors.append("Desktop package collection must merge every target-specific package artifact")
 

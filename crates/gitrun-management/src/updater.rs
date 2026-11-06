@@ -5,7 +5,7 @@
 
 use super::{load_config, service_status};
 use gitrun_platform::{ManagedService, ServiceManager};
-use gitrun_updater::{build_plan, resolve_policy_update, UpdatePolicy};
+use gitrun_updater::{build_plan, resolve_policy_update_for_target, UpdatePolicy};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -483,7 +483,7 @@ fn update_check(version: &str, policy: UpdatePolicyChoice, target: &str) -> Upda
     std::env::set_var("GITRUN_UPDATE_PUBLIC_KEY_ID", DEFAULT_PUBLIC_KEY_ID);
     std::env::set_var("GITRUN_UPDATE_SIGNATURE_REQUIRED", "true");
     let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
-    match resolve_policy_update(&repository, version, policy.engine_policy()) {
+    match resolve_policy_update_for_target(&repository, version, policy.engine_policy(), target) {
         Ok(Some(resolved)) => match build_plan(&resolved.manifest, version, target, &[]) {
             Ok(plan) => UpdateCheckInfo {
                 checked: true,

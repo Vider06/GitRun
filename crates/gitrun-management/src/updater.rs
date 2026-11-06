@@ -6,16 +6,16 @@ pub use gitrun_updater::state::{
     UpdaterInfo, UpdaterSettings,
 };
 
-pub fn current_settings_local() -> Result<UpdaterSettings, String> {
-    gitrun_updater::state::current_settings_local()
+pub fn get_updater_settings() -> Result<UpdaterSettings, String> {
+    gitrun_updater::state::read_settings()
 }
 
-pub fn local_settings_save(policy: &str) -> Result<UpdaterSettings, String> {
-    gitrun_updater::state::local_settings_save(policy)
+pub fn save_updater_settings(policy: &str) -> Result<UpdaterSettings, String> {
+    gitrun_updater::state::save_settings(policy)
 }
 
-pub fn info_local(check: bool) -> Result<UpdaterInfo, String> {
-    gitrun_updater::state::info_local(check)
+pub fn get_updater_info(check: bool) -> Result<UpdaterInfo, String> {
+    gitrun_updater::state::info(check)
 }
 
 pub fn record_cli_operation(
@@ -24,5 +24,10 @@ pub fn record_cli_operation(
     release_type: Option<&str>,
     exit_code: i32,
 ) {
-    gitrun_updater::state::record_cli_operation(from_version, to_version, release_type, exit_code);
+    let _ = gitrun_updater::state::record_cli_operation(
+        from_version,
+        to_version,
+        release_type,
+        exit_code,
+    );
 }

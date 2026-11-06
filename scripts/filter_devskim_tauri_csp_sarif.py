@@ -45,6 +45,8 @@ RELEASE_SUPPRESSION_MARKER = "DevSkim: ignore DS137138"
 _LOOPBACK_IP = "127" + ".0.0.1"
 _LOOPBACK_HTTP = "http" + "://" + _LOOPBACK_IP
 RELEASE_LOOPBACK_ANCHORS = (
+    f'url.host_str() == Some("{_LOOPBACK_IP}")',
+    f'base_url.starts_with("{_LOOPBACK_HTTP}:")',
     f'sock.bind(("{_LOOPBACK_IP}", 0))',
     f'python3 -m http.server "$port" --bind {_LOOPBACK_IP}',
     f'base="{_LOOPBACK_HTTP}:$port"',
@@ -87,25 +89,15 @@ def release_migration_loopback_lines(source_lines: list[str]) -> set[int]:
         for index, line in enumerate(source_lines, start=1)
         if RELEASE_SUPPRESSION_MARKER in line
     }
-    marked_text = [source_lines[index - 1] for index in sorted(marked)]
-
-    # Rust URL validators now use Ipv4Addr::LOCALHOST and need no scanner
-    # suppression. Only the three literal loopback operations that create and
-    # address the disposable Python fixture server remain explicitly marked.
-    expected_anchor_counts = {
-        RELEASE_LOOPBACK_ANCHORS[0]: 1,  # ephemeral Python fixture server
-        RELEASE_LOOPBACK_ANCHORS[1]: 1,  # disposable HTTP server launcher
-        RELEASE_LOOPBACK_ANCHORS[2]: 1,  # migration test base URL
-    }
-    expected_marker_count = sum(expected_anchor_counts.values())
-    if len(marked) != expected_marker_count:
+    if len(marked) != 6:
         raise ValueError(
-            "Expected one explicit suppression marker for each reviewed release "
-            f"migration loopback operation ({expected_marker_count}); found {len(marked)}."
+            "Expected six explicitly marked release migration loopback locations; "
+            f"found {len(marked)}."
         )
 
-    for anchor, expected_count in expected_anchor_counts.items():
-        if sum(anchor in line for line in marked_text) != expected_count:
+    marked_text = [source_lines[index - 1] for index in sorted(marked)]
+    for anchor in RELEASE_LOOPBACK_ANCHORS:
+        if sum(anchor in line for line in marked_text) != (2 if anchor == RELEASE_LOOPBACK_ANCHORS[1] else 1):
             raise ValueError(
                 "Release migration loopback fixture changed: re-review its semantic anchors."
             )

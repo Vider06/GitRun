@@ -9,7 +9,6 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 # gitrun-setup embeds these release-owned resources with include_str! at compile time.
 COPY systemd ./systemd
-COPY packaging ./packaging
 COPY docker/runner ./docker/runner
 COPY Core/Dockers/runners/linux-x86_64/minimum/Dockerfile ./Core/Dockers/runners/linux-x86_64/minimum/Dockerfile
 

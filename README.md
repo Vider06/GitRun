@@ -12,7 +12,7 @@ GitRun is a Rust-native control plane for self-hosted GitHub Actions runners. It
 
 It is designed for developers and teams who want to use their own runner infrastructure without turning every workflow into an unrestricted host administrator. **No Kubernetes cluster is required.**
 
-> **Source version:** this branch targets <!-- gitrun-version:start -->1.9.1<!-- gitrun-version:end -->. A source version or passing CI does not mean a signed release artifact is available. For installable releases, use [GitHub Releases](https://github.com/Vider06/GitRun/releases).
+> **Source version:** this branch targets <!-- gitrun-version:start -->1.9.0<!-- gitrun-version:end -->. A source version or passing CI does not mean a signed release artifact is available. For installable releases, use [GitHub Releases](https://github.com/Vider06/GitRun/releases).
 
 ## What can GitRun do?
 
@@ -71,7 +71,7 @@ Requests are checked against the current runner/container identity, authoritativ
 - **Container hardening:** read-only Linux root filesystem by default, constrained capabilities, no-new-privileges, resource limits and a dedicated runner network.
 - **Safer filesystem access:** approved path prefixes, symlink/hard-link checks and bounded file operations.
 - **Controlled host mounts:** GitDockRun mounts are a separately gated capability for local Linux Docker; policy, destination capability and runner identity must all permit the operation.
-- **Signed updates:** Ed25519 release-manifest verification, streamed SHA-256 artifact verification, bounded archive extraction, durable recovery journals written before live mutation, symlink/path validation, health verification and rollback on failed installation. Full system updates share an exclusive lock with scheduled GTUU reconciliation and stop the scheduler before handing the lock to the target-version runner refresh. Starting with 1.9.1, Security, Full and Pre releases are selected through one policy shared by the CLI, desktop GUI and Management TUI. See the [Updater Release Policy](docs/UPDATER_RELEASE_POLICY.md).
+- **Signed updates:** Ed25519 release-manifest verification, streamed SHA-256 artifact verification, bounded archive extraction, durable recovery journals written before live mutation, symlink/path validation, health verification and rollback on failed installation. Full system updates share an exclusive lock with scheduled GTUU reconciliation and stop the scheduler before handing the lock to the target-version runner refresh.
 
 **Important:** direct Docker-socket access for workflow runners is disabled by default. Enabling it gives workflow code host-level Docker authority; only enable it for repositories and contributors you fully trust. GitRun is intended for infrastructure you administer, not as an open runner service for arbitrary public repositories.
 
@@ -139,37 +139,26 @@ The installed `gitrun` CLI provides these operator commands:
 
 For the standard Linux host deployment, prepare a dedicated Linux machine with Docker and a GitHub credential authorized for the repositories and runner operations you intend to manage. Keep the host and Docker API private. VM-backed workflows additionally require a supported hypervisor, operator-provided guest images and a configured guest Docker endpoint.
 
-### Install a published Linux release
+### Install on Debian or Ubuntu (recommended)
 
-Choose the **GitRun-Server** package matching the host distribution, architecture and libc from the signed [GitHub Releases](https://github.com/Vider06/GitRun/releases) manifest. Do not use the one-time 1.9.1 migration DEB for a fresh installation; it exists only for existing 1.8.23 Debian/Ubuntu hosts.
+A prebuilt **AMD64/x86-64 .deb package** is published with each stable release. You do not need to clone the repository or compile Rust to install GitRun.
 
-| Distribution / package | Published targets | Native service integration |
-| --- | --- | --- |
-| Debian / Ubuntu DEB | x86_64 and aarch64, GNU | systemd |
-| Fedora / RHEL RPM | x86_64 and aarch64, GNU | systemd |
-| Arch Linux package | x86_64 and aarch64, GNU | systemd |
-| Alpine APK | x86_64 and aarch64, musl | OpenRC |
-| Void XBPS | x86_64 and aarch64, GNU and musl | runit |
-
-Verify the downloaded artifact against its SHA-256 entry in the signed release manifest before installing it. For example, on Debian/Ubuntu:
+Download and install the current published package (this example uses v1.8.21; check [GitHub Releases](https://github.com/Vider06/GitRun/releases) for the newest version):
 
 ```bash
-VERSION="vX.Y.Z" # choose a published stable tag from GitHub Releases
-ASSET="GitRun-Server-${VERSION}-linux-x86_64-deb.deb"
+VERSION="v1.8.21"
+ASSET="GitRun-${VERSION}-linux-x86_64-deb.deb"
 curl -fL --proto '=https' --tlsv1.2 \
   "https://github.com/Vider06/GitRun/releases/download/${VERSION}/${ASSET}" \
   -o "${ASSET}"
-sha256sum "${ASSET}" # compare with the signed release manifest
 sudo apt install "./${ASSET}"
-sudo gitrun setup --terminal
-gitrun doctor
 ```
 
-The matching native package manager resolves declared dependencies. Docker and GitHub credentials remain operator-managed prerequisites. On Alpine, the APK carries OpenRC service definitions; on Void, the XBPS package carries runit service trees and lifecycle hooks. Run `gitrun setup` after the first package installation to configure and enable the services. Package installation alone does not start GitRun.
+APT resolves the package's declared dependencies. Install and configure Docker separately if it is not already available on the host. The package is for Debian/Ubuntu-compatible **amd64** systems; it is not an ARM64 package.
 
-Use the host package manager to upgrade a native package. The APK and XBPS lifecycle hooks restart only services that were already active. The built-in `gitrun update` command is a separate signed-archive update path; it does not replace the installed distro package. Automatic `gitrun reinstall` package replacement is currently limited to x86_64 GNU/Linux with APT.
+After installation, you can complete first-run setup and configure GitRun from either the **desktop GUI** or the terminal. The GUI is a full management surface, not just a viewer; use it for setup and day-to-day configuration if you prefer a graphical workflow. From a terminal, run `gitrun setup --terminal` for the guided setup, then `gitrun manage` to open the keyboard-driven TUI for ongoing operations. The GUI and TUI share GitRun's validated backend operations.
 
-The Desktop application is distributed separately from GitRun-Server. Install the matching Desktop package or AppImage only if you want the graphical interface; it does not include the Server executable.
+Verify the installation with `gitrun doctor`.
 
 ### Build/install from source
 

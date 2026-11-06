@@ -3,14 +3,28 @@ import { invoke, content, esc, heading, panel, pill, empty, errorView, toast, se
 export async function renderGeneral() {
   const generation = window.__gitrunNavigationGeneration;
   content.innerHTML = '<div class="loading-state"><span class="loader"></span><p>Loading runner settings and health checks…</p></div>';
-  let config, health, vmConfigs, decisions;
+  let config, health, vmConfigs, decisions, updaterSettings, updaterInfo;
   try {
-    [config, health, vmConfigs, decisions] = await Promise.all([invoke("get_config"), invoke("get_dashboard_health"), invoke("list_vm_configs"), invoke("list_pending_hypervisor_decisions")]);
+    [config, health, vmConfigs, decisions, updaterSettings, updaterInfo] = await Promise.all([
+      invoke("get_config"), invoke("get_dashboard_health"), invoke("list_vm_configs"), invoke("list_pending_hypervisor_decisions"),
+      invoke("get_updater_settings"), invoke("get_updater_info", {check:false})
+    ]);
   } catch (error) { if (generation !== window.__gitrunNavigationGeneration) return; content.innerHTML = heading("OPERATIONS","General settings","Global runner behavior, version and diagnostics.") + errorView(error); return; }
   if (generation !== window.__gitrunNavigationGeneration) return;
   content.innerHTML = heading("OPERATIONS","General settings","Global runner configuration, diagnostics and update checks.", '<button class="btn" id="run-health-check">Run health check</button><button class="btn btn-primary" id="check-updates">Check for updates</button>') +
     '<div class="grid metrics-grid"><article class="panel metric-card"><div class="metric-top">Installed version</div><div class="metric-value metric-value-compact">' + esc(health.version || "Unknown") + '</div><div class="metric-foot">Resolved by local backend</div></article><article class="panel metric-card"><div class="metric-top">Configuration</div><div class="metric-value">' + (health.config_ok ? "Valid" : "Issue") + '</div><div class="metric-foot">' + esc(health.config_path || "Path unavailable") + '</div></article><article class="panel metric-card"><div class="metric-top">Docker</div><div class="metric-value">' + (health.docker_ok ? "Reachable" : "Unavailable") + '</div><div class="metric-foot">Local daemon check</div></article><article class="panel metric-card"><div class="metric-top">GSR process</div><div class="metric-value">' + (health.gsr_process_seen ? "Seen" : "Missing") + '</div><div class="metric-foot">Presence check only</div></article></div>' +
     '<div id="update-result" class="section"></div>' +
+    '<section class="section panel panel-pad"><div class="section-heading"><div><h2>GitRun release line</h2><p class="section-description">This controls which signed GitRun releases the updater may select. It is shared by the CLI, Management TUI and desktop GUI.</p></div>' + pill(updaterSettings.policy === "security_only" ? "Security only" : updaterSettings.policy === "security_full_pre" ? "Security + Full + Pre" : "Security + Full","info") + '</div>' +
+      '<div class="form-grid"><div class="field"><label for="release-policy">Allowed release types</label><select id="release-policy">' +
+        '<option value="security_only" ' + (updaterSettings.policy === "security_only" ? "selected" : "") + '>Security releases only</option>' +
+        '<option value="security_full" ' + (updaterSettings.policy === "security_full" ? "selected" : "") + '>Security + Full releases</option>' +
+        '<option value="security_full_pre" ' + (updaterSettings.policy === "security_full_pre" ? "selected" : "") + '>Security + Full + Pre-releases</option>' +
+      '</select><small class="field-hint">Pre-releases are excluded by default. Security releases remain eligible in every policy.</small></div>' +
+      '<div class="field"><label>Update lock</label><div class="kv"><small>' + esc(updaterInfo.lock?.status || "Unknown") + '</small><strong>' + esc(updaterInfo.lock?.detail || "Lock status unavailable") + '</strong></div></div>' +
+      '<div class="field"><label>Installed package</label><div class="kv"><small>' + esc(updaterInfo.package || "Unknown") + '</small><strong>' + esc((updaterInfo.architecture || "Unknown") + " · " + (updaterInfo.abi || "Unknown")) + '</strong></div></div></div>' +
+      '<div class="toolbar"><span class="field-hint">Active policy: ' + esc(updaterSettings.policy || "Unknown") + '</span><button class="btn" id="check-policy-updates">Check allowed releases</button><button class="btn btn-primary" id="save-release-policy">Save release line</button></div>' +
+      '<div id="policy-update-details" class="section"><div class="card-list">' + (updaterInfo.services || []).map((service) => '<div class="list-row"><div class="list-row-main"><strong>' + esc(service.name) + '</strong><small>' + (service.installed ? "Installed" : "Not installed") + ' · ' + (service.active ? "Active" : "Inactive") + '</small></div>' + pill(service.active ? "Active" : service.installed ? "Inactive" : "Unavailable", service.active ? "good" : "warn") + '</div>').join("") + '</div>' +
+      ((updaterInfo.recent_operations || []).length ? '<p class="field-hint">Last operation: ' + esc(updaterInfo.recent_operations[0].result) + ' · ' + esc(new Date(updaterInfo.recent_operations[0].timestamp * 1000).toLocaleString()) + '</p>' : '<p class="field-hint">No update operations recorded yet.</p>') + '</div></section>' +
     '<div class="two-col section">' +
       '<section class="panel panel-pad"><div class="section-heading"><h2>Runner pool</h2>' + pill("Global","info") + '</div><p class="section-description">These are desired limits, not a live count of online or busy runners.</p><div class="form-grid"><div class="field"><label for="min-runners">Minimum runners</label><input id="min-runners" type="number" min="0" max="100" value="' + esc(config.min_runners) + '"></div><div class="field"><label for="max-runners">Maximum runners</label><input id="max-runners" type="number" min="1" max="500" value="' + esc(config.max_runners) + '"></div><div class="field"><label for="poll-interval">Scheduler poll interval (seconds)</label><input id="poll-interval" type="number" min="1" max="3600" value="' + esc(config.poll_interval) + '"></div><div class="field"><label for="idle-timeout">Idle timeout (seconds)</label><input id="idle-timeout" type="number" min="0" max="86400" value="' + esc(config.idle_timeout) + '"></div></div><div class="toolbar"><span class="field-hint">Changes affect scheduler behavior.</span><button class="btn btn-primary" id="save-general">Save runner settings</button></div></section>' +
       '<section class="panel panel-pad"><div class="section-heading"><h2>Update policy</h2>' + pill(config.auto_container_update ? "Scheduled" : "Manual","info") + '</div><label class="checkbox-row"><input type="checkbox" id="auto-update" ' + (config.auto_container_update ? "checked" : "") + '><span><strong>Automatic runner container updates</strong>Allow GTUU to update eligible permanent runner containers on its configured schedule.</span></label><div class="field"><label for="update-time">Scheduled update time</label><input id="update-time" type="time" value="' + esc(config.container_update_time || "03:00") + '"></div><label class="checkbox-row"><input type="checkbox" id="auto-recovery" ' + (config.auto_container_recovery ? "checked" : "") + '><span><strong>Automatic container recovery</strong>Allow the configured recovery policy to restart eligible containers.</span></label><div class="field"><label>Runner image</label><div class="kv"><small>Configured image</small><strong class="mono">' + esc(config.runner_image || "Unknown") + '</strong></div></div></section>' +
@@ -104,6 +118,40 @@ export async function renderGeneral() {
       document.getElementById("health-results").innerHTML = (report.checks || []).map((check) => '<div class="list-row"><div class="list-row-main"><strong>' + esc(check.name) + '</strong><small>' + esc(check.detail) + '</small></div>' + pill(check.ok ? "OK" : "Needs attention", check.ok ? "good" : "warn") + '</div>').join("");
       toast("Health check completed.");
     } catch (error) { toast("Health check failed: " + error, "error"); }
+  });
+  document.getElementById("save-release-policy").addEventListener("click", async () => {
+    const button = document.getElementById("save-release-policy");
+    const policy = document.getElementById("release-policy").value;
+    if (button.disabled || generation !== window.__gitrunNavigationGeneration) return;
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    try {
+      const saved = await invoke("save_updater_settings", {policy});
+      if (generation !== window.__gitrunNavigationGeneration) return;
+      toast("GitRun release line saved: " + saved.policy);
+      await renderGeneral();
+    } catch (error) {
+      if (generation === window.__gitrunNavigationGeneration) toast("Could not save release line: " + error, "error");
+    } finally {
+      if (button.isConnected) { button.disabled = false; button.removeAttribute("aria-busy"); }
+    }
+  });
+  document.getElementById("check-policy-updates").addEventListener("click", async () => {
+    const button = document.getElementById("check-policy-updates");
+    const target = document.getElementById("policy-update-details");
+    if (button.disabled) return;
+    button.disabled = true;
+    target.innerHTML = '<div class="notice"><div><strong>Checking the selected release line…</strong><p>Manifest signature and compatibility are checked without downloading or installing.</p></div></div>';
+    try {
+      const info = await invoke("get_updater_info", {check:true});
+      const result = info.check || {};
+      target.innerHTML = '<div class="notice ' + (result.error ? "danger" : result.available ? "warn" : "success") + '"><div><strong>' + esc(result.available ? "Update available: " + result.selected_version : result.checked ? "No eligible update" : "Update check failed") + '</strong><p>' + esc(result.detail || result.error || "No additional details.") + '</p>' +
+        (result.release_type ? '<p class="field-hint">Release type: ' + esc(result.release_type) + ' · Artifact: ' + esc(result.artifact || "not resolved") + '</p>' : '') +
+        ((info.recent_operations || []).length ? '<p class="field-hint">Last update operation: ' + esc(info.recent_operations[0].result) + ' · ' + esc(new Date(info.recent_operations[0].timestamp * 1000).toLocaleString()) + '</p>' : '<p class="field-hint">No update operations recorded yet.</p>') + '</div></div>';
+      if (!result.checked) toast("Update check did not complete.", "warning");
+    } catch (error) {
+      target.innerHTML = '<div class="notice danger"><div><strong>Update check failed</strong><p>' + esc(error) + '</p></div></div>';
+    } finally { button.disabled = false; }
   });
   document.getElementById("check-updates").addEventListener("click", async () => {
     const target = document.getElementById("update-result");

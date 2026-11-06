@@ -4,9 +4,10 @@ use gitrun_setup::{bootstrap_linux_with_auth_and_profile, prepare_directories, B
 use gitrun_smart_scheduler::KittySettings;
 use gitrun_updater::{
     apply_installed_update, apply_update, build_plan, dependency_status, download_and_verify,
-    fetch_manifest, latest_manifest, pin_runner_image, release_manifest_download_url, resolve_policy_update, rollback,
-    rollback_installed_update_with_config, update_incompatible_dependencies, update_runner_image,
-    BackupRecord, InstalledArtifact, InstalledBackupRecord, ReleaseType, UpdateError, UpdatePaths, UpdatePolicy,
+    fetch_manifest, latest_manifest, pin_runner_image, release_manifest_download_url,
+    resolve_policy_update, rollback, rollback_installed_update_with_config,
+    update_incompatible_dependencies, update_runner_image, BackupRecord, InstalledArtifact,
+    InstalledBackupRecord, ReleaseType, UpdateError, UpdatePaths, UpdatePolicy,
 };
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -1778,9 +1779,7 @@ fn main() {
         Command::Uninstall => run_privileged_cli_action("--uninstall-root", &mut presenter),
         Command::Reinstall => run_privileged_cli_action("--reinstall-latest-root", &mut presenter),
         Command::Update {
-            info: true,
-            check,
-            ..
+            info: true, check, ..
         } => run_update_info(check),
         Command::Update {
             manifest_url,

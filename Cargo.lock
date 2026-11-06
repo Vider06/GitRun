@@ -1668,6 +1668,7 @@ dependencies = [
  "gitrun-scheduler",
  "gitrun-setup",
  "gitrun-smart-scheduler",
+ "gitrun-updater",
  "gitrun-vault",
  "libc",
  "serde",

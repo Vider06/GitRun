@@ -4178,6 +4178,35 @@ fn management_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value, 
         .map_err(|error| format!("could not encode management response: {error}"))
 }
 
+#[cfg(target_os = "linux")]
+fn run_updater_payload_as_root(command_name: &str, payload: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let cli = trusted_system_cli_path().ok_or(
+        "A trusted system-installed GitRun CLI was not found; updater state cannot be changed safely.",
+    )?;
+    if payload.len() > 64 * 1024 {
+        return Err("updater state request exceeds the 64 KiB safety limit".into());
+    }
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?.as_nanos();
+    let path = std::env::temp_dir().join(format!("gitrun-updater-request-{}-{nonce}.json", std::process::id()));
+    let result = (|| -> Result<(), String> {
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600)
+            .open(&path).map_err(|error| error.to_string())?;
+        file.write_all(payload).map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+        let status = authorized_cli_command(&cli)?.arg(command_name).arg(&path).status()
+            .map_err(|error| format!("unable to request updater authorization: {error}"))?;
+        if !status.success() {
+            return Err(format!("administrator-authorized updater operation failed with status {status}"));
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
 /// Read the shared updater policy. Protected installations route through the
 /// fixed Control Manager IPC rather than exposing updater state files to the UI.
 #[cfg_attr(feature = "desktop", tauri::command)]
@@ -4186,6 +4215,11 @@ pub fn get_updater_settings() -> Result<UpdaterSettings, String> {
         let value = control_manager_request("read", "updater_settings", serde_json::json!({}))?;
         return serde_json::from_value(value)
             .map_err(|error| format!("decode updater settings from Control Manager: {error}"));
+    }
+    #[cfg(target_os = "linux")]
+    if !current_process_is_root() && trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
+        let raw = run_privileged_cli_helper("--read-updater-settings-root", &[])?;
+        return serde_json::from_str(raw.trim()).map_err(|error| format!("decode authorized updater settings: {error}"));
     }
     updater::current_settings_local()
 }
@@ -4203,6 +4237,16 @@ pub fn save_updater_settings(policy: String) -> Result<UpdaterSettings, String> 
             format!("decode saved updater settings from Control Manager: {error}")
         });
     }
+    if current_process_is_root() {
+        return updater::local_settings_save(&policy);
+    }
+    #[cfg(target_os = "linux")]
+    if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
+        let payload = serde_json::to_vec(&serde_json::json!({ "policy": policy }))
+            .map_err(|error| error.to_string())?;
+        run_updater_payload_as_root("--save-updater-settings-root", &payload)?;
+        return get_updater_settings();
+    }
     updater::local_settings_save(&policy)
 }
 
@@ -4218,6 +4262,12 @@ pub fn get_updater_info(check: bool) -> Result<UpdaterInfo, String> {
         )?;
         return serde_json::from_value(value)
             .map_err(|error| format!("decode updater diagnostics from Control Manager: {error}"));
+    }
+    #[cfg(target_os = "linux")]
+    if !current_process_is_root() && trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
+        let args = if check { vec!["--check".to_owned()] } else { Vec::new() };
+        let raw = run_privileged_cli_helper("--read-updater-info-root", &args)?;
+        return serde_json::from_str(raw.trim()).map_err(|error| format!("decode authorized updater diagnostics: {error}"));
     }
     updater::info_local(check)
 }
@@ -4240,8 +4290,21 @@ pub fn record_cli_update_operation(
                 "exit_code": exit_code,
             }),
         );
-    } else {
+    } else if current_process_is_root() {
         updater::record_cli_operation(from_version, to_version, release_type, exit_code);
+    } else {
+        #[cfg(target_os = "linux")]
+        {
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "from_version": from_version,
+                "to_version": to_version,
+                "release_type": release_type,
+                "exit_code": exit_code,
+            }));
+            if let Ok(payload) = payload {
+                let _ = run_updater_payload_as_root("--record-updater-operation-root", &payload);
+            }
+        }
     }
 }
 

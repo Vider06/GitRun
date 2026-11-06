@@ -4115,17 +4115,6 @@ fn run_update(
         );
         let repository =
             std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
-        let manifest = match manifest_url {
-            Some(url) => fetch_manifest(url),
-            None => latest_manifest(&repository),
-        };
-        let manifest = match manifest {
-            Ok(manifest) => manifest,
-            Err(error) => {
-                eprintln!("GitRun update: FAIL — release preflight failed: {error}");
-                return 1;
-            }
-        };
         let current = current_version();
         let target = match target_triple() {
             Ok(target) => target,
@@ -4134,6 +4123,19 @@ fn run_update(
                 return 1;
             }
         };
+        let selected = resolve_selected_manifest(&repository, &current, &target, manifest_url);
+        let (manifest, release_type) = match selected {
+            Ok(Some(selected)) => selected,
+            Ok(None) => {
+                println!("GitRun update: no newer release matches the active updater policy; no administrator access needed");
+                return 0;
+            }
+            Err(error) => {
+                eprintln!("GitRun update: FAIL — release preflight failed: {error}");
+                return 1;
+            }
+        };
+        println!("GitRun update: selected {} release {}", release_type.as_str(), manifest.version);
         if let Err(error) = build_plan(&manifest, &current, &target, &dependency_snapshot()) {
             match error {
                 UpdateError::NotNewer => {

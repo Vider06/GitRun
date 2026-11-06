@@ -36,8 +36,10 @@ checks = {
     "promotion workflow re-signs the changed manifest": "pkeyutl -sign" in promotion
     and "pkeyutl -verify" in promotion
     and "release-manifest.json" in promotion,
-    "promotion workflow checks the compiled-in public trust anchor": "EXPECTED_PUBLIC_KEY_HEX" in promotion
-    and "gitrun-release-ed25519-v1" in promotion,
+    "promotion workflow checks the compiled-in public trust anchor": 'expected_public_bytes="17 204 158 175 1 71 218 218 64 127 253 52 151 194 206 188 225 125 25 94 33 192 96 48 193 226 225 220 104 143 65 241"' in promotion
+    and 'tail -c 32 "$public" | od -An -v -tu1' in promotion
+    and "gitrun-release-ed25519-v1" in promotion
+    and "DEFAULT_PUBLIC_KEY_BYTES: [u8; 32]" in read("crates/gitrun-updater/src/state.rs"),
     "promotion workflow synchronizes description and prerelease state": "GITRUN_RELEASE_TYPE:" in promotion
     and "new_prerelease=true" in promotion
     and "new_prerelease=false" in promotion,

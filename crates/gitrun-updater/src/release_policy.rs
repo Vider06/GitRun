@@ -202,6 +202,31 @@ pub fn resolve_policy_update(
     Ok(Some(PolicyUpdate { release, manifest }))
 }
 
+/// Resolve the newest allowed release that contains an artifact for this host.
+/// Signature and metadata errors fail closed; an unsupported target may fall back
+/// to an older eligible release that still supports the installed architecture.
+pub fn resolve_policy_update_for_target(
+    repository: &str,
+    installed_version: &str,
+    policy: UpdatePolicy,
+    target: &str,
+) -> Result<Option<PolicyUpdate>, UpdateError> {
+    for release in select_releases(repository, installed_version, policy)? {
+        let manifest = fetch_manifest(&release.manifest_url)?;
+        if manifest.version != release.version || manifest.release_type != release.release_type {
+            return Err(UpdateError::InvalidManifest(
+                "release manifest version/type does not match its GitHub release".into(),
+            ));
+        }
+        match super::build_plan(&manifest, installed_version, target, &[]) {
+            Ok(_) => return Ok(Some(PolicyUpdate { release, manifest })),
+            Err(UpdateError::UnsupportedTarget(_)) => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

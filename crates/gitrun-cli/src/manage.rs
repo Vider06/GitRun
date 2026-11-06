@@ -2523,11 +2523,35 @@ fn edit_repository_policy(
 
 fn choose_update_policy(terminal: &mut ManagementTerminal) -> Result<Value, String> {
     let current = app_read("updater_settings", json!({}))?;
-    let active = current.get("policy").and_then(Value::as_str).unwrap_or("security_full");
+    let active = current
+        .get("policy")
+        .and_then(Value::as_str)
+        .unwrap_or("security_full");
     let choices = vec![
-        format!("Security releases only{}", if active == "security_only" { " [active]" } else { "" }),
-        format!("Security + Full releases{}", if active == "security_full" { " [active]" } else { "" }),
-        format!("Security + Full + Pre-releases{}", if active == "security_full_pre" { " [active]" } else { "" }),
+        format!(
+            "Security releases only{}",
+            if active == "security_only" {
+                " [active]"
+            } else {
+                ""
+            }
+        ),
+        format!(
+            "Security + Full releases{}",
+            if active == "security_full" {
+                " [active]"
+            } else {
+                ""
+            }
+        ),
+        format!(
+            "Security + Full + Pre-releases{}",
+            if active == "security_full_pre" {
+                " [active]"
+            } else {
+                ""
+            }
+        ),
     ];
     let selected = prompt_number(
         terminal,

@@ -29,10 +29,13 @@ use tauri::{AppHandle, Emitter, Manager};
 mod control_manager;
 #[path = "updater.rs"]
 mod updater;
-pub use updater::{UpdateCheckInfo, UpdateLockStatus, UpdateOperation, UpdatePolicyChoice, UpdateServiceStatus, UpdaterInfo, UpdaterSettings};
 pub use control_manager::{
     enabled as control_manager_enabled, request as control_manager_request,
     serve as run_control_manager,
+};
+pub use updater::{
+    UpdateCheckInfo, UpdateLockStatus, UpdateOperation, UpdatePolicyChoice, UpdateServiceStatus,
+    UpdaterInfo, UpdaterSettings,
 };
 
 /// Serializes management-side writes to the shared config/settings files.
@@ -4196,8 +4199,9 @@ pub fn save_updater_settings(policy: String) -> Result<UpdaterSettings, String> 
             "updater_settings_save",
             serde_json::json!({ "policy": policy }),
         )?;
-        return serde_json::from_value(value)
-            .map_err(|error| format!("decode saved updater settings from Control Manager: {error}"));
+        return serde_json::from_value(value).map_err(|error| {
+            format!("decode saved updater settings from Control Manager: {error}")
+        });
     }
     updater::local_settings_save(&policy)
 }
@@ -4282,7 +4286,10 @@ pub fn management_read(action: &str, args: serde_json::Value) -> Result<serde_js
         "updates" => management_value(check_gitrun_updates()),
         "updater_settings" => management_value(updater::current_settings_local()?),
         "updater_info" => {
-            let check = args.get("check").and_then(serde_json::Value::as_bool).unwrap_or(false);
+            let check = args
+                .get("check")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
             management_value(updater::info_local(check)?)
         }
         other => Err(format!("unsupported management read action: {other}")),
@@ -4373,9 +4380,9 @@ pub fn management_write(
             )?;
             Ok(serde_json::json!({ "ok": true }))
         }
-        "updater_settings_save" => {
-            management_value(updater::local_settings_save(&management_arg::<String>(&args, "policy")?)?)
-        }
+        "updater_settings_save" => management_value(updater::local_settings_save(
+            &management_arg::<String>(&args, "policy")?,
+        )?),
         "config_save" => {
             save_config(management_arg(&args, "updated")?)?;
             Ok(serde_json::json!({ "ok": true }))

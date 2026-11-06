@@ -7,6 +7,10 @@ pidfile="/run/gitrun.pid"
 output_log="/var/log/gitrun/scheduler.log"
 error_log="/var/log/gitrun/scheduler.log"
 
+start_pre() {
+    mkdir -p /var/log/gitrun
+}
+
 depend() {
     need net docker
 }

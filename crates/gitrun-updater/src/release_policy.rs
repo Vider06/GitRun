@@ -113,7 +113,10 @@ pub struct PolicyUpdate {
 
 /// Enumerate classified releases accepted by the selected policy, newest SemVer first.
 /// Releases before the signed classification boundary are never candidates.
-fn select_policy_releases(repository: &str, policy: UpdatePolicy) -> Result<Vec<SelectedRelease>, UpdateError> {
+fn select_policy_releases(
+    repository: &str,
+    policy: UpdatePolicy,
+) -> Result<Vec<SelectedRelease>, UpdateError> {
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(8))
         .timeout(Duration::from_secs(30))
@@ -132,11 +135,20 @@ fn select_policy_releases(repository: &str, policy: UpdatePolicy) -> Result<Vec<
             .send()?
             .error_for_status()?;
         let releases: Vec<GitHubRelease> = response.json()?;
-        if releases.is_empty() { break; }
+        if releases.is_empty() {
+            break;
+        }
         for release in &releases {
-            if release.draft { continue; }
-            let version = release.tag_name.strip_prefix('v').unwrap_or(&release.tag_name);
-            if compare_versions(version, MIN_CLASSIFIED_RELEASE_VERSION)? == Ordering::Less { continue; }
+            if release.draft {
+                continue;
+            }
+            let version = release
+                .tag_name
+                .strip_prefix('v')
+                .unwrap_or(&release.tag_name);
+            if compare_versions(version, MIN_CLASSIFIED_RELEASE_VERSION)? == Ordering::Less {
+                continue;
+            }
             let body = release.body.as_deref().unwrap_or_default();
             let release_type = ReleaseType::from_release_body(body)?;
             if release.prerelease != (release_type == ReleaseType::Pre) {
@@ -153,7 +165,9 @@ fn select_policy_releases(repository: &str, policy: UpdatePolicy) -> Result<Vec<
                 });
             }
         }
-        if releases.len() < RELEASES_PER_PAGE { break; }
+        if releases.len() < RELEASES_PER_PAGE {
+            break;
+        }
         if page == MAX_RELEASE_PAGES {
             return Err(UpdateError::InvalidManifest(
                 "GitHub release pagination exceeded the configured safety limit".into(),
@@ -167,20 +181,33 @@ fn select_policy_releases(repository: &str, policy: UpdatePolicy) -> Result<Vec<
 /// Keep only candidates that move in the direction of the latest release in
 /// the selected line. If the newest line release is already installed, an
 /// older release must not be treated as a reason to downgrade.
-fn releases_for_line_transition(candidates: Vec<SelectedRelease>, installed_version: &str) -> Result<Vec<SelectedRelease>, UpdateError> {
-    let Some(latest) = candidates.first() else { return Ok(Vec::new()); };
+fn releases_for_line_transition(
+    candidates: Vec<SelectedRelease>,
+    installed_version: &str,
+) -> Result<Vec<SelectedRelease>, UpdateError> {
+    let Some(latest) = candidates.first() else {
+        return Ok(Vec::new());
+    };
     let direction = compare_versions(&latest.version, installed_version)?;
-    if direction == Ordering::Equal { return Ok(Vec::new()); }
+    if direction == Ordering::Equal {
+        return Ok(Vec::new());
+    }
     let mut selected = Vec::new();
     for candidate in candidates {
-        if compare_versions(&candidate.version, installed_version)? != direction { break; }
+        if compare_versions(&candidate.version, installed_version)? != direction {
+            break;
+        }
         selected.push(candidate);
     }
     Ok(selected)
 }
 
 /// Normal updates are strictly monotonic: only versions newer than installed qualify.
-pub fn select_releases(repository: &str, installed_version: &str, policy: UpdatePolicy) -> Result<Vec<SelectedRelease>, UpdateError> {
+pub fn select_releases(
+    repository: &str,
+    installed_version: &str,
+    policy: UpdatePolicy,
+) -> Result<Vec<SelectedRelease>, UpdateError> {
     let candidates = select_policy_releases(repository, policy)?;
     let mut selected = Vec::new();
     for candidate in candidates {
@@ -192,8 +219,15 @@ pub fn select_releases(repository: &str, installed_version: &str, policy: Update
 }
 
 /// Select candidates only for an explicit, operator-approved release-line transition.
-pub fn select_line_transition_releases(repository: &str, installed_version: &str, policy: UpdatePolicy) -> Result<Vec<SelectedRelease>, UpdateError> {
-    releases_for_line_transition(select_policy_releases(repository, policy)?, installed_version)
+pub fn select_line_transition_releases(
+    repository: &str,
+    installed_version: &str,
+    policy: UpdatePolicy,
+) -> Result<Vec<SelectedRelease>, UpdateError> {
+    releases_for_line_transition(
+        select_policy_releases(repository, policy)?,
+        installed_version,
+    )
 }
 
 pub fn select_release(
@@ -274,7 +308,11 @@ pub fn resolve_policy_update_for_line_transition_target(
 ) -> Result<Option<PolicyUpdate>, UpdateError> {
     for release in select_line_transition_releases(repository, installed_version, policy)? {
         let manifest = fetch_manifest(&release.manifest_url)?;
-        if manifest.version.strip_prefix('v').unwrap_or(&manifest.version) != release.version.as_str()
+        if manifest
+            .version
+            .strip_prefix('v')
+            .unwrap_or(&manifest.version)
+            != release.version.as_str()
             || manifest.release_type != release.release_type
         {
             return Err(UpdateError::InvalidManifest(
@@ -339,20 +377,50 @@ mod tests {
         assert!(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Pre));
     }
     fn selected_release(version: &str) -> SelectedRelease {
-        SelectedRelease { version: version.into(), release_type: ReleaseType::Full, manifest_url: format!("https://example.invalid/{version}/release-manifest.json") }
+        SelectedRelease {
+            version: version.into(),
+            release_type: ReleaseType::Full,
+            manifest_url: format!("https://example.invalid/{version}/release-manifest.json"),
+        }
     }
 
     #[test]
     fn line_transition_candidates_only_move_in_latest_release_direction() {
-        let newer = releases_for_line_transition(vec![selected_release("1.11.0"), selected_release("1.10.0"), selected_release("1.9.9")], "1.10.5").unwrap();
-        assert_eq!(newer.iter().map(|r| r.version.as_str()).collect::<Vec<_>>(), vec!["1.11.0"]);
-        let older = releases_for_line_transition(vec![selected_release("1.10.4"), selected_release("1.10.3"), selected_release("1.10.2")], "1.10.5").unwrap();
-        assert_eq!(older.iter().map(|r| r.version.as_str()).collect::<Vec<_>>(), vec!["1.10.4", "1.10.3", "1.10.2"]);
+        let newer = releases_for_line_transition(
+            vec![
+                selected_release("1.11.0"),
+                selected_release("1.10.0"),
+                selected_release("1.9.9"),
+            ],
+            "1.10.5",
+        )
+        .unwrap();
+        assert_eq!(
+            newer.iter().map(|r| r.version.as_str()).collect::<Vec<_>>(),
+            vec!["1.11.0"]
+        );
+        let older = releases_for_line_transition(
+            vec![
+                selected_release("1.10.4"),
+                selected_release("1.10.3"),
+                selected_release("1.10.2"),
+            ],
+            "1.10.5",
+        )
+        .unwrap();
+        assert_eq!(
+            older.iter().map(|r| r.version.as_str()).collect::<Vec<_>>(),
+            vec!["1.10.4", "1.10.3", "1.10.2"]
+        );
     }
 
     #[test]
     fn line_transition_does_not_downgrade_when_latest_line_version_is_already_installed() {
-        let selected = releases_for_line_transition(vec![selected_release("1.10.5"), selected_release("1.10.4")], "1.10.5").unwrap();
+        let selected = releases_for_line_transition(
+            vec![selected_release("1.10.5"), selected_release("1.10.4")],
+            "1.10.5",
+        )
+        .unwrap();
         assert!(selected.is_empty());
     }
 }

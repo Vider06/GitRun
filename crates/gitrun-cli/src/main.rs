@@ -3,9 +3,10 @@ use gitrun_core::{AppAuth, Config, GitHubAuth, GitRunApi, GitRunSettings, Runner
 use gitrun_setup::{bootstrap_linux_with_auth_and_profile, prepare_directories, BootstrapAuth};
 use gitrun_smart_scheduler::KittySettings;
 use gitrun_updater::{
-    apply_installed_update, apply_update, build_line_transition_plan, build_plan, dependency_status, download_and_verify,
-    fetch_manifest, latest_manifest, pin_runner_image, release_manifest_download_url,
-    resolve_policy_update_for_line_transition_target, resolve_policy_update_for_target, rollback, rollback_installed_update_with_config,
+    apply_installed_update, apply_update, build_line_transition_plan, build_plan,
+    dependency_status, download_and_verify, fetch_manifest, latest_manifest, pin_runner_image,
+    release_manifest_download_url, resolve_policy_update_for_line_transition_target,
+    resolve_policy_update_for_target, rollback, rollback_installed_update_with_config,
     update_incompatible_dependencies, update_runner_image, BackupRecord, InstalledArtifact,
     InstalledBackupRecord, ReleaseType, UpdateError, UpdatePaths, UpdatePolicy,
 };
@@ -582,10 +583,14 @@ fn resolve_selected_manifest(
     let policy = configured_update_policy()?;
     if line_transition {
         if manifest_url.is_some() {
-            return Err("an explicit manifest URL cannot be used for a release-line transition".into());
+            return Err(
+                "an explicit manifest URL cannot be used for a release-line transition".into(),
+            );
         }
-        return Ok(resolve_policy_update_for_line_transition_target(repository, current, policy, target)?
-            .map(|resolved| (resolved.manifest, resolved.release.release_type)));
+        return Ok(resolve_policy_update_for_line_transition_target(
+            repository, current, policy, target,
+        )?
+        .map(|resolved| (resolved.manifest, resolved.release.release_type)));
     }
     if let Some(url) = manifest_url {
         let manifest = fetch_manifest(url)?;
@@ -599,8 +604,10 @@ fn resolve_selected_manifest(
         }
         return Ok(Some((manifest.clone(), manifest.release_type)));
     }
-    Ok(resolve_policy_update_for_target(repository, current, policy, target)?
-        .map(|resolved| (resolved.manifest, resolved.release.release_type)))
+    Ok(
+        resolve_policy_update_for_target(repository, current, policy, target)?
+            .map(|resolved| (resolved.manifest, resolved.release.release_type)),
+    )
 }
 
 fn update_check_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
@@ -720,8 +727,13 @@ fn update_command(
         .map(String::as_str);
     let current = current_version();
     let target = target_triple()?;
-    let Some((manifest, release_type)) =
-        resolve_selected_manifest(&repository, &current, &target, manifest_url, line_transition)?
+    let Some((manifest, release_type)) = resolve_selected_manifest(
+        &repository,
+        &current,
+        &target,
+        manifest_url,
+        line_transition,
+    )?
     else {
         println!(if line_transition {
             "GitRun update: no different release is available in the selected release line."
@@ -4088,7 +4100,8 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
             return 1;
         }
     };
-    let selected = match resolve_selected_manifest("Vider06/GitRun", &current, &target, None, false) {
+    let selected = match resolve_selected_manifest("Vider06/GitRun", &current, &target, None, false)
+    {
         Ok(selected) => selected,
         Err(error) => {
             eprintln!("GitRun fix-update: release selection failed: {error}");
@@ -4283,12 +4296,24 @@ fn run_update(
     // child. That child records the operation as root; do not trigger a second
     // authorization prompt merely to write the same history entry.
     if system_install_paths().is_some() && !running_as_root() {
-        return run_update_inner(manifest_url, only_containers, force, line_transition, presenter);
+        return run_update_inner(
+            manifest_url,
+            only_containers,
+            force,
+            line_transition,
+            presenter,
+        );
     }
     let before = gitrun_updater::state::info_local(false)
         .map(|info| info.version)
         .unwrap_or_else(|_| current_version());
-    let exit_code = run_update_inner(manifest_url, only_containers, force, line_transition, presenter);
+    let exit_code = run_update_inner(
+        manifest_url,
+        only_containers,
+        force,
+        line_transition,
+        presenter,
+    );
     let after = gitrun_updater::state::info_local(false)
         .map(|info| info.version)
         .unwrap_or_else(|_| current_version());
@@ -4320,7 +4345,9 @@ fn run_update_inner(
     initialize_system_update_config_path(system_install);
 
     if line_transition && only_containers {
-        eprintln!("GitRun update: release-line transitions cannot be combined with runner-only updates");
+        eprintln!(
+            "GitRun update: release-line transitions cannot be combined with runner-only updates"
+        );
         return 2;
     }
     if line_transition && manifest_url.is_some() {
@@ -4397,7 +4424,13 @@ fn run_update_inner(
                 return 1;
             }
         };
-        let selected = resolve_selected_manifest(&repository, &current, &target, manifest_url, line_transition);
+        let selected = resolve_selected_manifest(
+            &repository,
+            &current,
+            &target,
+            manifest_url,
+            line_transition,
+        );
         let (manifest, release_type) = match selected {
             Ok(Some(selected)) => selected,
             Ok(None) => {
@@ -6154,7 +6187,13 @@ mod internal_lifecycle_command_tests {
         ));
         assert!(Cli::try_parse_from(["gitrun", "update", "--line-transition", "--check"]).is_err());
         assert!(Cli::try_parse_from(["gitrun", "update", "--line-transition", "--force"]).is_err());
-        assert!(Cli::try_parse_from(["gitrun", "update", "--line-transition", "https://example.invalid/manifest.json"]).is_err());
+        assert!(Cli::try_parse_from([
+            "gitrun",
+            "update",
+            "--line-transition",
+            "https://example.invalid/manifest.json"
+        ])
+        .is_err());
     }
     #[test]
     fn system_update_config_path_ignores_environment_selected_paths() {

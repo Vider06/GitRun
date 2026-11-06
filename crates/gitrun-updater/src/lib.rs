@@ -15,8 +15,8 @@ pub mod release_policy;
 pub mod state;
 pub use release_policy::{
     resolve_policy_update, resolve_policy_update_for_line_transition_target,
-    resolve_policy_update_for_target, select_line_transition_releases, select_release, select_releases,
-    PolicyUpdate, ReleaseType, SelectedRelease, UpdatePolicy,
+    resolve_policy_update_for_target, select_line_transition_releases, select_release,
+    select_releases, PolicyUpdate, ReleaseType, SelectedRelease, UpdatePolicy,
 };
 
 const MAX_RELEASE_ARTIFACT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
@@ -748,7 +748,13 @@ pub fn build_plan(
     target: &str,
     installed_dependencies: &[(String, Option<String>)],
 ) -> Result<UpdatePlan, UpdateError> {
-    build_plan_with_version_policy(manifest, current_version, target, installed_dependencies, false)
+    build_plan_with_version_policy(
+        manifest,
+        current_version,
+        target,
+        installed_dependencies,
+        false,
+    )
 }
 
 /// Build a plan only for an explicit release-line transition. Equal versions
@@ -759,7 +765,13 @@ pub fn build_line_transition_plan(
     target: &str,
     installed_dependencies: &[(String, Option<String>)],
 ) -> Result<UpdatePlan, UpdateError> {
-    build_plan_with_version_policy(manifest, current_version, target, installed_dependencies, true)
+    build_plan_with_version_policy(
+        manifest,
+        current_version,
+        target,
+        installed_dependencies,
+        true,
+    )
 }
 
 fn build_plan_with_version_policy(
@@ -3561,23 +3573,14 @@ mod tests {
 
     #[test]
     fn explicit_line_transition_allows_older_version_but_not_equal_version() {
-        let plan = build_line_transition_plan(
-            &manifest(),
-            "0.4.0",
-            "x86_64-unknown-linux-gnu",
-            &[],
-        )
-        .expect("an explicit line transition may install the selected older line version");
+        let plan =
+            build_line_transition_plan(&manifest(), "0.4.0", "x86_64-unknown-linux-gnu", &[])
+                .expect("an explicit line transition may install the selected older line version");
         assert_eq!(plan.current_version, "0.4.0");
         assert_eq!(plan.target_version, "0.3.0");
 
         assert!(matches!(
-            build_line_transition_plan(
-                &manifest(),
-                "0.3.0",
-                "x86_64-unknown-linux-gnu",
-                &[],
-            ),
+            build_line_transition_plan(&manifest(), "0.3.0", "x86_64-unknown-linux-gnu", &[],),
             Err(UpdateError::NotNewer)
         ));
         assert!(matches!(

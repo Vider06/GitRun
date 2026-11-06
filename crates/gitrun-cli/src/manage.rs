@@ -2530,15 +2530,27 @@ fn choose_update_policy(terminal: &mut ManagementTerminal) -> Result<Value, Stri
     let choices = vec![
         format!(
             "Security releases only{}",
-            if active == "security_only" { " [active]" } else { "" }
+            if active == "security_only" {
+                " [active]"
+            } else {
+                ""
+            }
         ),
         format!(
             "Security + Full releases{}",
-            if active == "security_full" { " [active]" } else { "" }
+            if active == "security_full" {
+                " [active]"
+            } else {
+                ""
+            }
         ),
         format!(
             "Security + Full + Pre-releases{}",
-            if active == "security_full_pre" { " [active]" } else { "" }
+            if active == "security_full_pre" {
+                " [active]"
+            } else {
+                ""
+            }
         ),
     ];
     let selected = prompt_number(
@@ -2556,11 +2568,15 @@ fn choose_update_policy(terminal: &mut ManagementTerminal) -> Result<Value, Stri
     let changed = policy != active;
     let saved = app_write("updater_settings_save", json!({ "policy": policy }))?;
     let transition = if changed
-        && confirm(terminal, "Would you like to instantly roll to the latest line version? [y/N]")?
-    {
+        && confirm(
+            terminal,
+            "Would you like to instantly roll to the latest line version? [y/N]",
+        )? {
         let output = run_external(terminal, &["--no-cat", "update", "--line-transition"])?;
         if output.get("exit_code").and_then(Value::as_i64) != Some(0) {
-            return Err(format!("release-line transition did not complete successfully: {output}"));
+            return Err(format!(
+                "release-line transition did not complete successfully: {output}"
+            ));
         }
         Some(output)
     } else {

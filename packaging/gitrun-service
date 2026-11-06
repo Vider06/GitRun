@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+while IFS='=' read -r key value; do
+    case "$key" in
+        GITHUB_TOKEN|GITRUN_*) export "$key=$value" ;;
+    esac
+done < /etc/gitrun/gitrun.env
+
+if [ -x /usr/local/bin/gitrun-recovery ]; then
+    executable=/usr/local/bin/gitrun-recovery
+elif [ -x /usr/bin/gitrun ]; then
+    executable=/usr/bin/gitrun
+else
+    executable=/usr/local/bin/gitrun
+fi
+
+exec "$executable" "$@"

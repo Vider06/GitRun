@@ -4144,9 +4144,10 @@ fn run_update_inner(
     // paths bypass the privilege helper's normal signing-key hand-off, so initialize the fixed
     // trust anchors and service config before branching.
     let system_install = system_install_paths().is_some();
-    if system_install || only_containers {
-        initialize_update_signing_environment(system_install);
-    }
+    // Signed release manifests are mandatory for both system and developer
+    // installs. System installs overwrite caller-provided trust settings; local
+    // installs receive the built-in defaults unless an explicit local override exists.
+    initialize_update_signing_environment(system_install);
     initialize_system_update_config_path(system_install);
 
     if only_containers {

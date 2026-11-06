@@ -166,8 +166,17 @@ fn validate_privileged_state_path(directory: &Path) -> Result<(), String> {
             }
         }
     }
-    gitrun_setup::validate_system_state_directory(&nearest_existing)
-        .map_err(|error| format!("updater state directory is not trusted: {error}"))
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        for component in nearest_existing.ancestors().take_while(|path| path != &Path::new("/")) {
+            let metadata = std::fs::symlink_metadata(component).map_err(|error| format!("inspect trusted state ancestor {}: {error}", component.display()))?;
+            if metadata.uid() != 0 || metadata.permissions().mode() & 0o022 != 0 {
+                return Err(format!("updater state ancestor {} must be root-owned and not group/world-writable", component.display()));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn load_updater_config() -> Result<Config, String> {

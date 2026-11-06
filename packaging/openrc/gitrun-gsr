@@ -7,6 +7,10 @@ pidfile="/run/gitrun-gsr.pid"
 output_log="/var/log/gitrun/gsr.log"
 error_log="/var/log/gitrun/gsr.log"
 
+start_pre() {
+    mkdir -p /var/log/gitrun
+}
+
 depend() {
     need gitrun
 }

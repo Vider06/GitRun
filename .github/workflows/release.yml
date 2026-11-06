@@ -736,8 +736,8 @@ jobs:
             if [[ "$format" == "apk" ]]; then
               apk_contents="$(tar -tzf "$produced")"
               for required in \
-                ./usr/libexec/gitrun/gitrun-service \
-                ./etc/init.d/gitrun ./etc/init.d/gitrun-gsr; do
+                usr/libexec/gitrun/gitrun-service \
+                etc/init.d/gitrun etc/init.d/gitrun-gsr; do
                 grep -Fqx "$required" <<< "$apk_contents" || {
                   echo "APK package is missing OpenRC resource: $required" >&2
                   exit 1

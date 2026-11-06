@@ -54,7 +54,7 @@ jobs:
           [[ "$TAG" == v* ]] || TAG="v$TAG"
           python3 - "$TAG" <<'PY'
           import re, sys
-          match = re.match(r"^v?(\\d+)\\.(\\d+)\\.(\\d+)", sys.argv[1])
+          match = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", sys.argv[1])
           if not match or tuple(map(int, match.groups())) < (1, 9, 1):
               raise SystemExit("release classification is supported only from GitRun 1.9.1 onward")
           PY

@@ -230,10 +230,7 @@ fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<(), String> 
 }
 
 pub fn read_settings_local() -> Result<UpdaterSettings, String> {
-    let directory = match state_dir() {
-        Ok(directory) => directory,
-        Err(_) => return Ok(UpdaterSettings::default()),
-    };
+    let directory = state_dir()?;
     safe_state_dir(&directory, false)?;
     let settings: UpdaterSettings = read_json(&directory.join(SETTINGS_FILE))?;
     if settings.schema_version != 1 {
@@ -565,7 +562,7 @@ fn update_check(version: &str, policy: UpdatePolicyChoice, target: &str) -> Upda
 }
 
 pub fn info_local(check: bool) -> Result<UpdaterInfo, String> {
-    let directory = state_dir().unwrap_or_else(|_| PathBuf::from("/var/lib/gitrun"));
+    let directory = state_dir()?;
     safe_state_dir(&directory, false)?;
     let settings = read_settings_local()?;
     let target = if std::env::consts::OS == "linux" {

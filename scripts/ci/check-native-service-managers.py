@@ -128,12 +128,10 @@ def main() -> int:
             fail("setup must install native OpenRC and runit service trees", errors)
 
     launcher = read("packaging/gitrun-service", errors)
-    if 'export GITRUN_BINARY_PATH="$executable"' not in launcher:
-        fail("service launcher must pin Recovery startup to the canonical GitRun binary", errors)
-    if "exec /usr/local/bin/gitrun-recovery start scheduler" not in launcher:
-        fail("scheduler startup must use the Recovery start subcommand when Recovery is installed", errors)
-    if 'exec /usr/local/bin/gitrun-recovery "$@"' in launcher or 'exec /usr/local/bin/gitrun-recovery scheduler' in launcher:
-        fail("service launcher must not invoke Recovery as a drop-in GitRun CLI", errors)
+    if 'exec "$executable" "$@"' not in launcher:
+        fail("native service launcher must dispatch to the canonical GitRun CLI", errors)
+    if "gitrun-recovery" in launcher:
+        fail("native service launcher must not invoke the separate Recovery application", errors)
 
     release = read(".github/workflows/release.yml", errors)
     for marker in (

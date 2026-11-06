@@ -26,3 +26,11 @@ cargo build --locked -p gitrun-dashboard-tauri
 ```
 
 The Control Manager is started by the installed GitRun CLI's internal `--control-manager` entry point under `gitrun-control.service`. It is not hosted by the Dashboard process and does not require a graphical session.
+
+## Updater management boundary
+
+`gitrun-management` owns the persisted Security/Full/Pre release-line preference, local updater diagnostics, bounded operation/error history, and the shared GUI/TUI/CLI management interface. The Dashboard and Management TUI are clients of this backend; neither implements release selection or maintains a separate policy store.
+
+`gitrun-updater` remains the engine for signed manifest verification, GitHub release enumeration, SemVer policy selection and target-compatible update planning. Management calls that engine for checks and exposes the result to each interface.
+
+Protected Linux installations use Control Manager IPC on systemd. Other protected Linux service-manager installations use the fixed-purpose privileged CLI helpers exposed by the management backend.

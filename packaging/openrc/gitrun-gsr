@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+name="GitRun GSR watchdog"
+command="/usr/libexec/gitrun/gitrun-service"
+command_args="gsr-watchdog"
+command_background=true
+pidfile="/run/gitrun-gsr.pid"
+output_log="/var/log/gitrun/gsr.log"
+error_log="/var/log/gitrun/gsr.log"
+
+depend() {
+    need gitrun
+}

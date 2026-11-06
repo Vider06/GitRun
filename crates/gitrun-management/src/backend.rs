@@ -4229,7 +4229,20 @@ pub fn record_cli_update_operation(
     release_type: Option<&str>,
     exit_code: i32,
 ) {
-    updater::record_cli_operation(from_version, to_version, release_type, exit_code);
+    if control_manager_enabled() && !current_process_is_root() {
+        let _ = control_manager_request(
+            "write",
+            "updater_operation_record",
+            serde_json::json!({
+                "from_version": from_version,
+                "to_version": to_version,
+                "release_type": release_type,
+                "exit_code": exit_code,
+            }),
+        );
+    } else {
+        updater::record_cli_operation(from_version, to_version, release_type, exit_code);
+    }
 }
 
 /// Read live dashboard data from its existing command handlers. Args use
@@ -4393,6 +4406,15 @@ pub fn management_write(
         "updater_settings_save" => management_value(updater::local_settings_save(
             &management_arg::<String>(&args, "policy")?,
         )?),
+        "updater_operation_record" => {
+            updater::record_cli_operation(
+                &management_arg::<String>(&args, "from_version")?,
+                management_arg::<Option<String>>(&args, "to_version")?.as_deref(),
+                management_arg::<Option<String>>(&args, "release_type")?.as_deref(),
+                management_arg::<i32>(&args, "exit_code")?,
+            );
+            Ok(serde_json::json!({ "recorded": true }))
+        }
         "config_save" => {
             save_config(management_arg(&args, "updated")?)?;
             Ok(serde_json::json!({ "ok": true }))

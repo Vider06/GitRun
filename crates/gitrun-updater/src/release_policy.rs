@@ -265,10 +265,22 @@ mod tests {
 
     #[test]
     fn release_order_uses_semver_and_never_admits_equal_or_older_versions() {
-        assert_eq!(compare_versions("v1.9.1", "1.9.0").unwrap(), Ordering::Greater);
-        assert_eq!(compare_versions("1.9.2-rc.1", "1.9.2").unwrap(), Ordering::Less);
-        assert_eq!(compare_versions("1.10.0", "1.9.99").unwrap(), Ordering::Greater);
-        assert_eq!(compare_versions("1.9.1+build.7", "1.9.1").unwrap(), Ordering::Equal);
+        assert_eq!(
+            compare_versions("v1.9.1", "1.9.0").unwrap(),
+            Ordering::Greater
+        );
+        assert_eq!(
+            compare_versions("1.9.2-rc.1", "1.9.2").unwrap(),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_versions("1.10.0", "1.9.99").unwrap(),
+            Ordering::Greater
+        );
+        assert_eq!(
+            compare_versions("1.9.1+build.7", "1.9.1").unwrap(),
+            Ordering::Equal
+        );
     }
 
     #[test]

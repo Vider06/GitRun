@@ -2,8 +2,8 @@
 //! The updater crate owns policy, host discovery, storage and operation history.
 
 pub use gitrun_updater::state::{
-    UpdateCheckInfo, UpdateLockStatus, UpdateOperation, UpdatePolicyChoice,
-    UpdateServiceStatus, UpdaterInfo, UpdaterSettings,
+    UpdateCheckInfo, UpdateLockStatus, UpdateOperation, UpdatePolicyChoice, UpdateServiceStatus,
+    UpdaterInfo, UpdaterSettings,
 };
 
 pub fn current_settings_local() -> Result<UpdaterSettings, String> {

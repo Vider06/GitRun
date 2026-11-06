@@ -1,16 +1,22 @@
 //! Updater-owned policy persistence, host diagnostics and bounded operation history.
 
+use crate::{build_plan, resolve_policy_update_for_target, UpdatePolicy};
 use gitrun_core::Config;
 use gitrun_platform::{ManagedService, ServiceAction, ServiceManager};
 use gitrun_platform::{ManagedService, ServiceManager};
-use crate::{build_plan, resolve_policy_update_for_target, UpdatePolicy};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-static UPDATER_STATE_WRITE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+static UPDATER_STATE_WRITE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
+    std::sync::OnceLock::new();
 
-fn updater_state_write_guard() -> Result<std::sync::MutexGuard<'static, ()>, String> { UPDATER_STATE_WRITE_LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().map_err(|_| "updater state write lock is poisoned; refusing to save".to_owned()) }
+fn updater_state_write_guard() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    UPDATER_STATE_WRITE_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .map_err(|_| "updater state write lock is poisoned; refusing to save".to_owned())
+}
 
 const SETTINGS_FILE: &str = "updater-settings.json";
 const HISTORY_FILE: &str = "updater-history.json";
@@ -166,25 +172,49 @@ fn validate_privileged_state_path(directory: &Path) -> Result<(), String> {
 
 fn load_updater_config() -> Result<Config, String> {
     let explicit = std::env::var_os("GITRUN_CONFIG_FILE");
-    let path = explicit.map(PathBuf::from).or_else(|| [PathBuf::from("/etc/gitrun/gitrun.env"), PathBuf::from("config/gitrun.env")].into_iter().find(|path| path.is_file()));
-    let config = match path { Some(path) => Config::from_env_file(path), None => Config::from_env() }.map_err(|error| error.to_string())?;
+    let path = explicit.map(PathBuf::from).or_else(|| {
+        [
+            PathBuf::from("/etc/gitrun/gitrun.env"),
+            PathBuf::from("config/gitrun.env"),
+        ]
+        .into_iter()
+        .find(|path| path.is_file())
+    });
+    let config = match path {
+        Some(path) => Config::from_env_file(path),
+        None => Config::from_env(),
+    }
+    .map_err(|error| error.to_string())?;
     config.validate().map_err(|error| error.to_string())?;
     Ok(config)
 }
 
 fn current_process_is_root() -> bool {
-    #[cfg(unix)] { unsafe { libc::geteuid() == 0 } }
-    #[cfg(not(unix))] { false }
+    #[cfg(unix)]
+    {
+        unsafe { libc::geteuid() == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
 }
 
 fn service_status(service: ManagedService) -> (bool, bool, Option<ServiceManager>) {
-    let Some(manager) = gitrun_platform::detect_service_manager() else { return (false, false, None); };
+    let Some(manager) = gitrun_platform::detect_service_manager() else {
+        return (false, false, None);
+    };
     let installed = gitrun_platform::service_is_installed(manager, service);
-    if !installed { return (false, false, Some(manager)); }
+    if !installed {
+        return (false, false, Some(manager));
+    }
     let spec = gitrun_platform::service_command(manager, ServiceAction::Status, service);
     let active = gitrun_platform::trusted_service_manager_binary(manager).is_some_and(|program| {
         let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
-        std::process::Command::new(program).args(args).status().is_ok_and(|status| status.success())
+        std::process::Command::new(program)
+            .args(args)
+            .status()
+            .is_ok_and(|status| status.success())
     });
     (installed, active, Some(manager))
 }

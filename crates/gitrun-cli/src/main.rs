@@ -5219,12 +5219,7 @@ fn record_updater_operation_root_command(
         .and_then(|value| i32::try_from(value).ok())
         .ok_or("updater history payload has invalid exit_code")?;
     initialize_system_update_config_path(true);
-    gitrun_updater::state::record_cli_operation(
-        from_version,
-        to_version,
-        release_type,
-        exit_code,
-    );
+    gitrun_updater::state::record_cli_operation(from_version, to_version, release_type, exit_code);
     println!("GitRun updater operation recorded.");
     Ok(())
 }

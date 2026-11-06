@@ -24,7 +24,7 @@ pub fn record_cli_operation(
     release_type: Option<&str>,
     exit_code: i32,
 ) {
-    let _ = gitrun_updater::state::record_cli_operation(
+    gitrun_updater::state::record_cli_operation(
         from_version,
         to_version,
         release_type,

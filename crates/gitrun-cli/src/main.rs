@@ -735,7 +735,7 @@ fn update_command(
         line_transition,
     )?
     else {
-        println!(if line_transition {
+        println!("{}", if line_transition {
             "GitRun update: no different release is available in the selected release line."
         } else {
             "GitRun update: no newer release matches the active updater policy."
@@ -4434,7 +4434,7 @@ fn run_update_inner(
         let (manifest, release_type) = match selected {
             Ok(Some(selected)) => selected,
             Ok(None) => {
-                println!(if line_transition {
+                println!("{}", if line_transition {
                     "GitRun update: no different release is available in the selected line; no administrator access needed"
                 } else {
                     "GitRun update: no newer release matches the active updater policy; no administrator access needed"

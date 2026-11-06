@@ -258,6 +258,10 @@ pub fn save_settings_local(policy: &str) -> Result<UpdaterSettings, String> {
     Ok(settings)
 }
 
+fn bounded_safe_text(value: &str, limit: usize) -> String {
+    value.chars().filter(|character| !character.is_control()).take(limit).collect()
+}
+
 pub fn record_operation(
     from_version: &str,
     to_version: Option<&str>,
@@ -277,11 +281,13 @@ pub fn record_operation(
     let safe_error = error.map(|value| value.chars().take(512).collect::<String>());
     history.push(UpdateOperation {
         timestamp,
-        from_version: from_version.chars().take(64).collect(),
-        to_version: to_version.map(|value| value.chars().take(64).collect()),
-        release_type: release_type.map(|value| value.chars().take(16).collect()),
-        result: result.chars().take(32).collect(),
-        error: safe_error,
+        from_version: bounded_safe_text(from_version, 64),
+        to_version: to_version.map(|value| bounded_safe_text(value, 64)),
+        release_type: release_type
+            .filter(|value| matches!(*value, "pre" | "full" | "security"))
+            .map(|value| bounded_safe_text(value, 16)),
+        result: bounded_safe_text(result, 32),
+        error: safe_error.map(|value| bounded_safe_text(&value, 512)),
     });
     if history.len() > HISTORY_LIMIT {
         history.drain(..history.len() - HISTORY_LIMIT);

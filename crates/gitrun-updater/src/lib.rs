@@ -11,6 +11,14 @@ use std::{
 };
 use thiserror::Error;
 
+pub mod release_policy;
+pub mod state;
+pub use release_policy::{
+    resolve_policy_update, resolve_policy_update_for_line_transition_target,
+    resolve_policy_update_for_target, select_line_transition_releases, select_release,
+    select_releases, PolicyUpdate, ReleaseType, SelectedRelease, UpdatePolicy,
+};
+
 const MAX_RELEASE_ARTIFACT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 100_000;
 const MAX_ARCHIVE_ENTRY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
@@ -145,6 +153,8 @@ pub fn sync_premade_runner_dockerfile(
 pub struct ReleaseManifest {
     pub name: String,
     pub version: String,
+    /// Classification shared by the signed manifest and GitHub release metadata.
+    pub release_type: ReleaseType,
     pub git_commit: String,
     pub artifacts: Vec<ReleaseArtifact>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -738,8 +748,44 @@ pub fn build_plan(
     target: &str,
     installed_dependencies: &[(String, Option<String>)],
 ) -> Result<UpdatePlan, UpdateError> {
+    build_plan_with_version_policy(
+        manifest,
+        current_version,
+        target,
+        installed_dependencies,
+        false,
+    )
+}
+
+/// Build a plan only for an explicit release-line transition. Equal versions
+/// remain a no-op; ordinary updates continue to use the monotonic build_plan.
+pub fn build_line_transition_plan(
+    manifest: &ReleaseManifest,
+    current_version: &str,
+    target: &str,
+    installed_dependencies: &[(String, Option<String>)],
+) -> Result<UpdatePlan, UpdateError> {
+    build_plan_with_version_policy(
+        manifest,
+        current_version,
+        target,
+        installed_dependencies,
+        true,
+    )
+}
+
+fn build_plan_with_version_policy(
+    manifest: &ReleaseManifest,
+    current_version: &str,
+    target: &str,
+    installed_dependencies: &[(String, Option<String>)],
+    allow_older_version: bool,
+) -> Result<UpdatePlan, UpdateError> {
     manifest.validate()?;
-    if compare_versions(&manifest.version, current_version)? != std::cmp::Ordering::Greater {
+    let ordering = compare_versions(&manifest.version, current_version)?;
+    if ordering == std::cmp::Ordering::Equal
+        || (!allow_older_version && ordering != std::cmp::Ordering::Greater)
+    {
         return Err(UpdateError::NotNewer);
     }
     let artifact = manifest.artifact_for(target)?;
@@ -3282,6 +3328,7 @@ mod tests {
         ReleaseManifest {
             name: "GitRun".into(),
             version: "0.3.0".into(),
+            release_type: ReleaseType::Full,
             git_commit: "abcdef1".into(),
             artifacts: vec![ReleaseArtifact {
                 target: "x86_64-unknown-linux-gnu".into(),
@@ -3485,6 +3532,7 @@ mod tests {
         let raw = r#"{
             "name": "GitRun",
             "version": "0.3.0",
+            "release_type": "full",
             "git_commit": "abcdef1",
             "repository": "Vider06/GitRun",
             "artifacts": [
@@ -3507,7 +3555,7 @@ mod tests {
 
         assert_eq!(
             payload,
-            r#"{"artifacts":[{"file":"GitRun-v0.3.0-x86_64-unknown-linux-gnu.tar.gz","sha256":"fixture-sha256","target":"x86_64-unknown-linux-gnu"}],"dependencies":[{"minimum_version":"2.40.0","name":"Git"}],"git_commit":"abcdef1","name":"GitRun","repository":"Vider06/GitRun","version":"0.3.0"}"#
+            r#"{"artifacts":[{"file":"GitRun-v0.3.0-x86_64-unknown-linux-gnu.tar.gz","sha256":"fixture-sha256","target":"x86_64-unknown-linux-gnu"}],"dependencies":[{"minimum_version":"2.40.0","name":"Git"}],"git_commit":"abcdef1","name":"GitRun","release_type":"full","repository":"Vider06/GitRun","version":"0.3.0"}"#
         );
     }
 
@@ -3515,6 +3563,24 @@ mod tests {
     fn rejects_same_or_older_version() {
         assert!(matches!(
             build_plan(&manifest(), "0.3.0", "x86_64-unknown-linux-gnu", &[]),
+            Err(UpdateError::NotNewer)
+        ));
+        assert!(matches!(
+            build_plan(&manifest(), "0.4.0", "x86_64-unknown-linux-gnu", &[]),
+            Err(UpdateError::NotNewer)
+        ));
+    }
+
+    #[test]
+    fn explicit_line_transition_allows_older_version_but_not_equal_version() {
+        let plan =
+            build_line_transition_plan(&manifest(), "0.4.0", "x86_64-unknown-linux-gnu", &[])
+                .expect("an explicit line transition may install the selected older line version");
+        assert_eq!(plan.current_version, "0.4.0");
+        assert_eq!(plan.target_version, "0.3.0");
+
+        assert!(matches!(
+            build_line_transition_plan(&manifest(), "0.3.0", "x86_64-unknown-linux-gnu", &[],),
             Err(UpdateError::NotNewer)
         ));
         assert!(matches!(

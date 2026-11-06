@@ -11,6 +11,8 @@ gitrun connect OWNER/REPOSITORY
 gitrun config
 gitrun doctor
 gitrun platform
+gitrun update --info
+gitrun update --info --check
 gitrun update --check
 gitrun update --force
 gitrun manage
@@ -27,13 +29,26 @@ gitrun platform
 
 Prints the detected Linux distribution, architecture, libc ABI, recognized package manager and active init system. GNU and musl target identities are kept separate, and an unknown ABI or unsupported architecture is not guessed. This is a host-detection report, not a promise that a native GitRun package, service integration or runner image is available for that distribution. Android, Termux and Android-based proot environments are explicitly unsupported and are rejected before GitRun entry-point dispatch.
 
+## Release policy and updater diagnostics
+
+The updater uses one release-line preference shared by the desktop GUI and `gitrun manage`. Choose Security only, Security + Full (the default), or Security + Full + Pre. Pre-releases are excluded unless explicitly enabled. When you change the release line in the GUI or TUI, GitRun asks whether to install the newest release in that line immediately. Declining saves the preference without changing the installed version.
+
+```text
+gitrun update --info
+gitrun update --info --check
+```
+
+`--info` is a local diagnostic: it reports the installed version and package, architecture and ABI, active release policy, update lock, required service status, recent operations and recent errors without contacting GitHub. Adding `--check` performs a read-only, policy-aware check of signed release metadata and host artifact compatibility. Neither mode acquires the update lock or installs an update. The ordinary mascot remains enabled unless `--no-cat` is supplied.
+
+See the [Updater Release Policy](../../docs/UPDATER_RELEASE_POLICY.md) for release classifications, promotion workflow and selection safeguards.
+
 ## Update safeguards
 
 ```text
 gitrun update --force [MANIFEST_URL]
 ```
 
-The explicit `--force` option skips only the post-update `doctor` gate when that check is a known false negative. Signed-manifest verification, artifact SHA-256 verification, executable validation, systemd reconciliation and scheduler restart checks still run. If those other steps fail, the update can still fail or roll back. The option conflicts with `--check` and `--only-containers` and does not force a downgrade.
+The explicit `--force` option skips only the post-update `doctor` gate when that check is a known false negative. Signed-manifest verification, artifact SHA-256 verification, executable validation, systemd reconciliation and scheduler restart checks still run. If those other steps fail, the update can still fail or roll back. The option conflicts with `--check` and `--only-containers` and does not force a downgrade. The only lower-version exception is the hidden, one-shot transition invoked after the operator accepts the release-line prompt; it cannot be targeted at an arbitrary manifest URL.
 
 ## Fast Stop
 

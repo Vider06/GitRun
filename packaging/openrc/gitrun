@@ -1,0 +1,19 @@
+#!/sbin/openrc-run
+name="GitRun scheduler"
+command="/usr/libexec/gitrun/gitrun-service"
+command_args_foreground="scheduler"
+supervisor=supervise-daemon
+respawn_delay=5
+respawn_max=3
+respawn_period=60
+pidfile="/run/gitrun.pid"
+output_log="/var/log/gitrun/scheduler.log"
+error_log="/var/log/gitrun/scheduler.log"
+
+start_pre() {
+    mkdir -p /var/log/gitrun
+}
+
+depend() {
+    need net docker
+}

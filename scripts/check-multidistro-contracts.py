@@ -32,6 +32,9 @@ RUNTIME_BASELINE = {
         "apt-get": 13, "dpkg": 12, "systemctl": 38, "systemd-path": 28,
     },
     "crates/gitrun-updater/src/lib.rs": {"apt-get": 14},
+    # Updater diagnostics: Debian package identity markers and Control Manager
+    # unit-file probes. The latter are reached only after Systemd detection.
+    "crates/gitrun-updater/src/state.rs": {"dpkg": 2, "systemd-path": 6},
     "crates/gitrun-cli/src/main.rs": {
         "apt-get": 2, "dpkg": 5, "systemctl": 6, "systemd-path": 12,
     },
@@ -63,6 +66,7 @@ CONTEXT_ALLOWLIST = {
     "crates/gitrun-core/src/compatibility.rs": "command compatibility classifier; strings are not executed",
     "crates/gitrun-scheduler/src/api_service.rs": "package installation runs as container root inside the pinned Debian runner image",
     "scripts/ci/ci-lib.sh": "CI-only apt/dpkg helpers provision Debian-based GitHub Actions runners; they are not product runtime paths",
+    "scripts/ci/force-ubuntu-archive-mirror.sh": "CI-only apt-get configures the Ubuntu archive mirror on the runner; it is not a product runtime path",
 }
 
 PREFIX_ALLOWLIST = (
@@ -111,6 +115,28 @@ def check_platform_catalog(errors: list[str]) -> None:
 
 def check_release_package_boundaries(errors: list[str]) -> None:
     release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    expected_jobs = (
+        "prepare",
+        "build-server",
+        "build-dashboard",
+        "collect",
+        "package-server",
+        "package-dashboard",
+        "migration-package",
+        "validate",
+        "sign",
+        "release",
+    )
+    for job in expected_jobs:
+        count = release.count(f"\n  {job}:\n")
+        if count != 1:
+            errors.append(f"release workflow must declare {job} exactly once; found {count}")
+
+    install_notes = release.find('"## Install or update",')
+    overview_notes = release.find('"## Release overview",')
+    if install_notes < 0 or overview_notes < 0 or install_notes > overview_notes:
+        errors.append("release notes must put install/update instructions before the release overview")
+
     required_targets = (
         "x86_64-unknown-linux-gnu",
         "aarch64-unknown-linux-gnu",
@@ -126,7 +152,8 @@ def check_release_package_boundaries(errors: list[str]) -> None:
         "target: aarch64-unknown-linux-gnu",
         "target: x86_64-unknown-linux-musl",
         "target: aarch64-unknown-linux-musl",
-        "build-dashboard-musl:",
+        "kind: gnu",
+        "kind: musl",
         "ghcr.io/void-linux/void-musl-full:20260801r1",
         "libwebkit2gtk41-devel",
         "rustup-init",
@@ -146,9 +173,28 @@ def check_release_package_boundaries(errors: list[str]) -> None:
     for target in desktop_targets:
         if target not in release:
             errors.append(f"Desktop release matrix is missing {target}")
+
+    # Desktop GNU and musl targets are one matrix per lifecycle stage. Keep
+    # the four target variants together while preserving distro-specific steps.
+    build_job = release.split("  build-dashboard:\n", 1)[1].split("  collect:\n", 1)[0]
+    package_job = release.split("  package-dashboard:\n", 1)[1].split("  migration-package:\n", 1)[0]
+    for legacy_job in ("build-dashboard-musl:", "package-dashboard-musl:"):
+        if legacy_job in release:
+            errors.append(f"Desktop matrix must not be split into the legacy job {legacy_job}")
+    for target in required_targets:
+        if f"target: {target}" not in build_job:
+            errors.append(f"Unified Desktop build matrix is missing {target}")
+        if f"target: {target}" not in package_job:
+            errors.append(f"Unified Desktop package matrix is missing {target}")
+    if "kind: gnu" not in build_job or "kind: musl" not in build_job:
+        errors.append("Unified Desktop build matrix must retain GNU and musl build paths")
+    if "kind: gnu" not in package_job or "kind: musl" not in package_job:
+        errors.append("Unified Desktop package matrix must retain GNU and musl package paths")
     native_package_contracts = (
         "package-server:\n    name: Package Server target matrix\n    needs: [prepare, collect]\n    runs-on: ${{ matrix.runner }}",
-        "package-dashboard-musl:",
+        "package-dashboard:\n    name: Package independent Desktop",
+        "kind: gnu",
+        "kind: musl",
         "runs-on: ${{ matrix.runner }}",
         "xbps_static_arch: aarch64",
         "XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}",
@@ -178,6 +224,126 @@ def check_release_package_boundaries(errors: list[str]) -> None:
             errors.append("XBPS archive creation must consume the init-neutral stage")
         if '"$xbps_create"' in block and '"$package_stage"' in block:
             errors.append("XBPS archive must not consume the systemd-enabled package stage")
+
+
+def check_native_init_package_resources(errors: list[str]) -> None:
+    """Validate the packaged OpenRC/runit files as executable service contracts."""
+    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    resources = (ROOT / "crates/gitrun-setup/src/resources.rs").read_text(encoding="utf-8")
+    setup = (ROOT / "crates/gitrun-setup/src/lib.rs").read_text(encoding="utf-8")
+
+    expected = {
+        "packaging/gitrun-service": ("GITHUB_TOKEN|GITRUN_*", "/usr/bin/gitrun", 'exec "$executable" "$@"'),
+        "packaging/openrc/gitrun": ("#!/sbin/openrc-run", 'command_args_foreground="scheduler"', "supervisor=supervise-daemon", "respawn_delay=5", "mkdir -p /var/log/gitrun", "need net docker"),
+        "packaging/openrc/gitrun-gsr": ("#!/sbin/openrc-run", 'command_args_foreground="gsr-watchdog"', "supervisor=supervise-daemon", "respawn_delay=5", "mkdir -p /var/log/gitrun", "need gitrun"),
+        "packaging/runit/gitrun/run": ("#!/bin/sh", "gitrun-service scheduler"),
+        "packaging/runit/gitrun/log/run": ("#!/bin/sh", "svlogd -tt /var/log/gitrun/gitrun"),
+        "packaging/runit/gitrun-gsr/run": ("#!/bin/sh", "gitrun-service gsr-watchdog"),
+        "packaging/runit/gitrun-gsr/log/run": ("#!/bin/sh", "svlogd -tt /var/log/gitrun/gitrun-gsr"),
+        "packaging/apk-pre-remove": ("rc-service", "rc-update del"),
+        "packaging/apk-post-upgrade": ("rc-service", "restart"),
+        "packaging/xbps/INSTALL": ("ACTION", "sv restart", "UPDATE"),
+        "packaging/xbps/REMOVE": ("ACTION", "sv down", "UPDATE"),
+        "packaging/gitrun-migration-prerm": ("in-favour", "gitrun-server", "systemctl disable --now"),
+    }
+    launcher = read_text(ROOT / "packaging/gitrun-service") or ""
+    if "gitrun-recovery" in launcher:
+        errors.append("native service launcher must not invoke the separate Recovery application")
+
+    for relative, markers in expected.items():
+        path = ROOT / relative
+        source = read_text(path)
+        mode = subprocess.run(
+            ["git", "ls-files", "--stage", "--", relative],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if mode.returncode or not mode.stdout.startswith("100755 "):
+            errors.append(f"{relative} must be tracked with executable mode 100755")
+        if source is None:
+            errors.append(f"missing native init resource: {relative}")
+            continue
+        for marker in markers:
+            if marker not in source:
+                errors.append(f"{relative} is missing required contract marker: {marker}")
+        syntax = subprocess.run(
+            ["sh", "-n", str(path)], check=False, capture_output=True, text=True
+        )
+        if syntax.returncode:
+            errors.append(
+                f"{relative} failed shell syntax validation: {syntax.stderr.strip()}"
+            )
+
+    resource_markers = (
+        'include_str!("../../../packaging/gitrun-service")',
+        'include_str!("../../../packaging/openrc/gitrun")',
+        'include_str!("../../../packaging/openrc/gitrun-gsr")',
+        'include_str!("../../../packaging/runit/gitrun/run")',
+        'include_str!("../../../packaging/runit/gitrun/log/run")',
+        'include_str!("../../../packaging/runit/gitrun-gsr/run")',
+        'include_str!("../../../packaging/runit/gitrun-gsr/log/run")',
+    )
+    for marker in resource_markers:
+        if marker not in resources:
+            errors.append(f"setup resources are not sourced from the packaged file: {marker}")
+
+    for marker in (
+        "resources::GITRUN_SERVICE",
+        "resources::OPENRC_GITRUN",
+        "resources::OPENRC_GITRUN_GSR",
+        "resources::RUNIT_GITRUN_RUN",
+        "resources::RUNIT_GITRUN_LOG_RUN",
+        "resources::RUNIT_GITRUN_GSR_RUN",
+        "resources::RUNIT_GITRUN_GSR_LOG_RUN",
+        'Path::new("/etc/init.d/gitrun")',
+        'Path::new("/etc/sv").join(service)',
+        'Path::new("/var/service")',
+    ):
+        if marker not in setup:
+            errors.append(f"setup lifecycle is missing packaged native-init contract: {marker}")
+
+    workflow_markers = (
+        'install -m 0755 packaging/gitrun-service "$package_stage/usr/libexec/gitrun/gitrun-service"',
+        'install -m 0755 packaging/openrc/gitrun "$package_stage/etc/init.d/gitrun"',
+        'install -m 0755 packaging/openrc/gitrun-gsr "$package_stage/etc/init.d/gitrun-gsr"',
+        'usr/libexec/gitrun/gitrun-service',
+        'etc/init.d/gitrun etc/init.d/gitrun-gsr',
+        "preremove: packaging/apk-pre-remove",
+        "postupgrade: packaging/apk-post-upgrade",
+        ".pre-deinstall$",
+        ".post-upgrade$",
+        'install -m 0755 packaging/xbps/INSTALL "$xbps_stage/INSTALL"',
+        'install -m 0755 packaging/xbps/REMOVE "$xbps_stage/REMOVE"',
+        ' -p install-script -S ',
+        ' -p remove-script -S ',
+        'install -m 0755 packaging/runit/gitrun/run "$xbps_stage/etc/sv/gitrun/run"',
+        'install -m 0755 packaging/runit/gitrun/log/run "$xbps_stage/etc/sv/gitrun/log/run"',
+        'install -m 0755 packaging/runit/gitrun-gsr/run "$xbps_stage/etc/sv/gitrun-gsr/run"',
+        'install -m 0755 packaging/runit/gitrun-gsr/log/run "$xbps_stage/etc/sv/gitrun-gsr/log/run"',
+        'xbps_contents="$(tar -tf "$xbps_file")"',
+        'XBPS package must contain runit resources, not systemd units',
+        'install -m 0755 packaging/gitrun-migration-prerm "$root/DEBIAN/prerm"',
+        'test ! -s "$mock_log"',
+        "grep -Fq 'disable --now gitrun-gsr.service gitrun.service' \"$mock_log\"",
+    )
+    for marker in workflow_markers:
+        if marker not in release:
+            errors.append(f"release packaging is missing native-init integration: {marker}")
+
+    apk_override = (
+        release.split("            apk:\n", 1)[1].split("            archlinux:\n", 1)[0]
+        if "            apk:\n" in release and "            archlinux:\n" in release
+        else ""
+    )
+    if "preremove:" in apk_override:
+        errors.append("nFPM APK overrides do not support an APK-specific preremove key; use the generic preremove hook")
+    if "postupgrade: packaging/apk-post-upgrade" not in apk_override:
+        errors.append("APK post-upgrade hook must use the APK-specific postupgrade field")
+
+    if "init-neutral" in release:
+        errors.append("native APK/XBPS packages must not be described as init-neutral")
 
 
 def check_portable_privilege_helpers(errors: list[str]) -> None:
@@ -269,6 +435,13 @@ def check_setup_native_lifecycle_contract(errors: list[str]) -> None:
         errors.append("Docker bootstrap must not invoke apt-get outside the Apt package-manager branch")
     if '"-Syu"' in setup:
         errors.append("Docker bootstrap must not trigger a full Arch system upgrade")
+
+    install_services = setup.split("fn install_gitrun_service_definitions", 1)[1].split("fn start_gitrun_services", 1)[0]
+    start_services = setup.split("fn start_gitrun_services", 1)[1].split("fn stop_gitrun_services", 1)[0]
+    if "ensure_runit_service_link(service)" in install_services:
+        errors.append("runit service links must not be enabled while setup is still writing configuration")
+    if "ensure_runit_service_link(service)" not in start_services:
+        errors.append("runit service links must be created only in the service-start phase")
 
 
 def check_updater_native_package_contract(errors: list[str]) -> None:
@@ -375,6 +548,7 @@ def main() -> int:
 
     check_platform_catalog(errors)
     check_release_package_boundaries(errors)
+    check_native_init_package_resources(errors)
     check_dashboard_service_manager_contract(errors)
     check_portable_privilege_helpers(errors)
     check_setup_native_lifecycle_contract(errors)
@@ -402,7 +576,7 @@ def main() -> int:
         "## Known host-runtime migration debt",
         "",
         "These reviewed legacy references remain and must be migrated to the shared platform layer. "
-        "This guard prevents their spread; it does not certify full OpenRC/runit or non-Debian lifecycle support.",
+        "This guard prevents their spread; it does not certify every package lifecycle, updater, recovery or runner workload across all targets.",
         "",
         *(known or ["- No known direct platform-specific references found."]),
         "",

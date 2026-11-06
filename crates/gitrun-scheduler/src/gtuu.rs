@@ -81,6 +81,34 @@ const STALE_LOCK_AGE: Duration = Duration::from_secs(60 * 60);
 
 impl GtuuLock {
     pub fn acquire(state_dir: &Path) -> Result<Self> {
+        Self::acquire_with_retry(state_dir, Duration::ZERO)
+    }
+
+    /// Wait for an in-flight scheduler reconciliation or GTUU operation to
+    /// release the lifecycle lock before starting a system update.
+    ///
+    /// Scheduler reconciliation intentionally uses the nonblocking acquire
+    /// path so it can defer a repository cycle instead of stalling its poll
+    /// loop. System updates use this bounded retry path because failing on a
+    /// short-lived reconciliation would make ordinary updates spuriously fail.
+    pub fn acquire_wait(state_dir: &Path, timeout: Duration) -> Result<Self> {
+        Self::acquire_with_retry(state_dir, timeout)
+    }
+
+    fn acquire_with_retry(state_dir: &Path, timeout: Duration) -> Result<Self> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match Self::acquire_once(state_dir) {
+                Err(GtuuError::AlreadyRunning) if Instant::now() < deadline => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    std::thread::sleep(remaining.min(Duration::from_millis(100)));
+                }
+                result => return result,
+            }
+        }
+    }
+
+    fn acquire_once(state_dir: &Path) -> Result<Self> {
         fs::create_dir_all(state_dir)?;
         // Serialize stale detection, reclamation, and creation as one critical
         // section. A PID check followed by rename alone is racy: another
@@ -559,6 +587,37 @@ mod tests {
         // Lock released on drop, so a new acquire should now succeed.
         let third = GtuuLock::acquire(&dir);
         assert!(third.is_ok());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn acquire_wait_retries_until_active_lock_is_released() {
+        let dir = std::env::temp_dir().join(format!("gitrun-gtuu-wait-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let first = GtuuLock::acquire(&dir).expect("first lock should succeed");
+        let waiter_dir = dir.clone();
+        let waiter =
+            std::thread::spawn(move || GtuuLock::acquire_wait(&waiter_dir, Duration::from_secs(2)));
+
+        std::thread::sleep(Duration::from_millis(50));
+        drop(first);
+        assert!(waiter.join().expect("waiter thread should finish").is_ok());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn acquire_wait_times_out_while_lock_remains_active() {
+        let dir = std::env::temp_dir().join(format!("gitrun-gtuu-timeout-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let first = GtuuLock::acquire(&dir).expect("first lock should succeed");
+        let started = Instant::now();
+        let second = GtuuLock::acquire_wait(&dir, Duration::from_millis(20));
+        assert!(
+            started.elapsed() >= Duration::from_millis(15),
+            "lock acquisition should wait for the configured timeout"
+        );
+        assert!(matches!(second, Err(GtuuError::AlreadyRunning)));
+        drop(first);
         let _ = fs::remove_dir_all(&dir);
     }
 

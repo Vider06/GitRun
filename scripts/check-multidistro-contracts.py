@@ -126,7 +126,8 @@ def check_release_package_boundaries(errors: list[str]) -> None:
         "target: aarch64-unknown-linux-gnu",
         "target: x86_64-unknown-linux-musl",
         "target: aarch64-unknown-linux-musl",
-        "build-dashboard-musl:",
+        "kind: gnu",
+        "kind: musl",
         "ghcr.io/void-linux/void-musl-full:20260801r1",
         "libwebkit2gtk41-devel",
         "rustup-init",
@@ -146,9 +147,28 @@ def check_release_package_boundaries(errors: list[str]) -> None:
     for target in desktop_targets:
         if target not in release:
             errors.append(f"Desktop release matrix is missing {target}")
+
+    # Desktop GNU and musl targets are one matrix per lifecycle stage. Keep
+    # the four target variants together while preserving distro-specific steps.
+    build_job = release.split("  build-dashboard:\\n", 1)[1].split("  collect:\\n", 1)[0]
+    package_job = release.split("  package-dashboard:\\n", 1)[1].split("  migration-package:\\n", 1)[0]
+    for legacy_job in ("build-dashboard-musl:", "package-dashboard-musl:"):
+        if legacy_job in release:
+            errors.append(f"Desktop matrix must not be split into the legacy job {legacy_job}")
+    for target in required_targets:
+        if f"target: {target}" not in build_job:
+            errors.append(f"Unified Desktop build matrix is missing {target}")
+        if f"target: {target}" not in package_job:
+            errors.append(f"Unified Desktop package matrix is missing {target}")
+    if "kind: gnu" not in build_job or "kind: musl" not in build_job:
+        errors.append("Unified Desktop build matrix must retain GNU and musl build paths")
+    if "kind: gnu" not in package_job or "kind: musl" not in package_job:
+        errors.append("Unified Desktop package matrix must retain GNU and musl package paths")
     native_package_contracts = (
         "package-server:\n    name: Package Server target matrix\n    needs: [prepare, collect]\n    runs-on: ${{ matrix.runner }}",
-        "package-dashboard-musl:",
+        "package-dashboard:\n    name: Package independent Desktop",
+        "kind: gnu",
+        "kind: musl",
         "runs-on: ${{ matrix.runner }}",
         "xbps_static_arch: aarch64",
         "XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}",

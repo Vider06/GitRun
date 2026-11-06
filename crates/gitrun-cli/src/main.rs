@@ -4111,6 +4111,12 @@ fn run_update(
     force: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> i32 {
+    // A non-root system invocation delegates the transaction to the elevated
+    // child. That child records the operation as root; do not trigger a second
+    // authorization prompt merely to write the same history entry.
+    if system_install_paths().is_some() && !running_as_root() {
+        return run_update_inner(manifest_url, only_containers, force, presenter);
+    }
     let before = gitrun_management::get_updater_info(false)
         .map(|info| info.version)
         .unwrap_or_else(|_| current_version());

@@ -4137,7 +4137,7 @@ fn run_update(
         .map(|info| info.version)
         .unwrap_or_else(|_| current_version());
     let exit_code = run_update_inner(manifest_url, only_containers, force, presenter);
-    let after = gitrun_management::get_updater_info(false)
+    let after = gitrun_updater::state::info_local(false)
         .map(|info| info.version)
         .unwrap_or_else(|_| current_version());
     gitrun_updater::state::record_cli_operation(
@@ -5144,7 +5144,7 @@ fn read_updater_settings_root_command() -> Result<(), Box<dyn std::error::Error>
         return Err("reading protected updater settings requires administrator privileges".into());
     }
     prepare_trusted_updater_state()?;
-    let settings = gitrun_management::get_updater_settings()?;
+    let settings = gitrun_updater::state::current_settings_local()?;
     println!("{}", serde_json::to_string(&settings)?);
     Ok(())
 }

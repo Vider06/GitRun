@@ -2206,11 +2206,11 @@ fn execute_action(terminal: &mut ManagementTerminal, state: &mut State) -> Resul
         (7, 3) => app_read("service_logs", json!({ "source":"all", "limit":200 })).map(|v| ("Combined service journal".into(),v)),
         (8, 1) => app_read("updater_info", json!({ "check": true })).map(|v| ("Policy-aware update check".into(),v)),
         (8, 2) => run_external(terminal, &["--no-cat","setup","--terminal"]).map(|v| ("Terminal setup".into(),v)),
-        (8, 3) => maintenance_task_with_confirmation(terminal, "update", &["--no-cat", "update"], "Apply the verified GitRun update now? [y/N]", "GitRun update"),
-        (8, 4) => maintenance_task_with_confirmation(terminal, "update_containers", &["--no-cat", "update", "--only-containers"], "Update eligible permanent runner containers now? [y/N]", "Permanent runner update"),
-        (8, 5) => maintenance_task_with_confirmation(terminal, "reinstall_latest", &["--no-cat", "reinstall"], "Reinstall GitRun from the official release? [y/N]", "GitRun reinstall"),
+        (8, 3) => run_confirmed_command(terminal, &["--no-cat", "update"], "Apply the verified GitRun update now? [y/N]", "GitRun update"),
+        (8, 4) => run_confirmed_command(terminal, &["--no-cat", "update", "--only-containers"], "Update eligible permanent runner containers now? [y/N]", "Permanent runner update"),
+        (8, 5) => run_confirmed_command(terminal, &["--no-cat", "reinstall"], "Reinstall GitRun from the official release? [y/N]", "GitRun reinstall"),
         (8, 6) => service_action(terminal, "restart").map(|v| ("GitRun service".into(), v)),
-        (8, 7) => maintenance_task_with_confirmation(terminal, "uninstall", &["--no-cat", "uninstall"], "UNINSTALL GitRun and its managed components? [y/N]", "GitRun uninstall"),
+        (8, 7) => run_confirmed_command(terminal, &["--no-cat", "uninstall"], "UNINSTALL GitRun and its managed components? [y/N]", "GitRun uninstall"),
         (8, 8) => {
             if confirm(terminal, "Attempt safe JSON formatting repair? Unrepairable files will remain untouched. [y/N]")? {
                 app_write("json_recovery", json!({"action":"repair"})).map(|v| ("JSON repair report".into(), v))
@@ -2530,27 +2530,15 @@ fn choose_update_policy(terminal: &mut ManagementTerminal) -> Result<Value, Stri
     let choices = vec![
         format!(
             "Security releases only{}",
-            if active == "security_only" {
-                " [active]"
-            } else {
-                ""
-            }
+            if active == "security_only" { " [active]" } else { "" }
         ),
         format!(
             "Security + Full releases{}",
-            if active == "security_full" {
-                " [active]"
-            } else {
-                ""
-            }
+            if active == "security_full" { " [active]" } else { "" }
         ),
         format!(
             "Security + Full + Pre-releases{}",
-            if active == "security_full_pre" {
-                " [active]"
-            } else {
-                ""
-            }
+            if active == "security_full_pre" { " [active]" } else { "" }
         ),
     ];
     let selected = prompt_number(
@@ -2565,8 +2553,25 @@ fn choose_update_policy(terminal: &mut ManagementTerminal) -> Result<Value, Stri
         2 => "security_full_pre",
         _ => return Err("invalid updater release-line selection".into()),
     };
+    let changed = policy != active;
     let saved = app_write("updater_settings_save", json!({ "policy": policy }))?;
-    Ok(json!({ "saved": true, "policy": policy, "settings": saved }))
+    let transition = if changed
+        && confirm(terminal, "Would you like to instantly roll to the latest line version? [y/N]")?
+    {
+        let output = run_external(terminal, &["--no-cat", "update", "--line-transition"])?;
+        if output.get("exit_code").and_then(Value::as_i64) != Some(0) {
+            return Err(format!("release-line transition did not complete successfully: {output}"));
+        }
+        Some(output)
+    } else {
+        None
+    };
+    Ok(json!({
+        "saved": true,
+        "policy": policy,
+        "settings": saved,
+        "instant_transition": transition,
+    }))
 }
 
 fn edit_config(terminal: &mut ManagementTerminal) -> Result<Value, String> {
@@ -2908,10 +2913,9 @@ fn service_control(action: &str) -> Result<Value, String> {
     app_write("service_control", json!({"action":action}))
 }
 
-fn maintenance_task_with_confirmation(
+fn run_confirmed_command(
     terminal: &mut ManagementTerminal,
-    task: &str,
-    fallback_args: &[&str],
+    command_args: &[&str],
     prompt_text: &str,
     title: &str,
 ) -> Result<(String, Value), String> {
@@ -2919,12 +2923,10 @@ fn maintenance_task_with_confirmation(
         return Ok((format!("{title} cancelled"), json!({"cancelled": true})));
     }
 
-    if gitrun_management::control_manager_enabled() {
-        return app_write("maintenance_task", json!({"task": task, "confirmed": true}))
-            .map(|value| (title.to_owned(), value));
-    }
-
-    let output = run_external(terminal, fallback_args)?;
+    // Operator-requested work runs in the caller's terminal and waits for its
+    // real exit status. The Control Manager scheduler is reserved for tasks
+    // that are intentionally timed or background-managed.
+    let output = run_external(terminal, command_args)?;
     if output.get("exit_code").and_then(Value::as_i64) == Some(0) {
         Ok((title.to_owned(), output))
     } else {

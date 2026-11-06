@@ -31,7 +31,7 @@ Prints the detected Linux distribution, architecture, libc ABI, recognized packa
 
 ## Release policy and updater diagnostics
 
-The updater uses one release-line preference shared by the desktop GUI and `gitrun manage`. Choose Security only, Security + Full (the default), or Security + Full + Pre. Pre-releases are excluded unless explicitly enabled.
+The updater uses one release-line preference shared by the desktop GUI and `gitrun manage`. Choose Security only, Security + Full (the default), or Security + Full + Pre. Pre-releases are excluded unless explicitly enabled. When you change the release line in the GUI or TUI, GitRun asks whether to install the newest release in that line immediately. Declining saves the preference without changing the installed version.
 
 ```text
 gitrun update --info
@@ -48,7 +48,7 @@ See the [Updater Release Policy](../../docs/UPDATER_RELEASE_POLICY.md) for relea
 gitrun update --force [MANIFEST_URL]
 ```
 
-The explicit `--force` option skips only the post-update `doctor` gate when that check is a known false negative. Signed-manifest verification, artifact SHA-256 verification, executable validation, systemd reconciliation and scheduler restart checks still run. If those other steps fail, the update can still fail or roll back. The option conflicts with `--check` and `--only-containers` and does not force a downgrade.
+The explicit `--force` option skips only the post-update `doctor` gate when that check is a known false negative. Signed-manifest verification, artifact SHA-256 verification, executable validation, systemd reconciliation and scheduler restart checks still run. If those other steps fail, the update can still fail or roll back. The option conflicts with `--check` and `--only-containers` and does not force a downgrade. The only lower-version exception is the hidden, one-shot transition invoked after the operator accepts the release-line prompt; it cannot be targeted at an arbitrary manifest URL.
 
 ## Fast Stop
 

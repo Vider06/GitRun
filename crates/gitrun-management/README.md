@@ -34,3 +34,11 @@ The Control Manager is started by the installed GitRun CLI's internal `--control
 `gitrun-updater` remains the engine for signed manifest verification, GitHub release enumeration, SemVer policy selection and target-compatible update planning. Management calls that engine for checks and exposes the result to each interface.
 
 Protected Linux installations use Control Manager IPC on systemd. Other protected Linux service-manager installations use the fixed-purpose privileged CLI helpers exposed by the management backend.
+
+## Immediate operator operations and scheduled maintenance
+
+Commands explicitly selected by an operator in the Management TUI or Dashboard run in the foreground. The TUI attaches the CLI child to its terminal, suspends the management viewport while the command runs, and returns only after the process exits. The Dashboard uses the backend's streaming privileged-command runner, forwards stdout/stderr events to the UI and awaits the real exit status.
+
+User-requested update, permanent-runner update, reinstall and uninstall actions are not submitted as `maintenance_task` jobs. This prevents an interface from reporting that a task was merely handed to systemd when the operator expects to watch it run.
+
+The Control Manager's `maintenance_task` mechanism remains available for work that is intentionally deferred or background-managed. It is not the default execution path for direct TUI/GUI actions. Recurring runner/container automation remains owned by the scheduler and its configured schedule.

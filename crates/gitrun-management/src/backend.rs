@@ -1126,19 +1126,6 @@ async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
     {
         return Err("graphical uninstall currently targets Linux x86_64 and ARM64".into());
     }
-    if control_manager_enabled() {
-        let scheduled = control_manager_request(
-            "write",
-            "maintenance_task",
-            serde_json::json!({ "task": "uninstall", "confirmed": true }),
-        )?;
-        let message = scheduled
-            .get("message")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("GitRun uninstall was scheduled by systemd.");
-        emit_first_setup_event(&app, 0, message.to_owned(), "system", true, true);
-        return Ok(());
-    }
 
     let pkexec = pkexec_path().ok_or(
         "trusted pkexec was not found at a root-owned, non-writable system path; graphical uninstall cannot safely continue",
@@ -1273,19 +1260,6 @@ async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
         || !(cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64"))
     {
         return Err("graphical reinstall currently targets Linux x86_64 and ARM64".into());
-    }
-    if control_manager_enabled() {
-        let scheduled = control_manager_request(
-            "write",
-            "maintenance_task",
-            serde_json::json!({ "task": "reinstall_latest", "confirmed": true }),
-        )?;
-        let message = scheduled
-            .get("message")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("GitRun reinstall was scheduled by systemd.");
-        emit_first_setup_event(&app, 0, message.to_owned(), "system", true, true);
-        return Ok(());
     }
     let cli = dashboard_cli_path(&app)
         .ok_or("trusted GitRun CLI was not found; the reinstall cannot safely continue")?;
@@ -3988,29 +3962,59 @@ fn check_gitrun_updates() -> UpdateCheckResult {
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
+async fn update_gitrun(app: AppHandle, line_transition: bool) -> Result<(), String> {
+    if !cfg!(target_os = "linux")
+        || !(cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64"))
+    {
+        return Err("graphical GitRun updates currently target Linux x86_64 and ARM64".into());
+    }
+    let pkexec = pkexec_path()
+        .ok_or("trusted pkexec was not found; graphical GitRun update cannot safely continue")?;
+    let cli = dashboard_cli_path(&app)
+        .ok_or("trusted GitRun CLI executable was not found; update cannot safely continue")?;
+
+    let app_for_update = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut args = vec!["--no-cat".to_owned(), "update".to_owned()];
+        if line_transition {
+            args.push("--line-transition".to_owned());
+        }
+        match stream_privileged_command(&app_for_update, &pkexec, &cli, &args) {
+            Ok(status) if status.success() => {
+                emit_first_setup_event(
+                    &app_for_update,
+                    FIRST_SETUP_TOTAL,
+                    if line_transition {
+                        "Release-line transition completed successfully."
+                    } else {
+                        "GitRun update completed successfully."
+                    },
+                    "system",
+                    true,
+                    true,
+                );
+                Ok(())
+            }
+            Ok(status) => {
+                let detail = format!("GitRun update exited with status {status}.");
+                emit_first_setup_event(&app_for_update, 0, detail.clone(), "system", true, false);
+                Err(detail)
+            }
+            Err(error) => {
+                emit_first_setup_event(&app_for_update, 0, error.clone(), "system", true, false);
+                Err(error)
+            }
+        }
+    })
+    .await
+    .map_err(|error| format!("GitRun update task failed: {error}"))??;
+    Ok(())
+}
+#[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(feature = "desktop")]
 async fn update_permanent_runners(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("privileged runner-image update currently targets Linux x86_64".into());
-    }
-    if control_manager_enabled() {
-        let scheduled = control_manager_request(
-            "write",
-            "maintenance_task",
-            serde_json::json!({ "task": "update_containers", "confirmed": true }),
-        )?;
-        let message = scheduled
-            .get("message")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("Permanent runner update was scheduled by systemd.");
-        emit_first_setup_event(
-            &app,
-            FIRST_SETUP_TOTAL,
-            message.to_owned(),
-            "system",
-            true,
-            true,
-        );
-        return Ok(());
     }
     let pkexec = pkexec_path()
         .ok_or("trusted pkexec was not found; runner update cannot safely continue")?;
@@ -4566,6 +4570,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         save_kitty_settings,
         control_gitrun_service,
         check_gitrun_updates,
+        update_gitrun,
         update_permanent_runners,
         save_dashboard_settings,
         save_config,

@@ -1,5 +1,47 @@
 import { invoke, content, esc, heading, panel, pill, empty, errorView, toast, setFooter, confirmModal } from "../lib.js";
 
+let gitRunUpdateInProgress = false;
+
+async function runGitRunUpdate(lineTransition = false) {
+  if (gitRunUpdateInProgress) return;
+  const target = document.getElementById("policy-update-details");
+  if (!target) return;
+  gitRunUpdateInProgress = true;
+  target.innerHTML = '<div class="notice"><div><strong>' + (lineTransition ? 'Transitioning to the selected release line…' : 'Installing the selected GitRun update…') + '</strong><pre id="gitrun-update-log" class="mono" role="log" aria-live="polite"></pre></div></div>';
+  const append = (message) => {
+    const log = document.getElementById("gitrun-update-log");
+    if (!log) return;
+    log.textContent += String(message) + "\n";
+    log.scrollTop = log.scrollHeight;
+  };
+  let unlisten = null;
+  setFooter(lineTransition ? "Release-line transition running…" : "GitRun update running…");
+  try {
+    const eventApi = window.__TAURI__?.event;
+    if (typeof eventApi?.listen === "function") {
+      unlisten = await eventApi.listen("gitrun-setup-progress", (event) => {
+        const payload = event?.payload || {};
+        if (typeof payload.message === "string" && payload.message.length > 0) {
+          append((payload.stream === "stderr" ? "[stderr] " : "") + payload.message);
+        }
+      });
+    } else {
+      append("Progress streaming is unavailable; waiting for the operation result.");
+    }
+    await invoke("update_gitrun", {lineTransition});
+    append(lineTransition ? "Release-line transition completed." : "GitRun update completed.");
+    setFooter(lineTransition ? "Release-line transition completed" : "GitRun update completed");
+    toast(lineTransition ? "Release-line transition completed." : "GitRun update completed.");
+  } catch (error) {
+    append("FAILED: " + error);
+    setFooter("GitRun update failed");
+    toast("GitRun update failed: " + error, "error");
+  } finally {
+    if (typeof unlisten === "function") unlisten();
+    gitRunUpdateInProgress = false;
+  }
+}
+
 export async function renderGeneral() {
   const generation = window.__gitrunNavigationGeneration;
   content.innerHTML = '<div class="loading-state"><span class="loader"></span><p>Loading runner settings and health checks…</p></div>';
@@ -127,10 +169,20 @@ export async function renderGeneral() {
     button.disabled = true;
     button.setAttribute("aria-busy", "true");
     try {
+      const changed = policy !== updaterSettings.policy;
       const saved = await invoke("save_updater_settings", {policy});
       if (generation !== window.__gitrunNavigationGeneration) return;
       toast("GitRun release line saved: " + saved.policy);
       await renderGeneral();
+      if (changed) {
+        const accepted = await confirmModal(
+          "Would you like to instantly roll to the latest line version?",
+          "GitRun will resolve the newest signed release permitted by the selected line. This may install a lower version than the currently installed pre-release, but only for this explicit transition. Release classification, signature, platform artifact and SHA-256 checks remain mandatory.",
+          "Install latest line version"
+        );
+        if (accepted) await runGitRunUpdate(true);
+        else toast("Release line saved. GitRun will wait for a newer eligible release.");
+      }
     } catch (error) {
       if (generation === window.__gitrunNavigationGeneration) toast("Could not save release line: " + error, "error");
     } finally {
@@ -148,7 +200,18 @@ export async function renderGeneral() {
       const result = info.check || {};
       target.innerHTML = '<div class="notice ' + (result.error ? "danger" : result.available ? "warn" : "success") + '"><div><strong>' + esc(result.available ? "Update available: " + result.selected_version : result.checked ? "No eligible update" : "Update check failed") + '</strong><p>' + esc(result.detail || result.error || "No additional details.") + '</p>' +
         (result.release_type ? '<p class="field-hint">Release type: ' + esc(result.release_type) + ' · Artifact: ' + esc(result.artifact || "not resolved") + '</p>' : '') +
+        (result.available ? '<button class="btn btn-primary" id="install-gitrun-update">Install this GitRun update</button>' : '') +
         ((info.recent_operations || []).length ? '<p class="field-hint">Last update operation: ' + esc(info.recent_operations[0].result) + ' · ' + esc(new Date(info.recent_operations[0].timestamp * 1000).toLocaleString()) + '</p>' : '<p class="field-hint">No update operations recorded yet.</p>') + '</div></div>';
+      if (result.available) {
+        document.getElementById("install-gitrun-update").addEventListener("click", async () => {
+          const accepted = await confirmModal(
+            "Install this GitRun update?",
+            "GitRun will apply the newest signed release permitted by the saved release line. The operation runs now and streams its progress in this panel.",
+            "Install update"
+          );
+          if (accepted) await runGitRunUpdate(false);
+        });
+      }
       if (!result.checked) toast("Update check did not complete.", "warning");
     } catch (error) {
       target.innerHTML = '<div class="notice danger"><div><strong>Update check failed</strong><p>' + esc(error) + '</p></div></div>';

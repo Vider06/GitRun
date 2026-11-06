@@ -3,9 +3,9 @@ use gitrun_core::{AppAuth, Config, GitHubAuth, GitRunApi, GitRunSettings, Runner
 use gitrun_setup::{bootstrap_linux_with_auth_and_profile, prepare_directories, BootstrapAuth};
 use gitrun_smart_scheduler::KittySettings;
 use gitrun_updater::{
-    apply_installed_update, apply_update, build_plan, dependency_status, download_and_verify,
+    apply_installed_update, apply_update, build_line_transition_plan, build_plan, dependency_status, download_and_verify,
     fetch_manifest, latest_manifest, pin_runner_image, release_manifest_download_url,
-    resolve_policy_update_for_target, rollback, rollback_installed_update_with_config,
+    resolve_policy_update_for_line_transition_target, resolve_policy_update_for_target, rollback, rollback_installed_update_with_config,
     update_incompatible_dependencies, update_runner_image, BackupRecord, InstalledArtifact,
     InstalledBackupRecord, ReleaseType, UpdateError, UpdatePaths, UpdatePolicy,
 };
@@ -348,6 +348,7 @@ fn trusted_privilege_command() -> Result<std::process::Command, std::io::Error> 
 fn elevate_system_update(
     manifest_url: Option<&str>,
     force: bool,
+    line_transition: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     // Privilege helpers write their authorization prompt directly to the inherited TTY. End the
@@ -361,6 +362,9 @@ fn elevate_system_update(
         command.arg("env").arg(format!("{key}={value}"));
     }
     command.arg(executable).arg("--no-cat").arg("update");
+    if line_transition {
+        command.arg("--line-transition");
+    }
     if force {
         command.arg("--force");
     }
@@ -573,8 +577,16 @@ fn resolve_selected_manifest(
     current: &str,
     target: &str,
     manifest_url: Option<&str>,
+    line_transition: bool,
 ) -> Result<Option<(gitrun_updater::ReleaseManifest, ReleaseType)>, Box<dyn std::error::Error>> {
     let policy = configured_update_policy()?;
+    if line_transition {
+        if manifest_url.is_some() {
+            return Err("an explicit manifest URL cannot be used for a release-line transition".into());
+        }
+        return Ok(resolve_policy_update_for_line_transition_target(repository, current, policy, target)?
+            .map(|resolved| (resolved.manifest, resolved.release.release_type)));
+    }
     if let Some(url) = manifest_url {
         let manifest = fetch_manifest(url)?;
         if !policy.accepts_release_type(manifest.release_type) {
@@ -587,10 +599,8 @@ fn resolve_selected_manifest(
         }
         return Ok(Some((manifest.clone(), manifest.release_type)));
     }
-    Ok(
-        resolve_policy_update_for_target(repository, current, policy, target)?
-            .map(|resolved| (resolved.manifest, resolved.release.release_type)),
-    )
+    Ok(resolve_policy_update_for_target(repository, current, policy, target)?
+        .map(|resolved| (resolved.manifest, resolved.release.release_type)))
 }
 
 fn update_check_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
@@ -605,6 +615,7 @@ fn update_check_command(args: &[String]) -> Result<(), Box<dyn std::error::Error
         &current,
         &target,
         manifest_url.map(String::as_str),
+        false,
     )?
     else {
         println!("No newer release matches the active updater policy.");
@@ -695,6 +706,7 @@ fn update_command(
     args: &[String],
     presenter: &mut presenter::CatPresenter,
     force: bool,
+    line_transition: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if args.get(1).is_some_and(|argument| argument == "--check") {
         return update_check_command(args);
@@ -709,12 +721,24 @@ fn update_command(
     let current = current_version();
     let target = target_triple()?;
     let Some((manifest, release_type)) =
-        resolve_selected_manifest(&repository, &current, &target, manifest_url)?
+        resolve_selected_manifest(&repository, &current, &target, manifest_url, line_transition)?
     else {
-        println!("GitRun update: no newer release matches the active updater policy.");
+        println!(if line_transition {
+            "GitRun update: no different release is available in the selected release line."
+        } else {
+            "GitRun update: no newer release matches the active updater policy."
+        });
         return Ok(());
     };
-    let plan = build_plan(&manifest, &current, &target, &dependency_snapshot())?;
+    let dependencies = dependency_snapshot();
+    let plan = if line_transition {
+        build_line_transition_plan(&manifest, &current, &target, &dependencies)?
+    } else {
+        build_plan(&manifest, &current, &target, &dependencies)?
+    };
+    if line_transition && plan.target_version != plan.current_version {
+        println!("GitRun update: explicit release-line transition selected by the operator");
+    }
     presenter.transition(presenter::ValidationState::Loading);
 
     println!(
@@ -1959,10 +1983,12 @@ fn main() {
             check: false,
             info: false,
             force,
+            line_transition,
         } => run_update(
             manifest_url.as_deref(),
             only_containers,
             force,
+            line_transition,
             &mut presenter,
         ),
         Command::Gtuu {
@@ -2333,6 +2359,9 @@ enum Command {
     Doctor,
     /// Check for and apply GitRun updates.
     Update {
+        /// Explicitly install the newest release in the selected policy, even if it is older than the installed release.
+        #[arg(long, hide = true, conflicts_with_all = ["info", "check", "only_containers", "force", "manifest_url"])]
+        line_transition: bool,
         /// Print complete local updater diagnostics. Combine with --check for a read-only release check.
         #[arg(long, conflicts_with_all = ["only_containers", "force", "manifest_url"])]
         info: bool,
@@ -4059,7 +4088,7 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
             return 1;
         }
     };
-    let selected = match resolve_selected_manifest("Vider06/GitRun", &current, &target, None) {
+    let selected = match resolve_selected_manifest("Vider06/GitRun", &current, &target, None, false) {
         Ok(selected) => selected,
         Err(error) => {
             eprintln!("GitRun fix-update: release selection failed: {error}");
@@ -4088,7 +4117,7 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
                 "GitRun fix-update: applying latest release {} -> {}",
                 plan.current_version, plan.target_version
             );
-            let code = run_update(None, false, false, presenter);
+            let code = run_update(None, false, false, false, presenter);
             if code != 0 {
                 eprintln!("GitRun fix-update: latest-release update failed");
                 return code;
@@ -4247,18 +4276,19 @@ fn run_update(
     manifest_url: Option<&str>,
     only_containers: bool,
     force: bool,
+    line_transition: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> i32 {
     // A non-root system invocation delegates the transaction to the elevated
     // child. That child records the operation as root; do not trigger a second
     // authorization prompt merely to write the same history entry.
     if system_install_paths().is_some() && !running_as_root() {
-        return run_update_inner(manifest_url, only_containers, force, presenter);
+        return run_update_inner(manifest_url, only_containers, force, line_transition, presenter);
     }
     let before = gitrun_updater::state::info_local(false)
         .map(|info| info.version)
         .unwrap_or_else(|_| current_version());
-    let exit_code = run_update_inner(manifest_url, only_containers, force, presenter);
+    let exit_code = run_update_inner(manifest_url, only_containers, force, line_transition, presenter);
     let after = gitrun_updater::state::info_local(false)
         .map(|info| info.version)
         .unwrap_or_else(|_| current_version());
@@ -4275,6 +4305,7 @@ fn run_update_inner(
     manifest_url: Option<&str>,
     only_containers: bool,
     force: bool,
+    line_transition: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> i32 {
     // Installed-system invocations must never inherit caller-selected update
@@ -4287,6 +4318,15 @@ fn run_update_inner(
     // installs use the same built-in trust anchor for official releases.
     initialize_update_signing_environment(true);
     initialize_system_update_config_path(system_install);
+
+    if line_transition && only_containers {
+        eprintln!("GitRun update: release-line transitions cannot be combined with runner-only updates");
+        return 2;
+    }
+    if line_transition && manifest_url.is_some() {
+        eprintln!("GitRun update: release-line transitions do not accept an explicit manifest URL");
+        return 2;
+    }
 
     if only_containers {
         if system_install && !running_as_root() {
@@ -4357,11 +4397,15 @@ fn run_update_inner(
                 return 1;
             }
         };
-        let selected = resolve_selected_manifest(&repository, &current, &target, manifest_url);
+        let selected = resolve_selected_manifest(&repository, &current, &target, manifest_url, line_transition);
         let (manifest, release_type) = match selected {
             Ok(Some(selected)) => selected,
             Ok(None) => {
-                println!("GitRun update: no newer release matches the active updater policy; no administrator access needed");
+                println!(if line_transition {
+                    "GitRun update: no different release is available in the selected line; no administrator access needed"
+                } else {
+                    "GitRun update: no newer release matches the active updater policy; no administrator access needed"
+                });
                 return 0;
             }
             Err(error) => {
@@ -4374,7 +4418,13 @@ fn run_update_inner(
             release_type.as_str(),
             manifest.version
         );
-        if let Err(error) = build_plan(&manifest, &current, &target, &dependency_snapshot()) {
+        let dependencies = dependency_snapshot();
+        let preflight_plan = if line_transition {
+            build_line_transition_plan(&manifest, &current, &target, &dependencies)
+        } else {
+            build_plan(&manifest, &current, &target, &dependencies)
+        };
+        if let Err(error) = preflight_plan {
             match error {
                 UpdateError::NotNewer => {
                     println!(
@@ -4389,21 +4439,30 @@ fn run_update_inner(
             }
         }
 
-        // Pin the privileged retry to the already-verified release instead
-        // of resolving a moving "latest" pointer for a second time.
-        let resolved_manifest_url = match manifest_url {
-            Some(url) => url.to_owned(),
-            None => {
-                match release_manifest_download_url(&repository, &manifest.version) {
+        // Ordinary updates are pinned to the verified manifest URL before
+        // privilege elevation. A release-line transition deliberately passes
+        // no URL: the privileged process independently resolves and verifies
+        // the newest release in the newly selected signed policy.
+        let resolved_manifest_url = if line_transition {
+            None
+        } else {
+            Some(match manifest_url {
+                Some(url) => url.to_owned(),
+                None => match release_manifest_download_url(&repository, &manifest.version) {
                     Ok(url) => url,
                     Err(error) => {
                         eprintln!("GitRun update: FAIL — unable to resolve the signed release URL: {error}");
                         return 1;
                     }
-                }
-            }
+                },
+            })
         };
-        match elevate_system_update(Some(&resolved_manifest_url), force, presenter) {
+        match elevate_system_update(
+            resolved_manifest_url.as_deref(),
+            force,
+            line_transition,
+            presenter,
+        ) {
             Ok(code) => return code,
             Err(error) => {
                 eprintln!("GitRun update: unable to elevate system update: {error}");
@@ -4416,11 +4475,15 @@ fn run_update_inner(
     // manifest URL at index 1 — preserved as-is rather than refactored, to
     // keep this change scoped to argument *parsing*, not the update logic
     // itself.
-    let args: Vec<String> = match manifest_url {
-        Some(url) => vec!["update".to_owned(), url.to_owned()],
-        None => vec!["update".to_owned()],
+    let args: Vec<String> = if line_transition {
+        vec!["update".to_owned(), "--line-transition".to_owned()]
+    } else {
+        match manifest_url {
+            Some(url) => vec!["update".to_owned(), url.to_owned()],
+            None => vec!["update".to_owned()],
+        }
     };
-    match update_command(&args, presenter, force) {
+    match update_command(&args, presenter, force, line_transition) {
         Ok(()) => {
             if let Ok(config) = load_config() {
                 match refresh_json_setup_assets(&config, system_install) {
@@ -6075,6 +6138,24 @@ mod internal_lifecycle_command_tests {
         ));
     }
 
+    #[test]
+    fn line_transition_flag_is_explicit_and_cannot_be_combined_with_read_only_or_forced_modes() {
+        let cli = Cli::try_parse_from(["gitrun", "update", "--line-transition"])
+            .expect("the internal release-line transition flag should parse");
+        assert!(matches!(
+            cli.command,
+            Some(Command::Update {
+                line_transition: true,
+                check: false,
+                only_containers: false,
+                force: false,
+                ..
+            })
+        ));
+        assert!(Cli::try_parse_from(["gitrun", "update", "--line-transition", "--check"]).is_err());
+        assert!(Cli::try_parse_from(["gitrun", "update", "--line-transition", "--force"]).is_err());
+        assert!(Cli::try_parse_from(["gitrun", "update", "--line-transition", "https://example.invalid/manifest.json"]).is_err());
+    }
     #[test]
     fn system_update_config_path_ignores_environment_selected_paths() {
         let result = select_update_config_path(

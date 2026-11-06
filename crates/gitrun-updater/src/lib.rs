@@ -14,7 +14,8 @@ use thiserror::Error;
 pub mod release_policy;
 pub mod state;
 pub use release_policy::{
-    resolve_policy_update, resolve_policy_update_for_target, select_release, select_releases,
+    resolve_policy_update, resolve_policy_update_for_line_transition_target,
+    resolve_policy_update_for_target, select_line_transition_releases, select_release, select_releases,
     PolicyUpdate, ReleaseType, SelectedRelease, UpdatePolicy,
 };
 
@@ -747,8 +748,32 @@ pub fn build_plan(
     target: &str,
     installed_dependencies: &[(String, Option<String>)],
 ) -> Result<UpdatePlan, UpdateError> {
+    build_plan_with_version_policy(manifest, current_version, target, installed_dependencies, false)
+}
+
+/// Build a plan only for an explicit release-line transition. Equal versions
+/// remain a no-op; ordinary updates continue to use the monotonic build_plan.
+pub fn build_line_transition_plan(
+    manifest: &ReleaseManifest,
+    current_version: &str,
+    target: &str,
+    installed_dependencies: &[(String, Option<String>)],
+) -> Result<UpdatePlan, UpdateError> {
+    build_plan_with_version_policy(manifest, current_version, target, installed_dependencies, true)
+}
+
+fn build_plan_with_version_policy(
+    manifest: &ReleaseManifest,
+    current_version: &str,
+    target: &str,
+    installed_dependencies: &[(String, Option<String>)],
+    allow_older_version: bool,
+) -> Result<UpdatePlan, UpdateError> {
     manifest.validate()?;
-    if compare_versions(&manifest.version, current_version)? != std::cmp::Ordering::Greater {
+    let ordering = compare_versions(&manifest.version, current_version)?;
+    if ordering == std::cmp::Ordering::Equal
+        || (!allow_older_version && ordering != std::cmp::Ordering::Greater)
+    {
         return Err(UpdateError::NotNewer);
     }
     let artifact = manifest.artifact_for(target)?;
@@ -3526,6 +3551,33 @@ mod tests {
     fn rejects_same_or_older_version() {
         assert!(matches!(
             build_plan(&manifest(), "0.3.0", "x86_64-unknown-linux-gnu", &[]),
+            Err(UpdateError::NotNewer)
+        ));
+        assert!(matches!(
+            build_plan(&manifest(), "0.4.0", "x86_64-unknown-linux-gnu", &[]),
+            Err(UpdateError::NotNewer)
+        ));
+    }
+
+    #[test]
+    fn explicit_line_transition_allows_older_version_but_not_equal_version() {
+        let plan = build_line_transition_plan(
+            &manifest(),
+            "0.4.0",
+            "x86_64-unknown-linux-gnu",
+            &[],
+        )
+        .expect("an explicit line transition may install the selected older line version");
+        assert_eq!(plan.current_version, "0.4.0");
+        assert_eq!(plan.target_version, "0.3.0");
+
+        assert!(matches!(
+            build_line_transition_plan(
+                &manifest(),
+                "0.3.0",
+                "x86_64-unknown-linux-gnu",
+                &[],
+            ),
             Err(UpdateError::NotNewer)
         ));
         assert!(matches!(

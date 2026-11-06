@@ -50,7 +50,19 @@ checks = {
     and "MAX_RELEASE_PAGES" in engine,
     "release selection checks type marker and prerelease agreement": "from_release_body" in engine
     and "release.prerelease != (release_type == ReleaseType::Pre)" in engine,
-    "release selection rejects downgrades": "Ordering::Greater" in engine,
+    "normal release selection rejects downgrades": "pub fn select_releases" in engine
+    and "== Ordering::Greater" in engine,
+    "line transition uses only typed release classifications": "MIN_CLASSIFIED_RELEASE_VERSION" in engine
+    and "pub fn select_line_transition_releases" in engine,
+    "line transition never crosses the latest release direction or downgrades from an equal latest version": "direction == Ordering::Equal" in engine
+    and "!= direction" in engine
+    and "line_transition_does_not_downgrade_when_latest_line_version_is_already_installed" in engine,
+    "line transition has a separate plan that preserves ordinary monotonic updates": "pub fn build_line_transition_plan" in manifest_engine
+    and "build_plan_with_version_policy(manifest, current_version, target, installed_dependencies, false)" in manifest_engine
+    and "allow_older_version: bool" in manifest_engine,
+    "line transition resolves a latest signed release and checks version/type metadata": "resolve_policy_update_for_line_transition_target" in engine
+    and "super::build_line_transition_plan" in engine
+    and "manifest.release_type != release.release_type" in engine,
     "release selection verifies manifest classification": "manifest.release_type != release.release_type" in engine,
     "host compatibility is checked before selecting a release": "resolve_policy_update_for_target" in engine
     and "UpdateError::UnsupportedTarget" in engine,
@@ -88,6 +100,23 @@ checks = {
     "GUI calls management commands instead of owning updater logic": 'invoke("get_updater_settings")' in gui
     and 'invoke("save_updater_settings"' in gui
     and 'invoke("get_updater_info"' in gui,
+        "line transition is available only through a hidden explicit CLI mode": "hide = true" in cli
+    and "line_transition: bool" in cli
+    and '"--line-transition"' in cli
+    and "an explicit manifest URL cannot be used for a release-line transition" in cli,
+    "CLI transition mode has parser tests and rejects conflicting modes": "fn line_transition_flag_is_explicit_and_cannot_be_combined" in cli
+    and "build_line_transition_plan(&manifest" in cli,
+    "Management TUI executes user-confirmed operations in the foreground": "fn run_confirmed_command" in tui
+    and "run_external(terminal, command_args)" in tui
+    and "maintenance_task_with_confirmation" not in tui
+    and "Would you like to instantly roll to the latest line version?" in tui,
+    "Dashboard runs updater transitions as a streamed foreground command": "async fn update_gitrun" in management
+    and "        update_gitrun," in management
+    and 'invoke("update_gitrun", {lineTransition})' in gui
+    and 'eventApi.listen("gitrun-setup-progress"' in gui,
+    "direct GUI maintenance actions no longer enqueue Control Manager maintenance jobs": '"maintenance_task"' not in management,
+    "Control Manager retains its separate scheduled maintenance mechanism": "schedule_maintenance_task" in control_manager
+    and '"maintenance_task"' in control_manager,
 }
 
 failed = []

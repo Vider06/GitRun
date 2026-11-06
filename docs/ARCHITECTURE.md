@@ -12,7 +12,7 @@ The installed Linux service runs the Rust scheduler through the `gitrun` executa
 |---|---|
 | `gitrun-core` | Shared configuration, policy, authentication, state and domain models |
 | `gitrun-platform` | Conservative host distribution, libc ABI, package-manager and active init detection; Android runtime rejection |
-| `gitrun-management` | Shared management operations, validation, persistence, typed dispatcher and privileged Control Manager; headless by default |
+| `gitrun-management` | Shared management operations, validation, general configuration persistence, typed dispatcher and privileged Control Manager; updater adapter; headless by default |
 | `gitrun-cli` | Operator CLI, keyboard-driven headless management console, and shared terminal mascot/presentation layer |
 | `gitrun-scheduler` | GitHub polling, deterministic reconciliation, autoscaling, runner lifecycle, Docker and VM backends |
 | `gitrun-exe` | Internal authorized execution model and IPC/authentication primitives |
@@ -20,7 +20,7 @@ The installed Linux service runs the Rust scheduler through the `gitrun` executa
 | `gitrun-smart-scheduler` | Optional bounded statistical workload model, Erlang-C queue-wait estimates, offline FCFS replay, Future Mapping and Think. New capabilities are disabled by default; the model has no execution authority. |
 | `gitrun-vault` | AES-256-GCM encrypted secret storage |
 | `gitrun-setup` | First-run preflight and installation preparation |
-| `gitrun-updater` | Release update, verification and rollback |
+| `gitrun-updater` | Release update, verification and rollback; shared update policy, host diagnostics and operation history |
 | `gitrun-recovery` | Headless startup/repair diagnostics and recovery engine; optional Tauri UI behind the `desktop` feature |
 | `gitrun-dashboard-tauri` | Tauri operator dashboard |
 

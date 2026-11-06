@@ -220,6 +220,26 @@ fn current_process_is_root() -> bool {
     }
 }
 
+fn command_success_with_timeout(program: &Path, args: &[String], timeout: std::time::Duration) -> bool {
+    let Ok(mut child) = std::process::Command::new(program).args(args).spawn() else {
+        return false;
+    };
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Ok(None) | Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+}
+
 fn service_status(service: ManagedService) -> (bool, bool, Option<ServiceManager>) {
     let Some(manager) = gitrun_platform::detect_service_manager() else {
         return (false, false, None);
@@ -231,10 +251,7 @@ fn service_status(service: ManagedService) -> (bool, bool, Option<ServiceManager
     let spec = gitrun_platform::service_command(manager, ServiceAction::Status, service);
     let active = gitrun_platform::trusted_service_manager_binary(manager).is_some_and(|program| {
         let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
-        std::process::Command::new(program)
-            .args(args)
-            .status()
-            .is_ok_and(|status| status.success())
+        command_success_with_timeout(&program, &spec.args, std::time::Duration::from_secs(3))
     });
     (installed, active, Some(manager))
 }
@@ -602,10 +619,11 @@ fn service_snapshot() -> Vec<UpdateServiceStatus> {
         let active = installed
             && gitrun_platform::trusted_service_manager_binary(ServiceManager::Systemd)
                 .is_some_and(|program| {
-                    std::process::Command::new(program)
-                        .args(["is-active", "--quiet", "gitrun-control.service"])
-                        .status()
-                        .is_ok_and(|status| status.success())
+                    command_success_with_timeout(
+                        &program,
+                        &["is-active".into(), "--quiet".into(), "gitrun-control.service".into()],
+                        std::time::Duration::from_secs(3),
+                    )
                 });
         (installed, active)
     } else {

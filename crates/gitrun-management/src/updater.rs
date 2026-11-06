@@ -323,9 +323,13 @@ fn lock_status(directory: &Path) -> UpdateLockStatus {
     };
     let _ = metadata;
     let pid_path = lock.join("pid");
-    let pid = std::fs::read_to_string(&pid_path)
-        .ok()
-        .and_then(|value| value.trim().parse::<u32>().ok());
+    let pid = match std::fs::symlink_metadata(&pid_path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+            std::fs::read_to_string(&pid_path).ok()
+                .and_then(|value| value.trim().parse::<u32>().ok())
+        }
+        _ => None,
+    };
     match pid {
         Some(pid) if process_is_alive(pid) => UpdateLockStatus {
             status: "active".into(), owner_pid: Some(pid),

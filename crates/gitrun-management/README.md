@@ -1,6 +1,6 @@
 # GitRun management backend
 
-`gitrun-management` is the shared implementation for GitRun's operator-facing management operations. It owns management reads and writes, validation, configuration persistence, the typed action dispatcher, and the privileged Control Manager's Unix-domain-socket protocol and service loop.
+`gitrun-management` is the shared implementation for GitRun's operator-facing management operations. It owns management reads and writes, validation, general configuration persistence, the typed action dispatcher, and the privileged Control Manager's Unix-domain-socket protocol and service loop. `gitrun-updater` owns update policy persistence, host diagnostics, update-lock inspection and bounded operation history; Management exposes those APIs to GUI and TUI clients without duplicating updater policy or state.
 
 ## Runtime boundaries
 

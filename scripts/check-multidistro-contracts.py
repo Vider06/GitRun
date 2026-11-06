@@ -218,6 +218,7 @@ def check_native_init_package_resources(errors: list[str]) -> None:
         "packaging/apk-post-upgrade": ("rc-service", "restart"),
         "packaging/xbps/INSTALL": ("ACTION", "sv restart", "UPDATE"),
         "packaging/xbps/REMOVE": ("ACTION", "sv down", "UPDATE"),
+        "packaging/gitrun-migration-prerm": ("in-favour", "gitrun-server", "systemctl disable --now"),
     }
     for relative, markers in expected.items():
         path = ROOT / relative
@@ -293,6 +294,9 @@ def check_native_init_package_resources(errors: list[str]) -> None:
         'install -m 0755 packaging/runit/gitrun-gsr/log/run "$xbps_stage/etc/sv/gitrun-gsr/log/run"',
         'xbps_contents="$(tar -tf "$xbps_file")"',
         'XBPS package must contain runit resources, not systemd units',
+        'install -m 0755 packaging/gitrun-migration-prerm "$root/DEBIAN/prerm"',
+        'test ! -s "$mock_log"',
+        "grep -Fq 'disable --now gitrun-gsr.service gitrun.service' \"$mock_log\"",
     )
     for marker in workflow_markers:
         if marker not in release:

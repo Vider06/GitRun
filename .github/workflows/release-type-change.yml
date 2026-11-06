@@ -119,8 +119,8 @@ jobs:
           rollback() {
             if [ "$committed" != true ]; then
               gh release upload "$TAG" "$old_manifest" --repo "$GITHUB_REPOSITORY" --clobber || true
-              gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \\
-                -F prerelease="$old_prerelease" \\
+              gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+                -F prerelease="$old_prerelease" \
                 -F body="$(cat "$old_body_file")" >/dev/null || true
             fi
           }

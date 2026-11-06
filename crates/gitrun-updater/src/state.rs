@@ -3,7 +3,6 @@
 use crate::{build_plan, resolve_policy_update_for_target, UpdatePolicy};
 use gitrun_core::Config;
 use gitrun_platform::{ManagedService, ServiceAction, ServiceManager};
-use gitrun_platform::{ManagedService, ServiceManager};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};

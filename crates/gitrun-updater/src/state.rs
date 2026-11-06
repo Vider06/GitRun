@@ -53,9 +53,8 @@ fn updater_state_write_guard() -> Result<UpdaterStateWriteGuard, String> {
         loop {
             // SAFETY: file owns a valid descriptor for this call; flock does
             // not retain the descriptor pointer.
-            let result = unsafe {
-                libc::flock(std::os::fd::AsRawFd::as_raw_fd(&file), libc::LOCK_EX)
-            };
+            let result =
+                unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&file), libc::LOCK_EX) };
             if result == 0 {
                 break file;
             }
@@ -1014,14 +1013,9 @@ mod tests {
             .unwrap();
 
         // SAFETY: both descriptors refer to the same live lock-file inode.
-        assert_eq!(
-            unsafe { libc::flock(first.as_raw_fd(), libc::LOCK_EX) },
-            0
-        );
+        assert_eq!(unsafe { libc::flock(first.as_raw_fd(), libc::LOCK_EX) }, 0);
         // SAFETY: the second descriptor is valid and LOCK_NB does not block.
-        let contended = unsafe {
-            libc::flock(second.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB)
-        };
+        let contended = unsafe { libc::flock(second.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
         assert_eq!(contended, -1);
         assert_eq!(
             std::io::Error::last_os_error().kind(),

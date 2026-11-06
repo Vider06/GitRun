@@ -3187,8 +3187,8 @@ mod tests {
     #[test]
     fn non_systemd_service_wrapper_loads_environment_and_dispatches_to_gitrun_cli() {
         let wrapper = gitrun_service_environment_wrapper(true);
-        assert!(wrapper.contains("export \\"$key=$value\\""));
-        assert!(wrapper.contains("exec \\"$executable\\" \\"$@\\""));
+        assert!(wrapper.contains("export \"$key=$value\""));
+        assert!(wrapper.contains("exec \"$executable\" \"$@\""));
         assert!(!wrapper.contains("gitrun-recovery"));
         assert!(!wrapper.contains(". /etc/gitrun/gitrun.env"));
         assert!(!wrapper.contains("eval "));

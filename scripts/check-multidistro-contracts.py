@@ -112,6 +112,28 @@ def check_platform_catalog(errors: list[str]) -> None:
 
 def check_release_package_boundaries(errors: list[str]) -> None:
     release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    expected_jobs = (
+        "prepare",
+        "build-server",
+        "build-dashboard",
+        "collect",
+        "package-server",
+        "package-dashboard",
+        "migration-package",
+        "validate",
+        "sign",
+        "release",
+    )
+    for job in expected_jobs:
+        count = release.count(f"\\n  {job}:\\n")
+        if count != 1:
+            errors.append(f"release workflow must declare {job} exactly once; found {count}")
+
+    install_notes = release.find('"## Install or update",')
+    overview_notes = release.find('"## Release overview",')
+    if install_notes < 0 or overview_notes < 0 or install_notes > overview_notes:
+        errors.append("release notes must put install/update instructions before the release overview")
+
     required_targets = (
         "x86_64-unknown-linux-gnu",
         "aarch64-unknown-linux-gnu",

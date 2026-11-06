@@ -333,7 +333,7 @@ jobs:
   # ───────────────────────────────────────────────────────── cargo-lock ──
   cargo-lock:
     name: Validate Cargo.lock
-    needs: detect
+    needs: [detect, environment]
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.detect.result == 'success') }}
     runs-on: *runner
     timeout-minutes: 60

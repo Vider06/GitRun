@@ -479,50 +479,49 @@ fn updater_root_helper(args: &[&str]) -> Result<String, Box<dyn std::error::Erro
     String::from_utf8(output.stdout).map_err(|error| error.into())
 }
 
-fn read_updater_settings(
-) -> Result<gitrun_updater::state::UpdaterSettings, Box<dyn std::error::Error>> {
-    #[cfg(target_os = "linux")]
-    if system_install_paths().is_some() && !running_as_root() {
-        let raw = updater_root_helper(&["--read-updater-settings-root"])?;
-        return Ok(serde_json::from_str(raw.trim())?);
+fn read_updater_settings() -> Result<gitrun_updater::state::UpdaterSettings, Box<dyn std::error::Error>> {
+    match gitrun_updater::state::read_settings() {
+        Ok(settings) => Ok(settings),
+        Err(error) if cfg!(target_os = "linux") && system_install_paths().is_some() && !running_as_root() => {
+            let raw = updater_root_helper(&["--read-updater-settings-root"])
+                .map_err(|helper_error| format!("{error}; privileged fallback failed: {helper_error}"))?;
+            Ok(serde_json::from_str(raw.trim())?)
+        }
+        Err(error) => Err(error.into()),
     }
-    Ok(gitrun_updater::state::current_settings_local()?)
 }
 
-fn save_updater_settings(
-    policy: &str,
-) -> Result<gitrun_updater::state::UpdaterSettings, Box<dyn std::error::Error>> {
-    #[cfg(target_os = "linux")]
-    if system_install_paths().is_some() && !running_as_root() {
-        let payload = serde_json::to_vec(&serde_json::json!({ "policy": policy }))?;
-        let input = write_updater_privileged_payload(&payload, "updater-settings")?;
-        let raw = updater_root_helper(&[
-            "--save-updater-settings-root",
-            input.to_string_lossy().as_ref(),
-        ])?;
-        let _ = std::fs::remove_file(input);
-        let _ = raw;
-        return Ok(gitrun_updater::state::UpdaterSettings {
-            schema_version: 1,
-            policy: gitrun_updater::state::UpdatePolicyChoice::try_from(policy)?,
-        });
+fn save_updater_settings(policy: &str) -> Result<gitrun_updater::state::UpdaterSettings, Box<dyn std::error::Error>> {
+    match gitrun_updater::state::save_settings(policy) {
+        Ok(settings) => Ok(settings),
+        Err(error) if cfg!(target_os = "linux") && system_install_paths().is_some() && !running_as_root() => {
+            let payload = serde_json::to_vec(&serde_json::json!({ "policy": policy }))?;
+            let input = write_updater_privileged_payload(&payload, "updater-settings")?;
+            let result = updater_root_helper(&["--save-updater-settings-root", input.to_string_lossy().as_ref()]);
+            let _ = std::fs::remove_file(input);
+            result.map_err(|helper_error| format!("{error}; privileged fallback failed: {helper_error}"))?;
+            Ok(gitrun_updater::state::UpdaterSettings {
+                schema_version: 1,
+                policy: gitrun_updater::state::UpdatePolicyChoice::try_from(policy)?,
+            })
+        }
+        Err(error) => Err(error.into()),
     }
-    Ok(gitrun_updater::state::local_settings_save(policy)?)
 }
 
-fn read_updater_info(
-    check: bool,
-) -> Result<gitrun_updater::state::UpdaterInfo, Box<dyn std::error::Error>> {
-    #[cfg(target_os = "linux")]
-    if system_install_paths().is_some() && !running_as_root() {
-        let raw = if check {
-            updater_root_helper(&["--read-updater-info-root", "--check"])?
-        } else {
-            updater_root_helper(&["--read-updater-info-root"])?
-        };
-        return Ok(serde_json::from_str(raw.trim())?);
+fn read_updater_info(check: bool) -> Result<gitrun_updater::state::UpdaterInfo, Box<dyn std::error::Error>> {
+    match gitrun_updater::state::info(check) {
+        Ok(info) => Ok(info),
+        Err(error) if cfg!(target_os = "linux") && system_install_paths().is_some() && !running_as_root() => {
+            let raw = if check {
+                updater_root_helper(&["--read-updater-info-root", "--check"])
+            } else {
+                updater_root_helper(&["--read-updater-info-root"])
+            }.map_err(|helper_error| format!("{error}; privileged fallback failed: {helper_error}"))?;
+            Ok(serde_json::from_str(raw.trim())?)
+        }
+        Err(error) => Err(error.into()),
     }
-    Ok(gitrun_updater::state::info_local(check)?)
 }
 
 fn configured_update_policy() -> Result<UpdatePolicy, Box<dyn std::error::Error>> {

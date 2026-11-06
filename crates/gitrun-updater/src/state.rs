@@ -5,8 +5,8 @@ use gitrun_core::Config;
 use gitrun_platform::{ManagedService, ServiceAction, ServiceManager};
 use gitrun_platform::{ManagedService, ServiceManager};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
 use std::io::{BufRead, BufReader, Read, Write};
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static UPDATER_STATE_WRITE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
@@ -725,19 +725,30 @@ fn control_manager_enabled() -> bool {
                 "/etc/systemd/system/gitrun-control.service",
                 "/usr/lib/systemd/system/gitrun-control.service",
                 "/lib/systemd/system/gitrun-control.service",
-            ].iter().any(|path| Path::new(path).is_file())
+            ]
+            .iter()
+            .any(|path| Path::new(path).is_file())
             && std::fs::symlink_metadata(CONTROL_MANAGER_SOCKET)
                 .is_ok_and(|metadata| metadata.file_type().is_socket())
     }
     #[cfg(not(target_os = "linux"))]
-    { false }
+    {
+        false
+    }
 }
 
-fn control_manager_request(operation: &str, action: &str, args: serde_json::Value) -> Result<serde_json::Value, String> {
-    if !matches!((operation, action),
-        ("read", "updater_settings") | ("read", "updater_info")
-        | ("write", "updater_settings_save") | ("write", "updater_operation_record"))
-    {
+fn control_manager_request(
+    operation: &str,
+    action: &str,
+    args: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    if !matches!(
+        (operation, action),
+        ("read", "updater_settings")
+            | ("read", "updater_info")
+            | ("write", "updater_settings_save")
+            | ("write", "updater_operation_record")
+    ) {
         return Err("unsupported updater Control Manager action".into());
     }
     #[cfg(target_os = "linux")]
@@ -745,31 +756,62 @@ fn control_manager_request(operation: &str, action: &str, args: serde_json::Valu
         use std::os::unix::net::UnixStream;
         let mut stream = UnixStream::connect(CONTROL_MANAGER_SOCKET)
             .map_err(|error| format!("connect to GitRun Control Manager: {error}"))?;
-        stream.set_read_timeout(Some(std::time::Duration::from_secs(10))).map_err(|error| error.to_string())?;
-        stream.set_write_timeout(Some(std::time::Duration::from_secs(3))).map_err(|error| error.to_string())?;
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .map_err(|error| error.to_string())?;
+        stream
+            .set_write_timeout(Some(std::time::Duration::from_secs(3)))
+            .map_err(|error| error.to_string())?;
         let request = serde_json::json!({ "operation": operation, "action": action, "args": args });
         let mut bytes = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
-        if bytes.len() > CONTROL_MANAGER_MAX_MESSAGE { return Err("updater IPC request exceeds 1 MiB".into()); }
-        bytes.push(b'\n');
-        stream.write_all(&bytes).map_err(|error| format!("send updater IPC request: {error}"))?;
-        let mut line = String::new();
-        let read = BufReader::new(stream).take((CONTROL_MANAGER_MAX_MESSAGE + 1) as u64)
-            .read_line(&mut line).map_err(|error| format!("read updater IPC response: {error}"))?;
-        if read == 0 || read > CONTROL_MANAGER_MAX_MESSAGE { return Err("invalid or oversized updater IPC response".into()); }
-        let reply: serde_json::Value = serde_json::from_str(&line).map_err(|error| format!("decode updater IPC response: {error}"))?;
-        if !reply.get("ok").and_then(serde_json::Value::as_bool).unwrap_or(false) {
-            return Err(reply.get("error").and_then(serde_json::Value::as_str).unwrap_or("Control Manager updater request failed").to_owned());
+        if bytes.len() > CONTROL_MANAGER_MAX_MESSAGE {
+            return Err("updater IPC request exceeds 1 MiB".into());
         }
-        reply.get("result").cloned().ok_or_else(|| "Control Manager updater response has no result".into())
+        bytes.push(b'\n');
+        stream
+            .write_all(&bytes)
+            .map_err(|error| format!("send updater IPC request: {error}"))?;
+        let mut line = String::new();
+        let read = BufReader::new(stream)
+            .take((CONTROL_MANAGER_MAX_MESSAGE + 1) as u64)
+            .read_line(&mut line)
+            .map_err(|error| format!("read updater IPC response: {error}"))?;
+        if read == 0 || read > CONTROL_MANAGER_MAX_MESSAGE {
+            return Err("invalid or oversized updater IPC response".into());
+        }
+        let reply: serde_json::Value = serde_json::from_str(&line)
+            .map_err(|error| format!("decode updater IPC response: {error}"))?;
+        if !reply
+            .get("ok")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Err(reply
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("Control Manager updater request failed")
+                .to_owned());
+        }
+        reply
+            .get("result")
+            .cloned()
+            .ok_or_else(|| "Control Manager updater response has no result".into())
     }
     #[cfg(not(target_os = "linux"))]
-    { let _ = (operation, action, args); Err("updater Control Manager is Linux-only".into()) }
+    {
+        let _ = (operation, action, args);
+        Err("updater Control Manager is Linux-only".into())
+    }
 }
 
 pub fn read_settings() -> Result<UpdaterSettings, String> {
     if control_manager_enabled() {
-        return serde_json::from_value(control_manager_request("read", "updater_settings", serde_json::json!({}))?)
-            .map_err(|error| format!("decode updater settings from Control Manager: {error}"));
+        return serde_json::from_value(control_manager_request(
+            "read",
+            "updater_settings",
+            serde_json::json!({}),
+        )?)
+        .map_err(|error| format!("decode updater settings from Control Manager: {error}"));
     }
     current_settings_local()
 }
@@ -777,16 +819,27 @@ pub fn read_settings() -> Result<UpdaterSettings, String> {
 pub fn save_settings(policy: &str) -> Result<UpdaterSettings, String> {
     let policy_choice = UpdatePolicyChoice::try_from(policy)?;
     if control_manager_enabled() {
-        return serde_json::from_value(control_manager_request("write", "updater_settings_save", serde_json::json!({ "policy": policy }))?)
-            .map_err(|error| format!("decode saved updater settings from Control Manager: {error}"));
+        return serde_json::from_value(control_manager_request(
+            "write",
+            "updater_settings_save",
+            serde_json::json!({ "policy": policy }),
+        )?)
+        .map_err(|error| format!("decode saved updater settings from Control Manager: {error}"));
     }
-    local_settings_save(policy).map(|_| UpdaterSettings { schema_version: 1, policy: policy_choice })
+    local_settings_save(policy).map(|_| UpdaterSettings {
+        schema_version: 1,
+        policy: policy_choice,
+    })
 }
 
 pub fn info(check: bool) -> Result<UpdaterInfo, String> {
     if control_manager_enabled() {
-        return serde_json::from_value(control_manager_request("read", "updater_info", serde_json::json!({ "check": check }))?)
-            .map_err(|error| format!("decode updater diagnostics from Control Manager: {error}"));
+        return serde_json::from_value(control_manager_request(
+            "read",
+            "updater_info",
+            serde_json::json!({ "check": check }),
+        )?)
+        .map_err(|error| format!("decode updater diagnostics from Control Manager: {error}"));
     }
     info_local(check)
 }
@@ -807,12 +860,16 @@ pub fn record_cli_operation(
     exit_code: i32,
 ) {
     if control_manager_enabled() {
-        let _ = control_manager_request("write", "updater_operation_record", serde_json::json!({
-            "from_version": from_version,
-            "to_version": to_version,
-            "release_type": release_type,
-            "exit_code": exit_code,
-        }));
+        let _ = control_manager_request(
+            "write",
+            "updater_operation_record",
+            serde_json::json!({
+                "from_version": from_version,
+                "to_version": to_version,
+                "release_type": release_type,
+                "exit_code": exit_code,
+            }),
+        );
         return;
     }
 

@@ -584,19 +584,18 @@ fn package_type() -> String {
     if Path::new("/var/lib/dpkg/info/gitrun.list").is_file() {
         return "deb (gitrun)".into();
     }
-    if Path::new("/var/lib/apk/db/installed").is_file() {
-        if std::fs::read_to_string("/var/lib/apk/db/installed")
+    if Path::new("/var/lib/apk/db/installed").is_file()
+        && std::fs::read_to_string("/var/lib/apk/db/installed")
             .ok()
             .is_some_and(|raw| {
                 raw.lines()
                     .any(|line| matches!(line, "P:gitrun-server" | "P:gitrun"))
             })
-        {
-            return "apk".into();
-        }
+    {
+        return "apk".into();
     }
-    if Path::new("/var/lib/pacman/local").is_dir() {
-        if std::fs::read_dir("/var/lib/pacman/local")
+    if Path::new("/var/lib/pacman/local").is_dir()
+        && std::fs::read_dir("/var/lib/pacman/local")
             .ok()
             .is_some_and(|entries| {
                 entries.filter_map(Result::ok).any(|entry| {
@@ -607,12 +606,11 @@ fn package_type() -> String {
                         || entry.file_name().to_string_lossy().starts_with("gitrun-")
                 })
             })
-        {
-            return "pkg.tar.zst".into();
-        }
+    {
+        return "pkg.tar.zst".into();
     }
-    if Path::new("/var/db/xbps").is_dir() {
-        if std::fs::read_dir("/var/db/xbps")
+    if Path::new("/var/db/xbps").is_dir()
+        && std::fs::read_dir("/var/db/xbps")
             .ok()
             .is_some_and(|entries| {
                 entries.filter_map(Result::ok).any(|entry| {
@@ -623,9 +621,8 @@ fn package_type() -> String {
                         || entry.file_name().to_string_lossy().starts_with("gitrun-")
                 })
             })
-        {
-            return "xbps".into();
-        }
+    {
+        return "xbps".into();
     }
     if Path::new("/var/lib/rpm").exists() || Path::new("/usr/lib/sysimage/rpm").exists() {
         if std::process::Command::new("/usr/bin/rpm")

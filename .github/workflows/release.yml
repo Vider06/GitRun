@@ -1732,6 +1732,87 @@ jobs:
             test "$(GITRUN_NO_CAT=1 target/release/gitrun --version --gitrun)" = "GitRun 1.8.23"
           )
 
+          # Build a disposable 1.9.0 updater with a loopback-only transport seam
+          # so the second migration transaction is exercised without contacting
+          # the public release endpoint. Production package bytes remain unchanged.
+          python3 - "$GITHUB_WORKSPACE/crates/gitrun-updater/src/lib.rs" \
+            "$GITHUB_WORKSPACE/crates/gitrun-cli/src/main.rs" <<'PYPATCHNEW'
+          import re
+          import sys
+          from pathlib import Path
+
+          updater_path, cli_path = map(Path, sys.argv[1:])
+          updater = updater_path.read_text(encoding="utf-8")
+          cli = cli_path.read_text(encoding="utf-8")
+
+          def replace_once(source, pattern, replacement, label):
+              updated, count = re.subn(pattern, replacement, source, count=1, flags=re.MULTILINE)
+              if count != 1:
+                  raise SystemExit(f"Expected one 1.9.0 {label} anchor, found {count}")
+              return updated
+
+          updater = replace_once(
+              updater,
+              r'fn is_https_url\(url: &reqwest::Url\) -> bool \{\s*url\.scheme\(\) == "https"\s*\}',
+              """fn is_https_url(url: &reqwest::Url) -> bool {
+              url.scheme() == "https"
+                  || (url.scheme() == "http"
+                      && url.host_str() == Some("127.0.0.1") /* DevSkim: ignore DS137138 because this HTTP exception exists only in the disposable 1.9.0 migration-test checkout and accepts loopback only. */
+                      && std::env::var("GITRUN_MIGRATION_TEST_BASE_URL").is_ok())
+          }""",
+              "HTTPS validator",
+          )
+          updater = replace_once(
+              updater,
+              r'    Ok\(format!\(\s*"https://github\.com/\{\}/releases/latest/download/release-manifest\.json",\s*repository\.trim_end_matches\(\x27/\x27\)\s*\)\)',
+              """    if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
+              if !base_url.starts_with("http://127.0.0.1:") {
+                  return Err(UpdateError::InvalidManifest(
+                      "migration test URL must use loopback HTTP".into(),
+                  ));
+              }
+              return Ok(format!(
+                  "{}/releases/latest/download/release-manifest.json",
+                  base_url.trim_end_matches('/')
+              ));
+          }
+          Ok(format!(
+              "https://github.com/{}/releases/latest/download/release-manifest.json",
+              repository.trim_end_matches('/')
+          ))""",
+              "latest manifest URL",
+          )
+          cli = replace_once(
+              cli,
+              r'    let url = format!\(\s*"https://github\.com/Vider06/GitRun/releases/download/\{\}/\{\}",\s*version, artifact_name\s*\);',
+              """    let url = if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
+              if !base_url.starts_with("http://127.0.0.1:") {
+                  return Err("migration test URL must use loopback HTTP".into());
+              }
+              format!(
+                  "{}/releases/download/{}/{}",
+                  base_url.trim_end_matches('/'),
+                  version,
+                  artifact_name
+              )
+          } else {
+              format!(
+                  "https://github.com/Vider06/GitRun/releases/download/{}/{}",
+                  version, artifact_name
+              )
+          };""",
+              "artifact download URL",
+          )
+
+          updater_path.write_text(updater, encoding="utf-8")
+          cli_path.write_text(cli, encoding="utf-8")
+          PYPATCHNEW
+          (
+            cd "$GITHUB_WORKSPACE"
+            cargo build --locked --release -p gitrun-cli --bin gitrun
+            install -m 0755 target/release/gitrun "$RUNNER_TEMP/gitrun-1.9.0-loopback-test"
+          )
+
           legacy_asset="GitRun-$VERSION-linux-x86_64-deb.deb"
           test -s "release-assets/$legacy_asset"
           mock_root="$RUNNER_TEMP/migration-http"
@@ -1827,6 +1908,7 @@ jobs:
           # Complete the second phase with the newly installed 1.9.0 updater.
           # It must select the native Server DEB, replace the transitional
           # legacy package registration and leave the canonical CLI available.
+          sudo install -m 0755 "$RUNNER_TEMP/gitrun-1.9.0-loopback-test" /usr/bin/gitrun
           sudo env "GITRUN_MIGRATION_TEST_BASE_URL=$base" \
             /usr/bin/gitrun --no-cat --reinstall-latest-root
           test "$(dpkg-query -W -f='${db:Status-Status}' gitrun-server)" = installed

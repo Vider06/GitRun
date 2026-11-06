@@ -439,8 +439,9 @@ fn dependency_snapshot() -> Vec<(String, Option<String>)> {
 }
 
 fn configured_update_policy() -> Result<UpdatePolicy, Box<dyn std::error::Error>> {
-    let settings = gitrun_management::get_updater_settings()
-        .map_err(|error| std::io::Error::other(format!("unable to read shared updater policy: {error}")))?;
+    let settings = gitrun_management::get_updater_settings().map_err(|error| {
+        std::io::Error::other(format!("unable to read shared updater policy: {error}"))
+    })?;
     Ok(match settings.policy.as_str() {
         "security_only" => UpdatePolicy::SecurityOnly,
         "security_full" => UpdatePolicy::SecurityFull,
@@ -459,12 +460,19 @@ fn resolve_selected_manifest(
     if let Some(url) = manifest_url {
         let manifest = fetch_manifest(url)?;
         if !policy.accepts_release_type(manifest.release_type) {
-            return Err(format!("release type {} is excluded by the active {} policy", manifest.release_type.as_str(), policy.as_str()).into());
+            return Err(format!(
+                "release type {} is excluded by the active {} policy",
+                manifest.release_type.as_str(),
+                policy.as_str()
+            )
+            .into());
         }
         return Ok(Some((manifest.clone(), manifest.release_type)));
     }
-    Ok(resolve_policy_update_for_target(repository, current, policy, target)?
-        .map(|resolved| (resolved.manifest, resolved.release.release_type)))
+    Ok(
+        resolve_policy_update_for_target(repository, current, policy, target)?
+            .map(|resolved| (resolved.manifest, resolved.release.release_type)),
+    )
 }
 
 fn update_check_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
@@ -474,11 +482,21 @@ fn update_check_command(args: &[String]) -> Result<(), Box<dyn std::error::Error
     let target = target_triple()?;
     println!("GitRun update check");
     println!("Current version: {current}");
-    let Some((manifest, release_type)) = resolve_selected_manifest(&repository, &current, &target, manifest_url.map(String::as_str))? else {
+    let Some((manifest, release_type)) = resolve_selected_manifest(
+        &repository,
+        &current,
+        &target,
+        manifest_url.map(String::as_str),
+    )?
+    else {
         println!("No newer release matches the active updater policy.");
         return Ok(());
     };
-    println!("Selected signed release: {} ({})", manifest.version, release_type.as_str());
+    println!(
+        "Selected signed release: {} ({})",
+        manifest.version,
+        release_type.as_str()
+    );
 
     match build_plan(&manifest, &current, &target, &dependency_snapshot()) {
         Ok(plan) => {
@@ -572,7 +590,9 @@ fn update_command(
         .map(String::as_str);
     let current = current_version();
     let target = target_triple()?;
-    let Some((manifest, release_type)) = resolve_selected_manifest(&repository, &current, &target, manifest_url)? else {
+    let Some((manifest, release_type)) =
+        resolve_selected_manifest(&repository, &current, &target, manifest_url)?
+    else {
         println!("GitRun update: no newer release matches the active updater policy.");
         return Ok(());
     };
@@ -4135,7 +4155,11 @@ fn run_update(
                 return 1;
             }
         };
-        println!("GitRun update: selected {} release {}", release_type.as_str(), manifest.version);
+        println!(
+            "GitRun update: selected {} release {}",
+            release_type.as_str(),
+            manifest.version
+        );
         if let Err(error) = build_plan(&manifest, &current, &target, &dependency_snapshot()) {
             match error {
                 UpdateError::NotNewer => {

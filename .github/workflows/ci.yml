@@ -1797,7 +1797,7 @@ jobs:
               "release notes are generated from signed manifest": "manifest = json.loads(manifest_path.read_text" in release,
               "release notes verify asset checksums": 'digest != item["sha256"]' in release,
               "migration notes include fresh-install warning": "DO NOT USE FOR FRESH INSTALL!" in release,
-              "standard release migration notice": "No migration needed, updater/release system has not been changed in a way that requires a migration package." in release,
+              "migration notice is limited to the one-time migration release": 'if migration == "true":' in release and "## Migration Release" in release and "No migration needed, updater/release system has not been changed in a way that requires a migration package." not in release,
               "manifest contains separate Server package target": 'package_target[:-4] + "-server-deb"' in release,
               "release asset inventory rejects unexpected files": "diff -u <(printf" in release,
               "manifest requires the exact target set": "actual_targets != required" in release and "len(items) != len(required)" in release,

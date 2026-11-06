@@ -64,9 +64,9 @@ checks = {
     and '"updater_settings_save"' in control_manager,
     "CLI exposes info and combined info check": "info: bool" in cli
     and "fn run_update_info" in cli
-    and "get_updater_info(perform_check)" in cli,
-    "CLI queries updater crate directly": "gitrun_updater::state::current_settings_local()" in cli
-    and "gitrun_updater::state::info_local(perform_check)" in cli
+    and "read_updater_info(perform_check)" in cli,
+    "CLI queries updater crate directly": "gitrun_updater::state::read_settings()" in cli
+    and "gitrun_updater::state::info(check)" in cli
     and "gitrun_management::get_updater_info" not in cli
     and "gitrun_management::get_updater_settings" not in cli,
     "TUI uses shared updater settings actions": "updater_settings" in tui

@@ -209,7 +209,7 @@ pub fn resolve_policy_update(
         .version
         .strip_prefix('v')
         .unwrap_or(&manifest.version)
-        != release.version
+        != release.version.as_str()
         || manifest.release_type != release.release_type
     {
         return Err(UpdateError::InvalidManifest(
@@ -234,7 +234,7 @@ pub fn resolve_policy_update_for_target(
             .version
             .strip_prefix('v')
             .unwrap_or(&manifest.version)
-            != release.version
+            != release.version.as_str()
             || manifest.release_type != release.release_type
         {
             return Err(UpdateError::InvalidManifest(

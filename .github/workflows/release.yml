@@ -1606,7 +1606,7 @@ jobs:
           for icon in "${icons[@]}"; do
             tmp="$(mktemp --suffix=.png)"
             trap 'rm -f "$tmp"' EXIT
-            magick "$icon" -background none -alpha on -colorspace sRGB -define png:color-type=6 "PNG32:$tmp"
+            convert "$icon" -background none -alpha on -colorspace sRGB -define png:color-type=6 "PNG32:$tmp"
             identify -format '%m %wx%h %[channels]\\n' "$tmp"
             channels="$(identify -format '%[channels]' "$tmp")"
             case "$channels" in

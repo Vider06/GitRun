@@ -1856,7 +1856,7 @@ jobs:
               """fn is_https_url(url: &reqwest::Url) -> bool {
               url.scheme() == "https"
                   || (url.scheme() == "http"
-                      && url.host_str().is_some_and(|host| host == std::net::Ipv4Addr::LOCALHOST.to_string()) /* DevSkim: ignore DS137138 because this HTTP exception exists only in the disposable 1.9.1 migration-test checkout and accepts loopback only. */
+                      && url.host_str().is_some_and(|host| host == std::net::Ipv4Addr::LOCALHOST.to_string())
                       && std::env::var("GITRUN_MIGRATION_TEST_BASE_URL").is_ok())
           }""",
               "HTTPS validator",

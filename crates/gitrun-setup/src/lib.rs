@@ -3189,9 +3189,9 @@ mod tests {
         let wrapper = gitrun_service_environment_wrapper(true);
         assert!(wrapper.contains("export \"$key=$value\""));
         assert!(wrapper.contains("export GITRUN_BINARY_PATH=\"$executable\""));
-        assert!(wrapper.contains("exec /usr/local/bin/gitrun-recovery start scheduler \"$@\"" ));
-        assert!(wrapper.contains("exec \"$executable\" \"$@\"" ));
-        assert!(!wrapper.contains("exec /usr/local/bin/gitrun-recovery \"$@\"" ));
+        assert!(wrapper.contains("exec /usr/local/bin/gitrun-recovery start scheduler \"$@\""));
+        assert!(wrapper.contains("exec \"$executable\" \"$@\""));
+        assert!(!wrapper.contains("exec /usr/local/bin/gitrun-recovery \"$@\""));
         assert!(!wrapper.contains(". /etc/gitrun/gitrun.env"));
         assert!(!wrapper.contains("eval "));
     }

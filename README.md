@@ -141,7 +141,7 @@ For the standard Linux host deployment, prepare a dedicated Linux machine with D
 
 ### Install a published Linux release
 
-Choose the **GitRun-Server** package matching the host distribution, architecture and libc from the signed [GitHub Releases](https://github.com/Vider06/GitRun/releases) manifest. Do not use the one-time 1.9.0 migration DEB for a fresh installation; it exists only for existing 1.8.23 Debian/Ubuntu hosts.
+Choose the **GitRun-Server** package matching the host distribution, architecture and libc from the signed [GitHub Releases](https://github.com/Vider06/GitRun/releases) manifest. Do not use the one-time 1.9.1 migration DEB for a fresh installation; it exists only for existing 1.8.23 Debian/Ubuntu hosts.
 
 | Distribution / package | Published targets | Native service integration |
 | --- | --- | --- |

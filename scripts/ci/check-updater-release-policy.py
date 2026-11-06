@@ -61,12 +61,12 @@ checks = {
     and "line_transition_does_not_downgrade_when_latest_line_version_is_already_installed" in engine,
     "line transition has a separate plan that preserves ordinary monotonic updates": "pub fn build_line_transition_plan" in manifest_engine
     and re.search(
-        r"pub fn build_plan\\(.*?build_plan_with_version_policy\\(\\s*manifest,\\s*current_version,\\s*target,\\s*installed_dependencies,\\s*false,\\s*\\)",
+        r"pub fn build_plan\(.*?build_plan_with_version_policy\(\s*manifest,\s*current_version,\s*target,\s*installed_dependencies,\s*false,\s*\)",
         manifest_engine_normalized,
     )
     is not None
     and re.search(
-        r"pub fn build_line_transition_plan\\(.*?build_plan_with_version_policy\\(\\s*manifest,\\s*current_version,\\s*target,\\s*installed_dependencies,\\s*true,\\s*\\)",
+        r"pub fn build_line_transition_plan\(.*?build_plan_with_version_policy\(\s*manifest,\s*current_version,\s*target,\s*installed_dependencies,\s*true,\s*\)",
         manifest_engine_normalized,
     )
     is not None

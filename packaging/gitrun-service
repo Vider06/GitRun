@@ -15,14 +15,7 @@ else
     echo "gitrun service: canonical GitRun executable was not found" >&2
     exit 127
 fi
-export GITRUN_BINARY_PATH="$executable"
 
-# Recovery is a supervisor entrypoint, not a drop-in GitRun CLI. Use its
-# explicit start subcommand only for scheduler startup; GSR runs the canonical
-# GitRun CLI directly.
-if [ "${1:-}" = "scheduler" ] && [ -x /usr/local/bin/gitrun-recovery ]; then
-    shift
-    exec /usr/local/bin/gitrun-recovery start scheduler "$@"
-fi
-
+# Recovery is a separate diagnostic/startup application, not a drop-in CLI.
+# OpenRC and runit service commands must be dispatched to the canonical CLI.
 exec "$executable" "$@"

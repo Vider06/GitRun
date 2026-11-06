@@ -51,7 +51,7 @@ The Server package set includes:
 
 The independent Desktop build matrix also covers GNU/musl and x86_64/aarch64. GNU targets produce AppImage, DEB, RPM and Arch packages. Musl targets produce standalone binaries and XBPS packages for both architectures; the APK is published for x86_64 only. These are workflow-defined outputs; check the signed manifest and the actual [GitHub Release assets](https://github.com/Vider06/GitRun/releases) for a particular published version. A source branch, successful workflow run or expected filename is not evidence that an asset has been published.
 
-For 1.9.0 only, the release workflow also built a one-time Debian migration package for existing 1.8.23 x86_64 GNU/APT installations. It retained the legacy `gitrun` package identity so the older updater could install the new Server binary. It is not the fresh-install Server package and is not repeated in later releases. The new CLI prefers the `gitrun-server` package target and retains a compatibility fallback for older signed manifests.
+For 1.9.1 only, the release workflow also built a one-time Debian migration package for existing 1.8.23 x86_64 GNU/APT installations. It retained the legacy `gitrun` package identity so the older updater could install the new Server binary. It is not the fresh-install Server package and is not repeated in later releases. The new CLI prefers the `gitrun-server` package target and retains a compatibility fallback for older signed manifests.
 
 ## Native service-manager integration
 

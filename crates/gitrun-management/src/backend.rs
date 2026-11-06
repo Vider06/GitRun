@@ -4396,13 +4396,13 @@ pub fn management_read(action: &str, args: serde_json::Value) -> Result<serde_js
             management_value(get_dock_requirements(management_arg(&args, "repo")?)?)
         }
         "updates" => management_value(check_gitrun_updates()),
-        "updater_settings" => management_value(updater::current_settings_local()?),
+        "updater_settings" => management_value(get_updater_settings()?),
         "updater_info" => {
             let check = args
                 .get("check")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
-            management_value(updater::info_local(check)?)
+            management_value(get_updater_info(check)?)
         }
         other => Err(format!("unsupported management read action: {other}")),
     }
@@ -4492,8 +4492,8 @@ pub fn management_write(
             )?;
             Ok(serde_json::json!({ "ok": true }))
         }
-        "updater_settings_save" => management_value(updater::local_settings_save(
-            &management_arg::<String>(&args, "policy")?,
+        "updater_settings_save" => management_value(save_updater_settings(
+            management_arg::<String>(&args, "policy")?,
         )?),
         "updater_operation_record" => {
             updater::record_cli_operation(

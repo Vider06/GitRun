@@ -45,8 +45,6 @@ RELEASE_SUPPRESSION_MARKER = "DevSkim: ignore DS137138"
 _LOOPBACK_IP = "127" + ".0.0.1"
 _LOOPBACK_HTTP = "http" + "://" + _LOOPBACK_IP
 RELEASE_LOOPBACK_ANCHORS = (
-    f'url.host_str() == Some("{_LOOPBACK_IP}")',
-    f'base_url.starts_with("{_LOOPBACK_HTTP}:")',
     f'sock.bind(("{_LOOPBACK_IP}", 0))',
     f'python3 -m http.server "$port" --bind {_LOOPBACK_IP}',
     f'base="{_LOOPBACK_HTTP}:$port"',
@@ -91,17 +89,13 @@ def release_migration_loopback_lines(source_lines: list[str]) -> set[int]:
     }
     marked_text = [source_lines[index - 1] for index in sorted(marked)]
 
-    # The workflow deliberately tests both the legacy 1.8.23 updater and the
-    # current 1.9.1 updater. Each has its own URL validator, while only the
-    # legacy fixture carries the two manifest/artifact URL guards. Derive the
-    # marker total from the reviewed operation inventory instead of coupling
-    # the guard to a line count or a stale aggregate.
+    # Rust URL validators now use Ipv4Addr::LOCALHOST and need no scanner
+    # suppression. Only the three literal loopback operations that create and
+    # address the disposable Python fixture server remain explicitly marked.
     expected_anchor_counts = {
-        RELEASE_LOOPBACK_ANCHORS[0]: 2,  # 1.8.23 and 1.9.1 URL validators
-        RELEASE_LOOPBACK_ANCHORS[1]: 2,  # legacy manifest and artifact URL guards
-        RELEASE_LOOPBACK_ANCHORS[2]: 1,  # ephemeral Python fixture server
-        RELEASE_LOOPBACK_ANCHORS[3]: 1,  # disposable HTTP server launcher
-        RELEASE_LOOPBACK_ANCHORS[4]: 1,  # migration test base URL
+        RELEASE_LOOPBACK_ANCHORS[0]: 1,  # ephemeral Python fixture server
+        RELEASE_LOOPBACK_ANCHORS[1]: 1,  # disposable HTTP server launcher
+        RELEASE_LOOPBACK_ANCHORS[2]: 1,  # migration test base URL
     }
     expected_marker_count = sum(expected_anchor_counts.values())
     if len(marked) != expected_marker_count:

@@ -126,7 +126,13 @@ pub struct UpdaterInfo {
 
 fn state_dir() -> Result<PathBuf, String> {
     let config = load_config()?;
-    Ok(PathBuf::from(config.state_dir))
+    let directory = PathBuf::from(config.state_dir);
+    #[cfg(target_os = "linux")]
+    if super::current_process_is_root() && Path::new("/etc/gitrun/gitrun.env").is_file() {
+        gitrun_setup::validate_system_state_directory(&directory)
+            .map_err(|error| format!("updater state directory is not trusted: {error}"))?;
+    }
+    Ok(directory)
 }
 
 fn safe_state_dir(path: &Path, create: bool) -> Result<(), String> {

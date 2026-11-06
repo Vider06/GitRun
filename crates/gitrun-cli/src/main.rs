@@ -2235,6 +2235,10 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         | Command::SaveKittySettingsRoot { .. }
         | Command::ReadKittyDashboardRoot
         | Command::ReadGitRunSettingsRoot
+        | Command::ReadUpdaterSettingsRoot
+        | Command::SaveUpdaterSettingsRoot { .. }
+        | Command::ReadUpdaterInfoRoot { .. }
+        | Command::RecordUpdaterOperationRoot { .. }
         | Command::JsonRecoveryRoot { .. }
         | Command::FixUpdateRoot => ValidationState::Recovering,
         Command::RecoveryGtuu | Command::RepairService | Command::Rollback { .. } => {

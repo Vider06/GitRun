@@ -7,4 +7,4 @@ The PR #83 source-head regression suite passed signature verification, tampering
 
 From GitRun 1.9.1 onward, the signed release manifest carries a `release_type` (`pre`, `full` or `security`). The updater cross-checks it against the GitHub release description marker and `prerelease` flag, paginates the Releases API, applies the selected Security/Full/Pre policy, and uses SemVer ordering without downgrades. Host-incompatible artifacts are skipped in favor of an older eligible release when one exists; invalid signatures or mismatched metadata fail closed.
 
-The policy and diagnostics persistence belong to `gitrun-management`, not this engine crate. The GUI, TUI and CLI share that backend. See the [Updater Release Policy](../../docs/UPDATER_RELEASE_POLICY.md).
+The updater crate owns the shared policy, host diagnostics and bounded operation history. The CLI calls the updater directly; the GUI and TUI use `gitrun-management` as their shared management adapter, which delegates updater operations to this crate. See the [Updater Release Policy](../../docs/UPDATER_RELEASE_POLICY.md).

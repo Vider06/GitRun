@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+name="GitRun scheduler"
+command="/usr/libexec/gitrun/gitrun-service"
+command_args="scheduler"
+command_background=true
+pidfile="/run/gitrun.pid"
+output_log="/var/log/gitrun/scheduler.log"
+error_log="/var/log/gitrun/scheduler.log"
+
+depend() {
+    need net docker
+}

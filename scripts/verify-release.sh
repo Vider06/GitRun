@@ -25,15 +25,31 @@ from urllib.parse import urlparse
 
 schema_path = pathlib.Path("release/release-manifest.schema.json")
 workflow_path = pathlib.Path(".github/workflows/release.yml")
+type_change_path = pathlib.Path(".github/workflows/release-type-change.yml")
+example_path = pathlib.Path("release/release-manifest.example.json")
 
 schema = json.loads(schema_path.read_text(encoding="utf-8"))
-required = {"name", "version", "git_commit", "artifacts"}
+required = {"name", "version", "release_type", "git_commit", "artifacts"}
 if schema.get("title") != "GitRun Release Manifest":
     raise SystemExit("release manifest schema title mismatch")
 if set(schema.get("required", [])) != required:
     raise SystemExit("release manifest schema required fields mismatch")
 if not workflow_path.is_file():
     raise SystemExit("release workflow missing")
+if not type_change_path.is_file():
+    raise SystemExit("release type-change workflow missing")
+release_workflow = workflow_path.read_text(encoding="utf-8")
+type_change_workflow = type_change_path.read_text(encoding="utf-8")
+if "<!-- GITRUN_RELEASE_TYPE: pre -->" not in release_workflow:
+    raise SystemExit("new releases must be marked as pre")
+if release_workflow.count("--prerelease") < 2:
+    raise SystemExit("both release create and edit paths must set prerelease")
+if not all(f"          - {kind}" in type_change_workflow for kind in ("pre", "full", "security")):
+    raise SystemExit("release type-change workflow is missing a release type")
+if "release-manifest.json" not in type_change_workflow or "pkeyutl -sign" not in type_change_workflow:
+    raise SystemExit("release type-change workflow must re-sign the canonical manifest")
+if "new_prerelease=true" not in type_change_workflow:
+    raise SystemExit("release type-change workflow must synchronize the GitHub prerelease flag")
 
 def fail(message):
     raise SystemExit(f"release manifest validation failed: {message}")
@@ -41,6 +57,8 @@ def fail(message):
 def validate(value, schema, path="$"):
     if "const" in schema and value != schema["const"]:
         fail(f"{path} must equal {schema['const']!r}")
+    if "enum" in schema and value not in schema["enum"]:
+        fail(f"{path} must be one of {schema['enum']!r}")
 
     expected_type = schema.get("type")
     type_ok = {
@@ -105,6 +123,11 @@ def try_validate(value, schema, path):
         return True
     except SystemExit:
         return False
+
+example = json.loads(example_path.read_text(encoding="utf-8"))
+validate(example, schema)
+if example.get("release_type") != "pre":
+    fail("release manifest example must use the initial pre classification")
 
 manifest_candidates = []
 if len(sys.argv) > 1:

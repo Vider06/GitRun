@@ -1574,7 +1574,7 @@ jobs:
           sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential curl wget file pkg-config libssl-dev \
+            build-essential curl wget file pkg-config libssl-dev imagemagick \
             libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev librsvg2-dev libxdo-dev
 
@@ -1583,6 +1583,40 @@ jobs:
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:
           toolchain: ${{ env.RUST_VERSION }}
+      - name: Checkout the legacy 1.8.23 updater source
+        if: env.MIGRATION_RELEASE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/gitrun-v1.8.23"
+          git clone --quiet --depth 1 --branch v1.8.23 "https://github.com/$GITHUB_REPOSITORY.git" "$old"
+          echo "GITRUN_LEGACY_UPDATER_SOURCE=$old" >> "$GITHUB_ENV"
+
+      - name: Normalize legacy Tauri PNG icons to RGBA
+        if: env.MIGRATION_RELEASE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          old="$GITRUN_LEGACY_UPDATER_SOURCE"
+          icon_dir="$old/crates/gitrun-dashboard-tauri/src-tauri/icons"
+          test -d "$icon_dir"
+          shopt -s nullglob
+          icons=("$icon_dir"/*.png)
+          (("${#icons[@]}" > 0))
+          for icon in "${icons[@]}"; do
+            tmp="$(mktemp --suffix=.png)"
+            trap 'rm -f "$tmp"' EXIT
+            convert "$icon" -background none -alpha on -colorspace sRGB -define png:color-type=6 "PNG32:$tmp"
+            identify -format '%m %wx%h %[channels]\\n' "$tmp"
+            channels="$(identify -format '%[channels]' "$tmp")"
+            case "$channels" in
+              *a*) ;;
+              *) echo "Icon was not converted to RGBA: $icon ($channels)" >&2; exit 1 ;;
+            esac
+            mv "$tmp" "$icon"
+            trap - EXIT
+          done
+
       - name: Verify migration with the actual 1.8.23 updater
         if: env.MIGRATION_RELEASE == 'true'
         env:
@@ -1592,8 +1626,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$VERSION" = v1.9.0
-          old="$RUNNER_TEMP/gitrun-v1.8.23"
-          git clone --quiet --depth 1 --branch v1.8.23 "https://github.com/$GITHUB_REPOSITORY.git" "$old"
+          old="$GITRUN_LEGACY_UPDATER_SOURCE"
 
           key="$RUNNER_TEMP/migration-key.der"
           public="$RUNNER_TEMP/migration-public.der"

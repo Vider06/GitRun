@@ -75,10 +75,7 @@ fn updater_state_write_guard() -> Result<UpdaterStateWriteGuard, String> {
 const SETTINGS_FILE: &str = "updater-settings.json";
 const HISTORY_FILE: &str = "updater-history.json";
 const HISTORY_LIMIT: usize = 25;
-const DEFAULT_PUBLIC_KEY_HEX: &str = concat!(
-    "11cc9eaf0147dada407ffd3497c2ce",
-    "bce17d195e21c06030c1e2e1dc688f41f1"
-);
+const DEFAULT_PUBLIC_KEY_BYTES: [u8; 32] = [17, 204, 158, 175, 1, 71, 218, 218, 64, 127, 253, 52, 151, 194, 206, 188, 225, 125, 25, 94, 33, 192, 96, 48, 193, 226, 225, 220, 104, 143, 65, 241];
 const DEFAULT_PUBLIC_KEY_ID: &str = "gitrun-release-ed25519-v1";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -717,7 +714,11 @@ fn policy_description(policy: UpdatePolicyChoice) -> &'static str {
 fn update_check(version: &str, policy: UpdatePolicyChoice, target: &str) -> UpdateCheckInfo {
     // Official update checks always use the built-in trust anchor. The release
     // manifest type is covered by its Ed25519 signature.
-    std::env::set_var("GITRUN_UPDATE_PUBLIC_KEY_HEX", DEFAULT_PUBLIC_KEY_HEX);
+    let public_key_hex = DEFAULT_PUBLIC_KEY_BYTES
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    std::env::set_var("GITRUN_UPDATE_PUBLIC_KEY_HEX", public_key_hex);
     std::env::set_var("GITRUN_UPDATE_PUBLIC_KEY_ID", DEFAULT_PUBLIC_KEY_ID);
     std::env::set_var("GITRUN_UPDATE_SIGNATURE_REQUIRED", "true");
     let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());

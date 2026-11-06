@@ -9,7 +9,7 @@ Current source target: GitRun <!-- gitrun-version:start -->1.9.1<!-- gitrun-vers
 - Add regression coverage for successful lock acquisition after release and timeout while the lock remains held.
 - Add OpenRC scheduler and GSR service definitions for Alpine, plus runit service and logging trees for Void. Setup consumes the shared packaged resources, and package hooks restart only previously active services while preserving operator configuration and state on removal.
 - Keep APK packages OpenRC-specific and XBPS packages runit-specific; verify package contents, shell syntax, executable modes and native lifecycle metadata.
-- Make the one-time 1.8.23-to-1.9.0 Debian package transition preserve existing systemd service state when dpkg removes the legacy package in favour of `gitrun-server`; ordinary package removal still stops and disables the legacy services.
+- Make the one-time 1.8.23-to-1.9.1 Debian package transition preserve existing systemd service state when dpkg removes the legacy package in favour of `gitrun-server`; ordinary package removal still stops and disables the legacy services.
 - Consolidate GNU and musl Desktop builds and packages into one four-target matrix per lifecycle stage. Put release installation/update instructions first and align the README, platform-support guide and release references with the package matrix.
 - Bump `gitrun-cli` from `0.13.25` to `0.13.26` and `gitrun-scheduler` from `0.11.16` to `0.11.17`; keep `Cargo.lock`, `version.txt` and current-source Markdown markers aligned.
 
@@ -22,7 +22,6 @@ Current source target: GitRun <!-- gitrun-version:start -->1.9.1<!-- gitrun-vers
 - Extract management handlers, policy validation, persistence, typed dispatch and the privileged Control Manager protocol/service loop into the new headless-by-default `gitrun-management` crate. The Dashboard becomes a thin Tauri adapter; the CLI and system Control Manager no longer depend on the Dashboard crate.
 - Keep Recovery's engine headless by default and gate its graphical Tauri integration behind the optional `desktop` feature.
 - Split release outputs into independent Server and Desktop components. The Server workflow builds four GNU/musl x86_64/aarch64 targets and packages the canonical outputs into the declared native package/archive formats; Desktop is currently x86_64 Linux (DEB and AppImage).
-- Add a one-time 1.8.23-to-1.9.0 Debian migration package so the legacy updater can transition existing installations to the new Server package identity.
 - Restore native Debian runtime dependency metadata in the release package control file and validate each required dependency before including the package in release assets.
 - Reject Android, Termux and Android-based proot runtimes before CLI internal dispatch, scheduler, GSR, API, recovery and dashboard startup.
 - Bump only crates that consume the new platform library, keeping `Cargo.lock`, frontend bundle metadata and current-source Markdown markers aligned.

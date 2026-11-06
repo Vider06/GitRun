@@ -60,7 +60,6 @@ jobs:
           release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq .id)"
           gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > "$release_json"
           jq -e '.draft == false' "$release_json" >/dev/null
-          old_prerelease="$(jq -r '.prerelease' "$release_json")"
           old_body_file="$RUNNER_TEMP/release-body.old"
           jq -r '.body // ""' "$release_json" > "$old_body_file"
 

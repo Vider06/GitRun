@@ -290,7 +290,7 @@ jobs:
       NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-npm-cache
     steps:
       - name: Checkout
-        if: matrix.kind == 'gnu'
+        if: always()
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
@@ -790,7 +790,7 @@ jobs:
       XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}
     steps:
       - name: Checkout packaging metadata
-        if: matrix.kind == 'gnu'
+        if: always()
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
@@ -1078,7 +1078,7 @@ jobs:
   validate:
     name: Validate collected package matrix
     needs: [prepare, collect, package-server, package-dashboard, migration-package]
-    if: always() && needs.prepare.result == 'success' && needs.collect.result == 'success' && needs.package-server.result == 'success' && needs.package-dashboard.result == 'success' && needs.package-dashboard.result == 'success' && (needs.migration-package.result == 'success' || (needs.prepare.outputs.migration_release != 'true' && needs.migration-package.result == 'skipped'))
+    if: always() && needs.prepare.result == 'success' && needs.collect.result == 'success' && needs.package-server.result == 'success' && needs.package-dashboard.result == 'success' && (needs.migration-package.result == 'success' || (needs.prepare.outputs.migration_release != 'true' && needs.migration-package.result == 'skipped'))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:

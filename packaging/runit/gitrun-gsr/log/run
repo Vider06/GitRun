@@ -1,0 +1,3 @@
+#!/bin/sh
+mkdir -p /var/log/gitrun/gitrun-gsr
+exec svlogd -tt /var/log/gitrun/gitrun-gsr

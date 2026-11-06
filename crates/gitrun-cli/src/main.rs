@@ -5101,7 +5101,6 @@ fn read_gsr_events_root_command(_limit: usize) -> Result<(), Box<dyn std::error:
 }
 
 #[cfg(target_os = "linux")]
-#[cfg(target_os = "linux")]
 fn prepare_trusted_updater_state() -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
         return Err("protected updater state requires administrator privileges".into());
@@ -5153,7 +5152,7 @@ fn read_updater_info_root_command(check: bool) -> Result<(), Box<dyn std::error:
             "reading protected updater diagnostics requires administrator privileges".into(),
         );
     }
-    initialize_system_update_config_path(true);
+    prepare_trusted_updater_state()?;
     if check {
         initialize_update_signing_environment(true);
     }

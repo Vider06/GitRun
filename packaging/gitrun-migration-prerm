@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+    remove|deconfigure)
+        # When dpkg replaces the transitional 1.8.23 package with the new
+        # gitrun-server package, preserve the existing systemd state. The
+        # incoming package's postinst reloads units and restarts active services.
+        if [ "${2:-}" = "in-favour" ] && [ "${3:-}" = "gitrun-server" ]; then
+            exit 0
+        fi
+
+        # A standalone removal still stops and disables the legacy services.
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl disable --now gitrun-gsr.service gitrun.service >/dev/null 2>&1 || true
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+        ;;
+esac
+
+exit 0

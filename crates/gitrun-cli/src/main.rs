@@ -520,7 +520,8 @@ fn save_updater_settings(
             })?;
             Ok(gitrun_updater::state::UpdaterSettings {
                 schema_version: 1,
-                policy: gitrun_updater::state::UpdatePolicyChoice::try_from(policy).map_err(std::io::Error::other)?,
+                policy: gitrun_updater::state::UpdatePolicyChoice::try_from(policy)
+                    .map_err(std::io::Error::other)?,
             })
         }
         Err(error) => Err(error.into()),

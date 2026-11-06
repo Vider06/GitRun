@@ -69,7 +69,7 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern release-manifest.json --dir "$work"
           old_manifest="$work/release-manifest.json"
           test -s "$old_manifest"
-          normalized_tag="${TAG#v}"
+          normalized_tag="$TAG"
           test "$(jq -r '.version' "$old_manifest")" = "$normalized_tag"
 
           key="$RUNNER_TEMP/signing-key.der"

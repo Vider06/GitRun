@@ -41,6 +41,9 @@ checks = {
     "promotion workflow synchronizes description and prerelease state": "GITRUN_RELEASE_TYPE:" in promotion
     and "new_prerelease=true" in promotion
     and "new_prerelease=false" in promotion,
+    "promotion replaces the canonical manifest asset and can roll back metadata": 'signed="$work/updated/release-manifest.json"' in promotion
+    and 'gh release upload "$TAG" "$signed"' in promotion
+    and 'body="$(cat "$old_body_file")"' in promotion,
     "release selection paginates the GitHub Releases API": "per_page={RELEASES_PER_PAGE}" in engine
     and "MAX_RELEASE_PAGES" in engine,
     "release selection checks type marker and prerelease agreement": "from_release_body" in engine

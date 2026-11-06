@@ -3,6 +3,7 @@
 
 from pathlib import Path
 import json
+import re
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -17,6 +18,7 @@ release = read(".github/workflows/release.yml")
 promotion = read(".github/workflows/release-type-change.yml")
 engine = read("crates/gitrun-updater/src/release_policy.rs")
 manifest_engine = read("crates/gitrun-updater/src/lib.rs")
+manifest_engine_normalized = " ".join(manifest_engine.split())
 management = read("crates/gitrun-management/src/backend.rs")
 management_updater = read("crates/gitrun-management/src/updater.rs")
 control_manager = read("crates/gitrun-management/src/control_manager.rs")
@@ -58,8 +60,20 @@ checks = {
     and "!= direction" in engine
     and "line_transition_does_not_downgrade_when_latest_line_version_is_already_installed" in engine,
     "line transition has a separate plan that preserves ordinary monotonic updates": "pub fn build_line_transition_plan" in manifest_engine
-    and "build_plan_with_version_policy(manifest, current_version, target, installed_dependencies, false)" in manifest_engine
-    and "allow_older_version: bool" in manifest_engine,
+    and re.search(
+        r"pub fn build_plan\\(.*?build_plan_with_version_policy\\(\\s*manifest,\\s*current_version,\\s*target,\\s*installed_dependencies,\\s*false,\\s*\\)",
+        manifest_engine_normalized,
+    )
+    is not None
+    and re.search(
+        r"pub fn build_line_transition_plan\\(.*?build_plan_with_version_policy\\(\\s*manifest,\\s*current_version,\\s*target,\\s*installed_dependencies,\\s*true,\\s*\\)",
+        manifest_engine_normalized,
+    )
+    is not None
+    and "allow_older_version: bool" in manifest_engine
+    and "ordering == std::cmp::Ordering::Equal || (!allow_older_version && ordering != std::cmp::Ordering::Greater)"
+    in manifest_engine_normalized
+    and "fn explicit_line_transition_allows_older_version_but_not_equal_version" in manifest_engine,
     "line transition resolves a latest signed release and checks version/type metadata": "resolve_policy_update_for_line_transition_target" in engine
     and "super::build_line_transition_plan" in engine
     and "manifest.release_type != release.release_type" in engine,

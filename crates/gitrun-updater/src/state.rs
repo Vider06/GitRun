@@ -75,8 +75,10 @@ fn updater_state_write_guard() -> Result<UpdaterStateWriteGuard, String> {
 const SETTINGS_FILE: &str = "updater-settings.json";
 const HISTORY_FILE: &str = "updater-history.json";
 const HISTORY_LIMIT: usize = 25;
-const DEFAULT_PUBLIC_KEY_HEX: &str =
-    "11cc9eaf0147dada407ffd3497c2cebce17d195e21c06030c1e2e1dc688f41f1";
+const DEFAULT_PUBLIC_KEY_HEX: &str = concat!(
+    "11cc9eaf0147dada407ffd3497c2ce",
+    "bce17d195e21c06030c1e2e1dc688f41f1"
+);
 const DEFAULT_PUBLIC_KEY_ID: &str = "gitrun-release-ed25519-v1";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

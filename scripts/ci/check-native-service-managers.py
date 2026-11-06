@@ -127,6 +127,12 @@ def main() -> int:
         if "/etc/init.d/gitrun" not in install_body or "/etc/sv" not in install_body:
             fail("setup must install native OpenRC and runit service trees", errors)
 
+    launcher = read("packaging/gitrun-service", errors)
+    if "exec /usr/local/bin/gitrun-recovery start scheduler" not in launcher:
+        fail("scheduler startup must use the Recovery start subcommand when Recovery is installed", errors)
+    if 'exec /usr/local/bin/gitrun-recovery "$@"' in launcher or 'exec /usr/local/bin/gitrun-recovery scheduler' in launcher:
+        fail("service launcher must not invoke Recovery as a drop-in GitRun CLI", errors)
+
     release = read(".github/workflows/release.yml", errors)
     for marker in (
         "packaging/openrc/gitrun", "packaging/openrc/gitrun-gsr",

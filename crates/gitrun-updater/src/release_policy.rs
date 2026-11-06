@@ -258,8 +258,8 @@ mod tests {
         assert!(!UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Full));
         assert!(!UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Pre));
         assert!(UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Full));
-        assert!(UpdatePolicy::SecurityFull.accepts(ReleaseType::Security));
-        assert!(!UpdatePolicy::SecurityFull.accepts(ReleaseType::Pre));
+        assert!(UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Security));
+        assert!(!UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Pre));
         assert!(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Pre));
     }
 }

@@ -1642,7 +1642,6 @@ fn install_gitrun_service_definitions(recovery_installed: bool) -> Result<(), Se
                 let root = Path::new("/etc/sv").join(service);
                 write_resource(&root.join("run"), run, 0o755)?;
                 write_resource(&root.join("log/run"), log_run, 0o755)?;
-                ensure_runit_service_link(service)?;
             }
         }
     }
@@ -1681,6 +1680,9 @@ fn start_gitrun_services() -> Result<(), SetupError> {
         }
         gitrun_platform::ServiceManager::Runit => {
             for service in ["gitrun", "gitrun-gsr"] {
+                // Creating the /var/service link enables runit immediately, so
+                // defer it until configuration and service resources are ready.
+                ensure_runit_service_link(service)?;
                 let path = format!("/var/service/{service}");
                 run_command(Command::new(&program).args(["up", &path]))?;
                 run_command(Command::new(&program).args(["status", &path]))?;

@@ -4,22 +4,36 @@ Installation, release-build and verification scripts for Linux, macOS and Window
 
 ## Installing a published Server package
 
-For Debian/Ubuntu, use the matching **Server** DEB asset from the selected signed [GitHub Release](https://github.com/Vider06/GitRun/releases). The 1.9.0 workflow names these assets `GitRun-Server-VERSION-linux-x86_64-deb.deb` and `GitRun-Server-VERSION-linux-aarch64-deb.deb`; select the one matching the host architecture. Do not use the one-time `GitRun-v1.9.0-linux-x86_64-deb.deb` migration asset for a fresh installation: it exists only to transition existing 1.8.23 installations.
+Choose the **GitRun-Server** asset matching the host distribution, architecture and libc from the signed [GitHub Release](https://github.com/Vider06/GitRun/releases) manifest. The current release workflow defines these Server package outputs:
+
+| Package | Targets | Service manager |
+| --- | --- | --- |
+| DEB / RPM | x86_64 and aarch64 GNU | systemd |
+| Arch | x86_64 and aarch64 GNU | systemd |
+| APK | x86_64 and aarch64 musl | OpenRC |
+| XBPS | x86_64 and aarch64 GNU/musl | runit |
+
+The workflow also publishes TAR.GZ updater archives and TAR.ZST portable archives for all four GNU/musl architecture targets. These are separate artifacts from native packages. The built-in `gitrun update` path installs the signed archive; it does not replace the distro package. Use the host package manager when updating a native package.
+
+For example, on Debian/Ubuntu:
 
 ```bash
-VERSION="v1.9.0"
-ASSET="GitRun-Server-${VERSION}-linux-x86_64-deb.deb" # choose aarch64 when appropriate
+VERSION="vX.Y.Z" # choose a published stable tag from GitHub Releases
+ASSET="GitRun-Server-${VERSION}-linux-x86_64-deb.deb"
 curl -fL --proto '=https' --tlsv1.2 \
   "https://github.com/Vider06/GitRun/releases/download/${VERSION}/${ASSET}" \
   -o "${ASSET}"
+sha256sum "${ASSET}" # compare with the signed release manifest
 sudo apt install "./${ASSET}"
-gitrun setup --terminal
+sudo gitrun setup --terminal
 gitrun doctor
 ```
 
-Use this example only if that asset is present in the selected release and listed in its signed manifest. The Server build matrix also includes GNU/musl x86_64/aarch64; other package formats and the independent Desktop DEB/AppImage are listed in [Linux platform compatibility](../docs/PLATFORM_SUPPORT.md). Docker must be installed and configured separately. A local DEB install through APT resolves declared package dependencies.
+The matching package manager resolves declared dependencies. Docker and GitHub credentials remain operator-managed prerequisites. After first installation, `gitrun setup` configures and enables the detected service manager. Package installation alone does not start GitRun.
 
-First-run setup and day-to-day configuration can be completed in the **desktop GUI**. If you prefer the terminal, use `gitrun setup --terminal` for guided setup and `gitrun manage` for the keyboard-driven TUI. The GUI and TUI use the same `gitrun-management` backend.
+Alpine APK packages carry OpenRC service definitions. APK removal stops and unregisters GitRun services; APK upgrades restart only services that were already active. Void XBPS packages carry runit service trees and `INSTALL`/`REMOVE` hooks; setup creates the `/var/service` links, upgrades restart only previously running services, and removal stops GitRun and removes only its setup-created links. Package hooks preserve configuration and state; use the explicit `gitrun uninstall` command for destructive cleanup.
+
+The automatic `gitrun reinstall` package-replacement path is currently limited to x86_64 GNU/Linux with APT. The one-time 1.9.0 migration DEB is only for existing 1.8.23 x86_64 Debian/Ubuntu installations and must never be used for a fresh install. The separate Desktop packages do not include the Server executable.
 
 ## Main Library release archive
 

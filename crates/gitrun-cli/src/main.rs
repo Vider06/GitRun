@@ -2305,6 +2305,18 @@ enum Command {
         /// Private JSON file containing a KittySettings object.
         input_path: String,
     },
+    /// Internal privileged read of the shared updater release-line preference.
+    #[command(name = "--read-updater-settings-root", hide = true)]
+    ReadUpdaterSettingsRoot,
+    /// Internal privileged write of the shared updater release-line preference.
+    #[command(name = "--save-updater-settings-root", hide = true)]
+    SaveUpdaterSettingsRoot { input_path: String },
+    /// Internal privileged read of updater diagnostics.
+    #[command(name = "--read-updater-info-root", hide = true)]
+    ReadUpdaterInfoRoot { #[arg(long)] check: bool },
+    /// Internal privileged write of one bounded updater operation record.
+    #[command(name = "--record-updater-operation-root", hide = true)]
+    RecordUpdaterOperationRoot { input_path: String },
 
     /// Internal privileged reinstall entry point.
     #[command(name = "--reinstall-root", hide = true)]

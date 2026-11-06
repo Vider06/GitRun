@@ -4222,6 +4222,16 @@ pub fn get_updater_info(check: bool) -> Result<UpdaterInfo, String> {
     updater::info_local(check)
 }
 
+/// Persist the result of a CLI update transaction in the shared bounded history.
+pub fn record_cli_update_operation(
+    from_version: &str,
+    to_version: Option<&str>,
+    release_type: Option<&str>,
+    exit_code: i32,
+) {
+    updater::record_cli_operation(from_version, to_version, release_type, exit_code);
+}
+
 /// Read live dashboard data from its existing command handlers. Args use
 /// snake_case field names and JSON so callers do not need private response DTOs.
 pub fn management_read(action: &str, args: serde_json::Value) -> Result<serde_json::Value, String> {

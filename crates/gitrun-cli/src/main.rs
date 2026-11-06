@@ -570,13 +570,12 @@ fn update_command(
         .get(1)
         .filter(|value| !value.starts_with("--"))
         .map(String::as_str);
-    let manifest = if let Some(url) = manifest_url {
-        fetch_manifest(url)?
-    } else {
-        latest_manifest(&repository)?
-    };
     let current = current_version();
     let target = target_triple()?;
+    let Some((manifest, release_type)) = resolve_selected_manifest(&repository, &current, &target, manifest_url)? else {
+        println!("GitRun update: no newer release matches the active updater policy.");
+        return Ok(());
+    };
     let plan = build_plan(&manifest, &current, &target, &dependency_snapshot())?;
     presenter.transition(presenter::ValidationState::Loading);
 
@@ -586,6 +585,7 @@ fn update_command(
     );
     println!("target: {}", plan.target);
     println!("artifact: {}", plan.artifact);
+    println!("release type: {}", release_type.as_str());
     for dependency in &plan.dependencies {
         println!(
             "{}: {} ({})",

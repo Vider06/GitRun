@@ -407,6 +407,13 @@ def check_setup_native_lifecycle_contract(errors: list[str]) -> None:
     if '"-Syu"' in setup:
         errors.append("Docker bootstrap must not trigger a full Arch system upgrade")
 
+    install_services = setup.split("fn install_gitrun_service_definitions", 1)[1].split("fn start_gitrun_services", 1)[0]
+    start_services = setup.split("fn start_gitrun_services", 1)[1].split("fn stop_gitrun_services", 1)[0]
+    if "ensure_runit_service_link(service)" in install_services:
+        errors.append("runit service links must not be enabled while setup is still writing configuration")
+    if "ensure_runit_service_link(service)" not in start_services:
+        errors.append("runit service links must be created only in the service-start phase")
+
 
 def check_updater_native_package_contract(errors: list[str]) -> None:
     updater = (ROOT / "crates/gitrun-updater/src/lib.rs").read_text(encoding="utf-8")

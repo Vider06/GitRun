@@ -731,7 +731,7 @@ fn update_check(version: &str, policy: UpdatePolicyChoice, target: &str) -> Upda
             Ok(plan) => UpdateCheckInfo {
                 checked: true,
                 available: true,
-                selected_version: Some(resolved.release.version),
+                selected_version: Some(resolved.release.version.clone()),
                 release_type: Some(resolved.release.release_type.as_str().into()),
                 artifact: Some(plan.artifact),
                 detail: format!("{} release {} is selected by policy {}.",

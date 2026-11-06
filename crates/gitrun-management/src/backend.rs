@@ -4374,7 +4374,7 @@ pub fn management_write(
             Ok(serde_json::json!({ "ok": true }))
         }
         "updater_settings_save" => {
-            management_value(updater::local_settings_save(management_arg(&args, "policy")?.as_str())?)
+            management_value(updater::local_settings_save(&management_arg::<String>(&args, "policy")?)?)
         }
         "config_save" => {
             save_config(management_arg(&args, "updated")?)?;

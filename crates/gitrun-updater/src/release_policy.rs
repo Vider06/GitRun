@@ -256,7 +256,7 @@ mod tests {
     fn update_policies_accept_exact_release_sets() {
         assert!(UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Security));
         assert!(!UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Full));
-        assert!(!UpdatePolicy::SecurityOnly.accepts(ReleaseType::Pre));
+        assert!(!UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Pre));
         assert!(UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Full));
         assert!(UpdatePolicy::SecurityFull.accepts(ReleaseType::Security));
         assert!(!UpdatePolicy::SecurityFull.accepts(ReleaseType::Pre));

@@ -4221,84 +4221,23 @@ fn run_updater_payload_as_root(command_name: &str, payload: &[u8]) -> Result<(),
     result
 }
 
-/// Read the shared updater policy. Protected installations route through the
-/// fixed Control Manager IPC rather than exposing updater state files to the UI.
+/// Read the shared updater policy through the updater-owned state API.
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_updater_settings() -> Result<UpdaterSettings, String> {
-    if control_manager_enabled() && !current_process_is_root() {
-        let value = control_manager_request("read", "updater_settings", serde_json::json!({}))?;
-        return serde_json::from_value(value)
-            .map_err(|error| format!("decode updater settings from Control Manager: {error}"));
-    }
-    #[cfg(target_os = "linux")]
-    if !current_process_is_root()
-        && trusted_system_cli_path().is_some()
-        && Path::new("/etc/gitrun/gitrun.env").is_file()
-    {
-        let raw = run_privileged_cli_helper("--read-updater-settings-root", &[])?;
-        return serde_json::from_str(raw.trim())
-            .map_err(|error| format!("decode authorized updater settings: {error}"));
-    }
-    updater::current_settings_local()
+    updater::get_updater_settings()
 }
 
 /// Persist the one updater policy consumed by CLI, TUI and GUI.
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_updater_settings(policy: String) -> Result<UpdaterSettings, String> {
-    if control_manager_enabled() && !current_process_is_root() {
-        let value = control_manager_request(
-            "write",
-            "updater_settings_save",
-            serde_json::json!({ "policy": policy }),
-        )?;
-        return serde_json::from_value(value).map_err(|error| {
-            format!("decode saved updater settings from Control Manager: {error}")
-        });
-    }
-    if current_process_is_root() {
-        return updater::local_settings_save(&policy);
-    }
-    #[cfg(target_os = "linux")]
-    if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
-        let payload = serde_json::to_vec(&serde_json::json!({ "policy": policy }))
-            .map_err(|error| error.to_string())?;
-        run_updater_payload_as_root("--save-updater-settings-root", &payload)?;
-        return Ok(UpdaterSettings {
-            schema_version: 1,
-            policy: updater::UpdatePolicyChoice::try_from(policy.as_str())?,
-        });
-    }
-    updater::local_settings_save(&policy)
+    updater::save_updater_settings(&policy)
 }
 
-/// Read local updater diagnostics. The check flag performs a read-only online
-/// release check and never starts an update transaction or acquires its lock.
+/// Read updater diagnostics. The check flag is read-only and does not acquire
+/// the update lifecycle lock.
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_updater_info(check: bool) -> Result<UpdaterInfo, String> {
-    if control_manager_enabled() && !current_process_is_root() {
-        let value = control_manager_request(
-            "read",
-            "updater_info",
-            serde_json::json!({ "check": check }),
-        )?;
-        return serde_json::from_value(value)
-            .map_err(|error| format!("decode updater diagnostics from Control Manager: {error}"));
-    }
-    #[cfg(target_os = "linux")]
-    if !current_process_is_root()
-        && trusted_system_cli_path().is_some()
-        && Path::new("/etc/gitrun/gitrun.env").is_file()
-    {
-        let args = if check {
-            vec!["--check".to_owned()]
-        } else {
-            Vec::new()
-        };
-        let raw = run_privileged_cli_helper("--read-updater-info-root", &args)?;
-        return serde_json::from_str(raw.trim())
-            .map_err(|error| format!("decode authorized updater diagnostics: {error}"));
-    }
-    updater::info_local(check)
+    updater::get_updater_info(check)
 }
 
 /// Persist the result of a CLI update transaction in the shared bounded history.
@@ -4308,33 +4247,7 @@ pub fn record_cli_update_operation(
     release_type: Option<&str>,
     exit_code: i32,
 ) {
-    if control_manager_enabled() && !current_process_is_root() {
-        let _ = control_manager_request(
-            "write",
-            "updater_operation_record",
-            serde_json::json!({
-                "from_version": from_version,
-                "to_version": to_version,
-                "release_type": release_type,
-                "exit_code": exit_code,
-            }),
-        );
-    } else if current_process_is_root() {
-        updater::record_cli_operation(from_version, to_version, release_type, exit_code);
-    } else {
-        #[cfg(target_os = "linux")]
-        {
-            let payload = serde_json::to_vec(&serde_json::json!({
-                "from_version": from_version,
-                "to_version": to_version,
-                "release_type": release_type,
-                "exit_code": exit_code,
-            }));
-            if let Ok(payload) = payload {
-                let _ = run_updater_payload_as_root("--record-updater-operation-root", &payload);
-            }
-        }
-    }
+    updater::record_cli_operation(from_version, to_version, release_type, exit_code);
 }
 
 /// Read live dashboard data from its existing command handlers. Args use

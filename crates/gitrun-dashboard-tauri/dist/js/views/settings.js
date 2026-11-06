@@ -153,55 +153,8 @@ export async function renderGeneral() {
       target.innerHTML = '<div class="notice danger"><div><strong>Update check failed</strong><p>' + esc(error) + '</p></div></div>';
     } finally { button.disabled = false; }
   });
-  document.getElementById("check-updates").addEventListener("click", async () => {
-    const target = document.getElementById("update-result");
-    target.innerHTML = '<div class="notice"><div><strong>Checking updates…</strong>Running the non-installing GitRun update check.</div></div>';
-    try {
-      const result = await invoke("check_gitrun_updates");
-      const runnerUpdateAvailable = result.runner_image_update_available === true;
-      target.innerHTML = '<div class="notice ' + (result.available || runnerUpdateAvailable ? "warn" : result.checked ? "success" : "danger") + '"><div><strong>' + esc(result.title || (result.available ? "Update available" : result.checked ? "GitRun is up to date" : "Update check failed")) + '</strong><p>' + esc(result.detail || result.output || result.error || "No additional details were returned.") + '</p>' +
-        (result.runner_image_status ? '<p><strong>Runner image:</strong> ' + esc(result.runner_image_status) + '</p>' : '') +
-        '<p class="field-hint">Checking is read-only. No downloads or installations occur until an update action is confirmed.</p>' +
-        (runnerUpdateAvailable ? '<button class="btn btn-primary" id="update-permanent-runners">Update eligible permanent runners</button><p class="field-hint">GitRun itself is not replaced by this action. Busy permanent runners are left untouched and can be retried during a later GTUU run.</p>' : '') +
-        '</div></div>';
-      if (!result.checked) toast("Update check did not complete.", "warning");
-      if (runnerUpdateAvailable) {
-        document.getElementById("update-permanent-runners").addEventListener("click", async () => {
-          const accepted = await confirmModal(
-            "Update the permanent runner image?",
-            "GitRun will fetch and verify the signed release manifest, download the matching runner image digest, update the configured image, and reconcile eligible permanent containers. Busy runners are not stopped; they remain on their current image until a later GTUU run. GitRun itself is not updated by this operation.",
-            "Update eligible runners",
-            true
-          );
-          if (!accepted) return;
-          const action = document.getElementById("update-permanent-runners");
-          action.disabled = true;
-          const terminal = document.createElement("div");
-          terminal.className = "terminal";
-          terminal.textContent = "Requesting privileged runner update…\n";
-          target.appendChild(terminal);
-          let unlisten = null;
-          try {
-            unlisten = await window.__TAURI__.event.listen("gitrun-setup-progress", (event) => {
-              const item = event.payload || {};
-              if (item.message) {
-                terminal.textContent += String(item.message) + "\n";
-                terminal.scrollTop = terminal.scrollHeight;
-              }
-            });
-            await invoke("update_permanent_runners");
-            toast("Runner update/reconciliation completed.");
-            terminal.textContent += "\nOperation completed. Review the output above for per-container results.";
-          } catch (error) {
-            terminal.textContent += "\nERROR: " + String(error);
-            toast("Runner update failed: " + error, "error");
-          } finally {
-            if (unlisten) await unlisten();
-            action.disabled = false;
-          }
-        });
-      }
-    } catch (error) { target.innerHTML = '<div class="notice danger"><div><strong>Update check failed</strong>' + esc(error) + '</div></div>'; }
+  document.getElementById("check-updates").addEventListener("click", () => {
+    document.getElementById("check-policy-updates")?.click();
   });
   setFooter("Settings loaded · " + new Date().toLocaleTimeString());
 }

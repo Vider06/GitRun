@@ -89,15 +89,29 @@ def release_migration_loopback_lines(source_lines: list[str]) -> set[int]:
         for index, line in enumerate(source_lines, start=1)
         if RELEASE_SUPPRESSION_MARKER in line
     }
-    if len(marked) != 6:
+    marked_text = [source_lines[index - 1] for index in sorted(marked)]
+
+    # The workflow deliberately tests both the legacy 1.8.23 updater and the
+    # current 1.9.1 updater. Each has its own URL validator, while only the
+    # legacy fixture carries the two manifest/artifact URL guards. Derive the
+    # marker total from the reviewed operation inventory instead of coupling
+    # the guard to a line count or a stale aggregate.
+    expected_anchor_counts = {
+        RELEASE_LOOPBACK_ANCHORS[0]: 2,  # 1.8.23 and 1.9.1 URL validators
+        RELEASE_LOOPBACK_ANCHORS[1]: 2,  # legacy manifest and artifact URL guards
+        RELEASE_LOOPBACK_ANCHORS[2]: 1,  # ephemeral Python fixture server
+        RELEASE_LOOPBACK_ANCHORS[3]: 1,  # disposable HTTP server launcher
+        RELEASE_LOOPBACK_ANCHORS[4]: 1,  # migration test base URL
+    }
+    expected_marker_count = sum(expected_anchor_counts.values())
+    if len(marked) != expected_marker_count:
         raise ValueError(
-            "Expected six explicitly marked release migration loopback locations; "
-            f"found {len(marked)}."
+            "Expected one explicit suppression marker for each reviewed release "
+            f"migration loopback operation ({expected_marker_count}); found {len(marked)}."
         )
 
-    marked_text = [source_lines[index - 1] for index in sorted(marked)]
-    for anchor in RELEASE_LOOPBACK_ANCHORS:
-        if sum(anchor in line for line in marked_text) != (2 if anchor == RELEASE_LOOPBACK_ANCHORS[1] else 1):
+    for anchor, expected_count in expected_anchor_counts.items():
+        if sum(anchor in line for line in marked_text) != expected_count:
             raise ValueError(
                 "Release migration loopback fixture changed: re-review its semantic anchors."
             )

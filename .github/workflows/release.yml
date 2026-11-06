@@ -746,6 +746,8 @@ jobs:
           mkdir -p "$xbps_stage/usr/libexec/gitrun" \
             "$xbps_stage/etc/sv/gitrun/log" "$xbps_stage/etc/sv/gitrun-gsr/log"
           install -m 0755 packaging/gitrun-service "$xbps_stage/usr/libexec/gitrun/gitrun-service"
+          install -m 0755 packaging/xbps/INSTALL "$xbps_stage/INSTALL"
+          install -m 0755 packaging/xbps/REMOVE "$xbps_stage/REMOVE"
           install -m 0755 packaging/runit/gitrun/run "$xbps_stage/etc/sv/gitrun/run"
           install -m 0755 packaging/runit/gitrun/log/run "$xbps_stage/etc/sv/gitrun/log/run"
           install -m 0755 packaging/runit/gitrun-gsr/run "$xbps_stage/etc/sv/gitrun-gsr/run"
@@ -786,6 +788,10 @@ jobs:
           "$xbps_rindex" -a "$out"/*.xbps
           server_deps="$("$xbps_query" -R --repository="$out" -x "gitrun-server-${VERSION_NUMBER}_1")"
           grep -Fq "$xbps_dep" <<< "$server_deps"
+          install_script="$("$xbps_query" -R --repository="$out" -p install-script -S "gitrun-server-${VERSION_NUMBER}_1")"
+          remove_script="$("$xbps_query" -R --repository="$out" -p remove-script -S "gitrun-server-${VERSION_NUMBER}_1")"
+          grep -Fq "sv restart" <<< "$install_script"
+          grep -Fq "sv down" <<< "$remove_script"
           test "$(find "$out" -maxdepth 1 -type f -name '*.xbps' | wc -l)" -eq 1
           test "$(find "$out" -maxdepth 1 -type f | wc -l)" -ge 3
       - name: Upload immutable target packages

@@ -1765,7 +1765,7 @@ jobs:
               "legacy trust anchor is matched to the release signing key": "test \"$GITRUN_UPDATE_PUBLIC_KEY_HEX\" = \"$legacy_key_hex\"" in release and "test \"$GITRUN_UPDATE_SIGNING_KEY_ID\" = \"$legacy_key_id\"" in release,
               "actual legacy reinstall command is executed": '--no-cat --reinstall-latest-root' in release,
               "legacy updater uses latest manifest resolution": 'latest_manifest_download_url("Vider06/GitRun")' in release,
-              "migration keeps 1.8.23 maintainer scripts": "gitrun-v1.8.23-packaging/packaging/gitrun-postinst" in release,
+              "migration keeps the 1.8.23 postinst and uses a transition-aware prerm": "gitrun-v1.8.23-packaging/packaging/gitrun-postinst" in release and "packaging/gitrun-migration-prerm" in release and "in-favour" in release and "gitrun-server" in release,
               "legacy updater SHA verification": "download_and_verify(" in release and "&artifact.sha256" in release,
               "migration has GTK and GLib build dependencies": all(package in release for package in ["libglib2.0-dev", "libgtk-3-dev", "libwebkit2gtk-4.1-dev"]),
               "migration uses a local staged-payload fixture": "GITRUN_MIGRATION_TEST_BASE_URL" in release and "python3 -m http.server" in release,

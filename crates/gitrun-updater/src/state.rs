@@ -31,7 +31,7 @@ fn updater_state_write_guard() -> Result<UpdaterStateWriteGuard, String> {
     // atomic-replace transaction.
     #[cfg(unix)]
     let process = {
-        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
         let directory = state_dir()?;
         safe_state_dir(&directory, true)?;
         let lock_path = directory.join(".updater-state.lock");
@@ -44,7 +44,10 @@ fn updater_state_write_guard() -> Result<UpdaterStateWriteGuard, String> {
         let metadata = file
             .metadata()
             .map_err(|error| format!("inspect updater process lock: {error}"))?;
-        if !metadata.is_file() || metadata.uid() != unsafe { libc::geteuid() } {
+        if !metadata.is_file()
+            || metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.permissions().mode() & 0o077 != 0
+        {
             return Err("refusing unsafe updater process lock file".into());
         }
         loop {

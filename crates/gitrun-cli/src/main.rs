@@ -3900,19 +3900,33 @@ fn run_update_info(perform_check: bool) -> i32 {
             println!("  Description:      {}", info.policy_description);
             println!("Update lock");
             println!("  Status:           {}", info.lock.status);
-            println!("  Owner PID:        {}", info.lock.owner_pid.map(|pid| pid.to_string()).unwrap_or_else(|| "None".into()));
+            println!(
+                "  Owner PID:        {}",
+                info.lock
+                    .owner_pid
+                    .map(|pid| pid.to_string())
+                    .unwrap_or_else(|| "None".into())
+            );
             println!("  Detail:           {}", info.lock.detail);
             println!("Required services");
             for service in &info.services {
-                println!("  {}: installed={}, active={}", service.name, service.installed, service.active);
+                println!(
+                    "  {}: installed={}, active={}",
+                    service.name, service.installed, service.active
+                );
             }
             println!("Recent operations");
             if info.recent_operations.is_empty() {
                 println!("  None recorded");
             } else {
                 for operation in &info.recent_operations {
-                    println!("  {}: {} -> {} ({})", operation.timestamp, operation.from_version,
-                        operation.to_version.as_deref().unwrap_or("unchanged"), operation.result);
+                    println!(
+                        "  {}: {} -> {} ({})",
+                        operation.timestamp,
+                        operation.from_version,
+                        operation.to_version.as_deref().unwrap_or("unchanged"),
+                        operation.result
+                    );
                     if let Some(error) = operation.error.as_deref() {
                         println!("    Error: {error}");
                     }
@@ -3923,23 +3937,48 @@ fn run_update_info(perform_check: bool) -> i32 {
                 println!("  None recorded");
             } else {
                 for operation in &info.recent_errors {
-                    println!("  {}: {} — {}", operation.timestamp, operation.from_version,
-                        operation.error.as_deref().unwrap_or("unspecified updater error"));
+                    println!(
+                        "  {}: {} — {}",
+                        operation.timestamp,
+                        operation.from_version,
+                        operation
+                            .error
+                            .as_deref()
+                            .unwrap_or("unspecified updater error")
+                    );
                 }
             }
             let mut exit_code = 0;
             if let Some(check_result) = info.check {
                 println!("Release check");
-                println!("  Status:           {}", if check_result.checked { "Completed" } else { "Failed" });
+                println!(
+                    "  Status:           {}",
+                    if check_result.checked {
+                        "Completed"
+                    } else {
+                        "Failed"
+                    }
+                );
                 println!("  Available:        {}", check_result.available);
-                println!("  Selected version: {}", check_result.selected_version.as_deref().unwrap_or("None"));
-                println!("  Release type:     {}", check_result.release_type.as_deref().unwrap_or("None"));
-                println!("  Artifact:         {}", check_result.artifact.as_deref().unwrap_or("None"));
+                println!(
+                    "  Selected version: {}",
+                    check_result.selected_version.as_deref().unwrap_or("None")
+                );
+                println!(
+                    "  Release type:     {}",
+                    check_result.release_type.as_deref().unwrap_or("None")
+                );
+                println!(
+                    "  Artifact:         {}",
+                    check_result.artifact.as_deref().unwrap_or("None")
+                );
                 println!("  Detail:           {}", check_result.detail);
                 if let Some(error) = check_result.error.as_deref() {
                     println!("  Error:            {error}");
                 }
-                if !check_result.checked { exit_code = 1; }
+                if !check_result.checked {
+                    exit_code = 1;
+                }
             }
             println!("No update was installed or modified by this diagnostic command.");
             exit_code

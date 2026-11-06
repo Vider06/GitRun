@@ -2026,20 +2026,36 @@ fn main() {
         }
         Command::ReadUpdaterSettingsRoot => match read_updater_settings_root_command() {
             Ok(()) => 0,
-            Err(error) => { eprintln!("GitRun updater settings read: FAIL — {error}"); 1 }
+            Err(error) => {
+                eprintln!("GitRun updater settings read: FAIL — {error}");
+                1
+            }
         },
-        Command::SaveUpdaterSettingsRoot { input_path } => match save_updater_settings_root_command(&input_path) {
-            Ok(()) => 0,
-            Err(error) => { eprintln!("GitRun updater settings save: FAIL — {error}"); 1 }
-        },
+        Command::SaveUpdaterSettingsRoot { input_path } => {
+            match save_updater_settings_root_command(&input_path) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("GitRun updater settings save: FAIL — {error}");
+                    1
+                }
+            }
+        }
         Command::ReadUpdaterInfoRoot { check } => match read_updater_info_root_command(check) {
             Ok(()) => 0,
-            Err(error) => { eprintln!("GitRun updater diagnostics read: FAIL — {error}"); 1 }
+            Err(error) => {
+                eprintln!("GitRun updater diagnostics read: FAIL — {error}");
+                1
+            }
         },
-        Command::RecordUpdaterOperationRoot { input_path } => match record_updater_operation_root_command(&input_path) {
-            Ok(()) => 0,
-            Err(error) => { eprintln!("GitRun updater operation record: FAIL — {error}"); 1 }
-        },
+        Command::RecordUpdaterOperationRoot { input_path } => {
+            match record_updater_operation_root_command(&input_path) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("GitRun updater operation record: FAIL — {error}");
+                    1
+                }
+            }
+        }
         Command::Rollback { backup_path } => run_rollback(&backup_path, &mut presenter),
         Command::CheckCompatibility { workflow } => {
             run_check_compatibility(workflow.as_deref(), &mut presenter)
@@ -5081,7 +5097,9 @@ fn read_gsr_events_root_command(_limit: usize) -> Result<(), Box<dyn std::error:
 #[cfg(target_os = "linux")]
 #[cfg(target_os = "linux")]
 fn read_updater_settings_root_command() -> Result<(), Box<dyn std::error::Error>> {
-    if !running_as_root() { return Err("reading protected updater settings requires administrator privileges".into()); }
+    if !running_as_root() {
+        return Err("reading protected updater settings requires administrator privileges".into());
+    }
     initialize_system_update_config_path(true);
     let settings = gitrun_management::get_updater_settings()?;
     println!("{}", serde_json::to_string(&settings)?);
@@ -5090,13 +5108,20 @@ fn read_updater_settings_root_command() -> Result<(), Box<dyn std::error::Error>
 
 #[cfg(target_os = "linux")]
 fn save_updater_settings_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    if !running_as_root() { return Err("saving protected updater settings requires administrator privileges".into()); }
-    let requester_uid = std::env::var("PKEXEC_UID").or_else(|_| std::env::var("SUDO_UID"))
-        .ok().and_then(|value| value.parse::<u32>().ok())
+    if !running_as_root() {
+        return Err("saving protected updater settings requires administrator privileges".into());
+    }
+    let requester_uid = std::env::var("PKEXEC_UID")
+        .or_else(|_| std::env::var("SUDO_UID"))
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
         .ok_or("updater settings helper requires a verified requesting user UID")?;
-    let bytes = read_privileged_user_payload(Path::new(input_path), requester_uid, "updater-settings")?;
+    let bytes =
+        read_privileged_user_payload(Path::new(input_path), requester_uid, "updater-settings")?;
     let request: serde_json::Value = serde_json::from_slice(&bytes)?;
-    let policy = request.get("policy").and_then(serde_json::Value::as_str)
+    let policy = request
+        .get("policy")
+        .and_then(serde_json::Value::as_str)
         .ok_or("updater settings payload must contain a policy string")?;
     initialize_system_update_config_path(true);
     gitrun_management::save_updater_settings(policy.to_owned())?;
@@ -5106,42 +5131,79 @@ fn save_updater_settings_root_command(input_path: &str) -> Result<(), Box<dyn st
 
 #[cfg(target_os = "linux")]
 fn read_updater_info_root_command(check: bool) -> Result<(), Box<dyn std::error::Error>> {
-    if !running_as_root() { return Err("reading protected updater diagnostics requires administrator privileges".into()); }
+    if !running_as_root() {
+        return Err(
+            "reading protected updater diagnostics requires administrator privileges".into(),
+        );
+    }
     initialize_system_update_config_path(true);
-    if check { initialize_update_signing_environment(true); }
+    if check {
+        initialize_update_signing_environment(true);
+    }
     let info = gitrun_management::get_updater_info(check)?;
     println!("{}", serde_json::to_string(&info)?);
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
-fn record_updater_operation_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    if !running_as_root() { return Err("recording protected updater history requires administrator privileges".into()); }
-    let requester_uid = std::env::var("PKEXEC_UID").or_else(|_| std::env::var("SUDO_UID"))
-        .ok().and_then(|value| value.parse::<u32>().ok())
+fn record_updater_operation_root_command(
+    input_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("recording protected updater history requires administrator privileges".into());
+    }
+    let requester_uid = std::env::var("PKEXEC_UID")
+        .or_else(|_| std::env::var("SUDO_UID"))
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
         .ok_or("updater history helper requires a verified requesting user UID")?;
-    let bytes = read_privileged_user_payload(Path::new(input_path), requester_uid, "updater-history")?;
+    let bytes =
+        read_privileged_user_payload(Path::new(input_path), requester_uid, "updater-history")?;
     let request: serde_json::Value = serde_json::from_slice(&bytes)?;
-    let from_version = request.get("from_version").and_then(serde_json::Value::as_str)
+    let from_version = request
+        .get("from_version")
+        .and_then(serde_json::Value::as_str)
         .ok_or("updater history payload is missing from_version")?;
-    let to_version = request.get("to_version").and_then(serde_json::Value::as_str);
-    let release_type = request.get("release_type").and_then(serde_json::Value::as_str);
-    let exit_code = request.get("exit_code").and_then(serde_json::Value::as_i64)
-        .and_then(|value| i32::try_from(value).ok()).ok_or("updater history payload has invalid exit_code")?;
+    let to_version = request
+        .get("to_version")
+        .and_then(serde_json::Value::as_str);
+    let release_type = request
+        .get("release_type")
+        .and_then(serde_json::Value::as_str);
+    let exit_code = request
+        .get("exit_code")
+        .and_then(serde_json::Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .ok_or("updater history payload has invalid exit_code")?;
     initialize_system_update_config_path(true);
-    gitrun_management::record_cli_update_operation(from_version, to_version, release_type, exit_code);
+    gitrun_management::record_cli_update_operation(
+        from_version,
+        to_version,
+        release_type,
+        exit_code,
+    );
     println!("GitRun updater operation recorded.");
     Ok(())
 }
 
 #[cfg(not(target_os = "linux"))]
-fn read_updater_settings_root_command() -> Result<(), Box<dyn std::error::Error>> { Err("protected updater settings are Linux-only".into()) }
+fn read_updater_settings_root_command() -> Result<(), Box<dyn std::error::Error>> {
+    Err("protected updater settings are Linux-only".into())
+}
 #[cfg(not(target_os = "linux"))]
-fn save_updater_settings_root_command(_input_path: &str) -> Result<(), Box<dyn std::error::Error>> { Err("protected updater settings are Linux-only".into()) }
+fn save_updater_settings_root_command(_input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    Err("protected updater settings are Linux-only".into())
+}
 #[cfg(not(target_os = "linux"))]
-fn read_updater_info_root_command(_check: bool) -> Result<(), Box<dyn std::error::Error>> { Err("protected updater diagnostics are Linux-only".into()) }
+fn read_updater_info_root_command(_check: bool) -> Result<(), Box<dyn std::error::Error>> {
+    Err("protected updater diagnostics are Linux-only".into())
+}
 #[cfg(not(target_os = "linux"))]
-fn record_updater_operation_root_command(_input_path: &str) -> Result<(), Box<dyn std::error::Error>> { Err("protected updater history is Linux-only".into()) }
+fn record_updater_operation_root_command(
+    _input_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    Err("protected updater history is Linux-only".into())
+}
 
 fn save_config_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {

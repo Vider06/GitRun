@@ -3977,9 +3977,8 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
 }
 
 fn run_update_info(perform_check: bool) -> i32 {
-    let system_install = system_install_paths().is_some();
     if perform_check {
-        initialize_update_signing_environment(system_install);
+        initialize_update_signing_environment(true);
     }
     match gitrun_management::get_updater_info(perform_check) {
         Ok(info) => {
@@ -4090,7 +4089,7 @@ fn run_update_check(manifest_url: Option<&str>) -> i32 {
     // this function never reaches dependency changes, file installation or
     // service restarts.
     let system_install = system_install_paths().is_some();
-    initialize_update_signing_environment(system_install);
+    initialize_update_signing_environment(true);
     initialize_system_update_config_path(system_install);
     let args: Vec<String> = match manifest_url {
         Some(url) => vec!["update".to_owned(), "--check".to_owned(), url.to_owned()],
@@ -4146,8 +4145,8 @@ fn run_update_inner(
     let system_install = system_install_paths().is_some();
     // Signed release manifests are mandatory for both system and developer
     // installs. System installs overwrite caller-provided trust settings; local
-    // installs receive the built-in defaults unless an explicit local override exists.
-    initialize_update_signing_environment(system_install);
+    // installs use the same built-in trust anchor for official releases.
+    initialize_update_signing_environment(true);
     initialize_system_update_config_path(system_install);
 
     if only_containers {

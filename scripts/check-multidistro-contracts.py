@@ -208,8 +208,8 @@ def check_native_init_package_resources(errors: list[str]) -> None:
 
     expected = {
         "packaging/gitrun-service": ("GITHUB_TOKEN|GITRUN_*", "/usr/bin/gitrun"),
-        "packaging/openrc/gitrun": ("#!/sbin/openrc-run", "command_args=\"scheduler\""),
-        "packaging/openrc/gitrun-gsr": ("#!/sbin/openrc-run", "command_args=\"gsr-watchdog\""),
+        "packaging/openrc/gitrun": ("#!/sbin/openrc-run", 'command_args_foreground="scheduler"', "supervisor=supervise-daemon", "respawn_delay=5", "mkdir -p /var/log/gitrun", "need net docker"),
+        "packaging/openrc/gitrun-gsr": ("#!/sbin/openrc-run", 'command_args_foreground="gsr-watchdog"', "supervisor=supervise-daemon", "respawn_delay=5", "mkdir -p /var/log/gitrun", "need gitrun"),
         "packaging/runit/gitrun/run": ("#!/bin/sh", "gitrun-service scheduler"),
         "packaging/runit/gitrun/log/run": ("#!/bin/sh", "svlogd -tt /var/log/gitrun/gitrun"),
         "packaging/runit/gitrun-gsr/run": ("#!/bin/sh", "gitrun-service gsr-watchdog"),

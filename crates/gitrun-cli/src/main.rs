@@ -3992,6 +3992,8 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
 }
 
 fn run_update_info(perform_check: bool) -> i32 {
+    let system_install = system_install_paths().is_some();
+    initialize_system_update_config_path(system_install);
     if perform_check {
         initialize_update_signing_environment(true);
     }

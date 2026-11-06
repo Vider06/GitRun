@@ -1,5 +1,6 @@
 //! GitRun shared management backend.
-//! This crate owns management policy, operations, persistence and the Control Manager.
+//! This crate owns management operations and the Control Manager. Updater policy,
+//! updater state and update history are owned by gitrun-updater.
 //! Tauri is an optional desktop adapter; server and CLI builds do not enable it.
 //! The dashboard enables the optional `desktop` feature and registers these
 //! functions as Tauri commands. Headless consumers call the same validated

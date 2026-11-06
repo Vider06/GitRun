@@ -79,7 +79,7 @@ impl UpdatePolicy {
         }
     }
 
-    fn accepts(self, release_type: ReleaseType) -> bool {
+    pub fn accepts_release_type(self, release_type: ReleaseType) -> bool {
         match self {
             Self::SecurityOnly => release_type == ReleaseType::Security,
             Self::SecurityFull => matches!(release_type, ReleaseType::Security | ReleaseType::Full),
@@ -113,11 +113,11 @@ pub struct PolicyUpdate {
 /// newest compatible release newer than the installed version. This deliberately
 /// does not use /releases/latest because that endpoint excludes GitHub prereleases
 /// and cannot represent the user's release policy.
-pub fn select_release(
+pub fn select_releases(
     repository: &str,
     installed_version: &str,
     policy: UpdatePolicy,
-) -> Result<Option<SelectedRelease>, UpdateError> {
+) -> Result<Vec<SelectedRelease>, UpdateError> {
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(8))
         .timeout(Duration::from_secs(30))
@@ -160,7 +160,7 @@ pub fn select_release(
                     release.tag_name
                 )));
             }
-            if policy.accepts(release_type) {
+            if policy.accepts_release_type(release_type) {
                 candidates.push(SelectedRelease {
                     version: version.to_owned(),
                     release_type,
@@ -175,7 +175,11 @@ pub fn select_release(
     }
 
     candidates.sort_by(|a, b| compare_versions(&b.version, &a.version).unwrap_or(Ordering::Equal));
-    Ok(candidates.into_iter().next())
+    Ok(candidates)
+}
+
+pub fn select_release(repository: &str, installed_version: &str, policy: UpdatePolicy) -> Result<Option<SelectedRelease>, UpdateError> {
+    Ok(select_releases(repository, installed_version, policy)?.into_iter().next())
 }
 
 /// Resolve and cryptographically validate the manifest belonging to the
@@ -219,12 +223,12 @@ mod tests {
 
     #[test]
     fn update_policies_accept_exact_release_sets() {
-        assert!(UpdatePolicy::SecurityOnly.accepts(ReleaseType::Security));
+        assert!(UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Security));
         assert!(!UpdatePolicy::SecurityOnly.accepts(ReleaseType::Full));
         assert!(!UpdatePolicy::SecurityOnly.accepts(ReleaseType::Pre));
-        assert!(UpdatePolicy::SecurityFull.accepts(ReleaseType::Full));
+        assert!(UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Full));
         assert!(UpdatePolicy::SecurityFull.accepts(ReleaseType::Security));
         assert!(!UpdatePolicy::SecurityFull.accepts(ReleaseType::Pre));
-        assert!(UpdatePolicy::SecurityFullPre.accepts(ReleaseType::Pre));
+        assert!(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Pre));
     }
 }

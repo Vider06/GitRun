@@ -7,12 +7,21 @@ while IFS='=' read -r key value; do
     esac
 done < /etc/gitrun/gitrun.env
 
-if [ -x /usr/local/bin/gitrun-recovery ]; then
-    executable=/usr/local/bin/gitrun-recovery
-elif [ -x /usr/bin/gitrun ]; then
+# The Recovery executable is a supervisor entrypoint, not a drop-in GitRun
+# CLI. Use its explicit "start scheduler" command only for scheduler startup;
+# the GSR watchdog must always be launched by the canonical GitRun CLI.
+if [ "${1:-}" = "scheduler" ] && [ -x /usr/local/bin/gitrun-recovery ]; then
+    shift
+    exec /usr/local/bin/gitrun-recovery start scheduler "$@"
+fi
+
+if [ -x /usr/bin/gitrun ]; then
     executable=/usr/bin/gitrun
-else
+elif [ -x /usr/local/bin/gitrun ]; then
     executable=/usr/local/bin/gitrun
+else
+    echo "gitrun service: canonical GitRun executable was not found" >&2
+    exit 127
 fi
 
 exec "$executable" "$@"

@@ -75,7 +75,11 @@ fn updater_state_write_guard() -> Result<UpdaterStateWriteGuard, String> {
 const SETTINGS_FILE: &str = "updater-settings.json";
 const HISTORY_FILE: &str = "updater-history.json";
 const HISTORY_LIMIT: usize = 25;
-const DEFAULT_PUBLIC_KEY_BYTES: [u8; 32] = [17, 204, 158, 175, 1, 71, 218, 218, 64, 127, 253, 52, 151, 194, 206, 188, 225, 125, 25, 94, 33, 192, 96, 48, 193, 226, 225, 220, 104, 143, 65, 241];
+// Public Ed25519 trust anchor, stored as bytes to avoid secret-scanner token heuristics.
+const DEFAULT_PUBLIC_KEY_BYTES: [u8; 32] = [
+    17, 204, 158, 175, 1, 71, 218, 218, 64, 127, 253, 52, 151, 194, 206, 188, 225, 125, 25, 94,
+    33, 192, 96, 48, 193, 226, 225, 220, 104, 143, 65, 241,
+];
 const DEFAULT_PUBLIC_KEY_ID: &str = "gitrun-release-ed25519-v1";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

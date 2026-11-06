@@ -246,6 +246,7 @@ pub fn read_settings_local() -> Result<UpdaterSettings, String> {
 }
 
 pub fn save_settings_local(policy: &str) -> Result<UpdaterSettings, String> {
+    let _write_guard = super::management_settings_write_guard()?;
     let policy = UpdatePolicyChoice::try_from(policy)?;
     let directory = state_dir()?;
     safe_state_dir(&directory, true)?;
@@ -264,6 +265,7 @@ pub fn record_operation(
     result: &str,
     error: Option<&str>,
 ) -> Result<(), String> {
+    let _write_guard = super::management_settings_write_guard()?;
     let directory = state_dir()?;
     safe_state_dir(&directory, true)?;
     let path = directory.join(HISTORY_FILE);

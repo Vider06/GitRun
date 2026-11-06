@@ -735,7 +735,21 @@ jobs:
             test -n "$produced"
             if [[ "$format" == "apk" ]]; then
               apk_contents="$(tar -tzf "$produced")"
-              grep -Eq '(^|/)\.pre-deinstall          done
+              grep -Eq '(^|/)\.pre-deinstall$' <<< "$apk_contents" || {
+                echo "APK package is missing its pre-deinstall service cleanup hook" >&2
+                exit 1
+              }
+              grep -Eq '(^|/)\.post-upgrade$' <<< "$apk_contents" || {
+                echo "APK package is missing its post-upgrade service restart hook" >&2
+                exit 1
+              }
+              if grep -Eq '(^|/)(etc|usr/lib)/systemd/' <<< "$apk_contents"; then
+                echo "APK package must contain OpenRC resources, not systemd units" >&2
+                exit 1
+              fi
+            fi
+            mv "$produced" "$out/GitRun-Server-$VERSION-linux-$cpu-$suffix.$ext"
+          done
 
           # XBPS is used by Void Linux, whose default init system is runit.
           # Build its archive from the neutral stage, never the systemd-enabled

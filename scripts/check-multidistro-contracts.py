@@ -150,8 +150,8 @@ def check_release_package_boundaries(errors: list[str]) -> None:
 
     # Desktop GNU and musl targets are one matrix per lifecycle stage. Keep
     # the four target variants together while preserving distro-specific steps.
-    build_job = release.split("  build-dashboard:\\n", 1)[1].split("  collect:\\n", 1)[0]
-    package_job = release.split("  package-dashboard:\\n", 1)[1].split("  migration-package:\\n", 1)[0]
+    build_job = release.split("  build-dashboard:\n", 1)[1].split("  collect:\n", 1)[0]
+    package_job = release.split("  package-dashboard:\n", 1)[1].split("  migration-package:\n", 1)[0]
     for legacy_job in ("build-dashboard-musl:", "package-dashboard-musl:"):
         if legacy_job in release:
             errors.append(f"Desktop matrix must not be split into the legacy job {legacy_job}")

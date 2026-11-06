@@ -496,7 +496,7 @@ jobs:
           if-no-files-found: error
           retention-days: 3
       - name: Save musl Dashboard Cargo and npm caches
-        if: matrix.kind == 'musl' && (success() && steps.dashboard-cache.outputs.cache-hit != 'true')
+        if: matrix.kind == 'musl' && success() && steps.dashboard-cache-musl.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -889,7 +889,8 @@ jobs:
           path: ${{ runner.temp }}/dashboard-package/*
           if-no-files-found: error
           retention-days: 3
-      - name: Set up pinned Go toolchain for nFPM
+      - name: Set up pinned Go toolchain for nFPM (musl)
+        if: matrix.kind == 'musl'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: "1.26.10"

@@ -220,7 +220,11 @@ fn current_process_is_root() -> bool {
     }
 }
 
-fn command_success_with_timeout(program: &Path, args: &[String], timeout: std::time::Duration) -> bool {
+fn command_success_with_timeout(
+    program: &Path,
+    args: &[String],
+    timeout: std::time::Duration,
+) -> bool {
     let Ok(mut child) = std::process::Command::new(program).args(args).spawn() else {
         return false;
     };
@@ -621,7 +625,11 @@ fn service_snapshot() -> Vec<UpdateServiceStatus> {
                 .is_some_and(|program| {
                     command_success_with_timeout(
                         &program,
-                        &["is-active".into(), "--quiet".into(), "gitrun-control.service".into()],
+                        &[
+                            "is-active".into(),
+                            "--quiet".into(),
+                            "gitrun-control.service".into(),
+                        ],
                         std::time::Duration::from_secs(3),
                     )
                 });

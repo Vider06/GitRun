@@ -124,13 +124,42 @@ pub struct UpdaterInfo {
     pub check: Option<UpdateCheckInfo>,
 }
 
+#[cfg(target_os = "linux")]
+fn validate_privileged_state_path(directory: &Path) -> Result<(), String> {
+    use std::path::Component;
+    if !directory.is_absolute() {
+        return Err("privileged updater state directory must be absolute".into());
+    }
+    let mut prefix = PathBuf::from("/");
+    let mut nearest_existing = prefix.clone();
+    let mut missing_component = false;
+    for component in directory.components() {
+        match component {
+            Component::RootDir => continue,
+            Component::Normal(name) => prefix.push(name),
+            _ => return Err("privileged updater state path contains traversal components".into()),
+        }
+        match std::fs::symlink_metadata(&prefix) {
+            Ok(metadata) => {
+                if missing_component || metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err(format!("unsafe updater state path component: {}", prefix.display()));
+                }
+                nearest_existing = prefix.clone();
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => missing_component = true,
+            Err(error) => return Err(format!("inspect updater state path {}: {error}", prefix.display())),
+        }
+    }
+    gitrun_setup::validate_system_state_directory(&nearest_existing)
+        .map_err(|error| format!("updater state directory is not trusted: {error}"))
+}
+
 fn state_dir() -> Result<PathBuf, String> {
     let config = load_config()?;
     let directory = PathBuf::from(config.state_dir);
     #[cfg(target_os = "linux")]
     if super::current_process_is_root() && Path::new("/etc/gitrun/gitrun.env").is_file() {
-        gitrun_setup::validate_system_state_directory(&directory)
-            .map_err(|error| format!("updater state directory is not trusted: {error}"))?;
+        validate_privileged_state_path(&directory)?;
     }
     Ok(directory)
 }

@@ -1782,7 +1782,7 @@ jobs:
               lib,
               r"    Ok\(format!\(\s*\"https://github\.com/\{\}/releases/latest/download/release-manifest\.json\",\s*repository\.trim_end_matches\('/'\)\s*\)\)",
               """    if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
-              if !base_url.starts_with(&format!("http://{}:", std::net::Ipv4Addr::LOCALHOST)) {
+              if !base_url.starts_with(&format!("{}://{}:", "http", std::net::Ipv4Addr::LOCALHOST)) {
                   return Err(UpdateError::InvalidManifest(
                       "migration test URL must use loopback HTTP".into(),
                   ));
@@ -1802,7 +1802,7 @@ jobs:
               cli,
               r"    let url = format!\(\s*\"https://github\.com/Vider06/GitRun/releases/download/\{\}/\{\}\",\s*version, artifact_name\s*\);",
               """    let url = if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
-              if !base_url.starts_with(&format!("http://{}:", std::net::Ipv4Addr::LOCALHOST)) {
+              if !base_url.starts_with(&format!("{}://{}:", "http", std::net::Ipv4Addr::LOCALHOST)) {
                   return Err("migration test URL must use loopback HTTP".into());
               }
               format!(
@@ -1865,7 +1865,7 @@ jobs:
               updater,
               r'    Ok\(format!\(\s*"https://github\.com/\{\}/releases/latest/download/release-manifest\.json",\s*repository\.trim_end_matches\(\x27/\x27\)\s*\)\)',
               """    if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
-              if !base_url.starts_with(&format!("http://{}:", std::net::Ipv4Addr::LOCALHOST)) {
+              if !base_url.starts_with(&format!("{}://{}:", "http", std::net::Ipv4Addr::LOCALHOST)) {
                   return Err(UpdateError::InvalidManifest(
                       "migration test URL must use loopback HTTP".into(),
                   ));
@@ -1885,7 +1885,7 @@ jobs:
               cli,
               r'    let url = format!\(\s*"https://github\.com/Vider06/GitRun/releases/download/\{\}/\{\}",\s*version, artifact_name\s*\);',
               """    let url = if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
-              if !base_url.starts_with(&format!("http://{}:", std::net::Ipv4Addr::LOCALHOST)) {
+              if !base_url.starts_with(&format!("{}://{}:", "http", std::net::Ipv4Addr::LOCALHOST)) {
                   return Err("migration test URL must use loopback HTTP".into());
               }
               format!(

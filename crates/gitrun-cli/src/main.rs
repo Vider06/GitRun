@@ -438,6 +438,25 @@ fn dependency_snapshot() -> Vec<(String, Option<String>)> {
     .collect()
 }
 
+fn write_updater_privileged_payload(
+    payload: &[u8],
+    label: &str,
+) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let path = std::env::temp_dir().join(format!("gitrun-{label}-{}-{nonce}.json", std::process::id()));
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path)?;
+        file.write_all(payload)?;
+        file.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    std::fs::write(&path, payload)?;
+    Ok(path)
+}
+
 fn updater_root_helper(args: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
     let executable = std::env::current_exe()?;
     let mut command = trusted_privilege_command()?;

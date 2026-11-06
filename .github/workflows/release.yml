@@ -1546,7 +1546,7 @@ jobs:
           if actual_targets != required:
               raise SystemExit(f"Manifest target mismatch; missing={sorted(required - actual_targets)}, unexpected={sorted(actual_targets - required)}")
           if len(items) != len(required): raise SystemExit("Manifest contains duplicate targets")
-          manifest = {"name":"GitRun","version":version,"git_commit":commit,"repository":"Vider06/GitRun","artifacts":items}
+          manifest = {"name":"GitRun","version":version,"release_type":"pre","git_commit":commit,"repository":"Vider06/GitRun","artifacts":items}
           (root/"release-manifest.json").write_text(json.dumps(manifest,indent=2)+"\n",encoding="utf-8")
           PY
       - name: Verify updater target-to-archive mapping
@@ -2288,7 +2288,7 @@ jobs:
           ]
           generated = Path(generated_path).read_text(encoding="utf-8").strip()
           lines += [generated if generated else "_No generated GitHub changelog was available for this tag._", ""]
-          Path(output_path).write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+          Path(output_path).write_text("<!-- GITRUN_RELEASE_TYPE: pre -->\n\n" + "\n".join(lines).rstrip() + "\n", encoding="utf-8")
           PY
           echo "NOTES_FILE=$notes" >> "$GITHUB_ENV"
       - name: Publish all release assets
@@ -2309,7 +2309,7 @@ jobs:
             title="GitRun $VERSION"
           fi
           if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$VERSION" --repo "$GITHUB_REPOSITORY" --title "$title" --notes-file "$NOTES_FILE"
+            gh release edit "$VERSION" --repo "$GITHUB_REPOSITORY" --title "$title" --notes-file "$NOTES_FILE" --prerelease --prerelease
             gh release upload "$VERSION" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else
             gh release create "$VERSION" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \

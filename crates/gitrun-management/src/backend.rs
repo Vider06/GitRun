@@ -4263,7 +4263,10 @@ pub fn save_updater_settings(policy: String) -> Result<UpdaterSettings, String> 
         let payload = serde_json::to_vec(&serde_json::json!({ "policy": policy }))
             .map_err(|error| error.to_string())?;
         run_updater_payload_as_root("--save-updater-settings-root", &payload)?;
-        return get_updater_settings();
+        return Ok(UpdaterSettings {
+            schema_version: 1,
+            policy: updater::UpdatePolicyChoice::try_from(policy.as_str())?,
+        });
     }
     updater::local_settings_save(&policy)
 }

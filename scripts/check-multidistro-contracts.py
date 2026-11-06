@@ -539,7 +539,7 @@ def main() -> int:
         "## Known host-runtime migration debt",
         "",
         "These reviewed legacy references remain and must be migrated to the shared platform layer. "
-        "This guard prevents their spread; it does not certify full OpenRC/runit or non-Debian lifecycle support.",
+        "This guard prevents their spread; it does not certify every package lifecycle, updater, recovery or runner workload across all targets.",
         "",
         *(known or ["- No known direct platform-specific references found."]),
         "",

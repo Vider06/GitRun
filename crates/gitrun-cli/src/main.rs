@@ -443,12 +443,19 @@ fn write_updater_privileged_payload(
     label: &str,
 ) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let path = std::env::temp_dir().join(format!("gitrun-{label}-{}-{nonce}.json", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "gitrun-{label}-{}-{nonce}.json",
+        std::process::id()
+    ));
     #[cfg(unix)]
     {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
-        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path)?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)?;
         file.write_all(payload)?;
         file.sync_all()?;
     }

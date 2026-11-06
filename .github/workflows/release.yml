@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (for example v1.9.0)"
+        description: "Release version (for example v1.9.1)"
         required: true
         type: string
 permissions:
@@ -64,7 +64,7 @@ jobs:
           python3 scripts/check-version-consistency.py
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "version_number=$number" >> "$GITHUB_OUTPUT"
-          if [ "$number" = "1.9.0" ] && [ "$MIGRATION_RELEASE_ENABLED" = "true" ]; then
+          if [ "$number" = "1.9.1" ] && [ "$MIGRATION_RELEASE_ENABLED" = "true" ]; then
             migration_release=true
           else
             migration_release=false
@@ -1097,7 +1097,7 @@ jobs:
           sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dpkg-dev imagemagick
-          test "$VERSION" = v1.9.0
+          test "$VERSION" = v1.9.1
           binary="$GITHUB_WORKSPACE/canonical/gitrun-x86_64-unknown-linux-gnu"
           test -x "$binary"
           root="$RUNNER_TEMP/legacy-deb-root"
@@ -1707,7 +1707,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$VERSION" = v1.9.0
+          test "$VERSION" = v1.9.1
           old="$GITRUN_LEGACY_UPDATER_SOURCE"
 
           key="$RUNNER_TEMP/migration-key.der"
@@ -1831,7 +1831,7 @@ jobs:
             test "$(GITRUN_NO_CAT=1 target/release/gitrun --version --gitrun)" = "GitRun 1.8.23"
           )
 
-          # Build a disposable 1.9.0 updater with a loopback-only transport seam
+          # Build a disposable 1.9.1 updater with a loopback-only transport seam
           # so the second migration transaction is exercised without contacting
           # the public release endpoint. Production package bytes remain unchanged.
           python3 - "$GITHUB_WORKSPACE/crates/gitrun-updater/src/lib.rs" \
@@ -1847,7 +1847,7 @@ jobs:
           def replace_once(source, pattern, replacement, label):
               updated, count = re.subn(pattern, replacement, source, count=1, flags=re.MULTILINE)
               if count != 1:
-                  raise SystemExit(f"Expected one 1.9.0 {label} anchor, found {count}")
+                  raise SystemExit(f"Expected one 1.9.1 {label} anchor, found {count}")
               return updated
 
           updater = replace_once(
@@ -1856,7 +1856,7 @@ jobs:
               """fn is_https_url(url: &reqwest::Url) -> bool {
               url.scheme() == "https"
                   || (url.scheme() == "http"
-                      && url.host_str() == Some("127.0.0.1") /* DevSkim: ignore DS137138 because this HTTP exception exists only in the disposable 1.9.0 migration-test checkout and accepts loopback only. */
+                      && url.host_str() == Some("127.0.0.1") /* DevSkim: ignore DS137138 because this HTTP exception exists only in the disposable 1.9.1 migration-test checkout and accepts loopback only. */
                       && std::env::var("GITRUN_MIGRATION_TEST_BASE_URL").is_ok())
           }""",
               "HTTPS validator",
@@ -1909,7 +1909,7 @@ jobs:
           (
             cd "$GITHUB_WORKSPACE"
             cargo build --locked --release -p gitrun-cli --bin gitrun
-            install -m 0755 target/release/gitrun "$RUNNER_TEMP/gitrun-1.9.0-loopback-test"
+            install -m 0755 target/release/gitrun "$RUNNER_TEMP/gitrun-1.9.1-loopback-test"
           )
 
           legacy_asset="GitRun-$VERSION-linux-x86_64-deb.deb"
@@ -1962,10 +1962,10 @@ jobs:
               );
               let manifest = fetch_manifest(&manifest_url)
                   .expect("legacy updater must verify the release manifest signature");
-              assert_eq!(manifest.version, "v1.9.0");
+              assert_eq!(manifest.version, "v1.9.1");
               let artifact = manifest.artifact_for("linux-x86_64-deb")
                   .expect("legacy reinstall target must exist");
-              assert_eq!(artifact.file, "GitRun-v1.9.0-linux-x86_64-deb.deb");
+              assert_eq!(artifact.file, "GitRun-v1.9.1-linux-x86_64-deb.deb");
 
               let download_url = format!(
                   "{base}/releases/download/{}/{}",
@@ -2004,10 +2004,10 @@ jobs:
           test -x /usr/local/bin/gitrun
           test "$(/usr/local/bin/gitrun --version --gitrun)" = "GitRun $VERSION_NUMBER"
 
-          # Complete the second phase with the newly installed 1.9.0 updater.
+          # Complete the second phase with the newly installed 1.9.1 updater.
           # It must select the native Server DEB, replace the transitional
           # legacy package registration and leave the canonical CLI available.
-          sudo install -m 0755 "$RUNNER_TEMP/gitrun-1.9.0-loopback-test" /usr/bin/gitrun
+          sudo install -m 0755 "$RUNNER_TEMP/gitrun-1.9.1-loopback-test" /usr/bin/gitrun
           sudo env "GITRUN_MIGRATION_TEST_BASE_URL=$base" \
             /usr/bin/gitrun --no-cat --reinstall-latest-root
           test "$(dpkg-query -W -f='${db:Status-Status}' gitrun-server)" = installed
@@ -2239,8 +2239,8 @@ jobs:
               desktop_assets,
           )
           if migration == "true":
-              if version != "v1.9.0":
-                  raise SystemExit("Migration Release allowlist violation: only v1.9.0 may publish the legacy package")
+              if version != "v1.9.1":
+                  raise SystemExit("Migration Release allowlist violation: only v1.9.1 may publish the legacy package")
               if len(migration_assets) != 1:
                   raise SystemExit("Migration Release must contain exactly one legacy Debian artifact")
               lines += [
@@ -2250,10 +2250,10 @@ jobs:
                   "",
                   "This one-time compatibility artifact supports only existing GitRun **1.8.23** installations on **x86_64 GNU/Linux with Debian or Ubuntu (APT)**. "
                   "It preserves the legacy Debian package identity (gitrun), filename and filesystem layout required by the 1.8.23 signed-manifest updater. "
-                  "Its /usr/bin/gitrun payload is the new 1.9.0 Server binary. Other architectures and package managers are outside this migration artifact's support scope.",
+                  "Its /usr/bin/gitrun payload is the new 1.9.1 Server binary. Other architectures and package managers are outside this migration artifact's support scope.",
                   "",
                   "Run gitrun reinstall on the existing 1.8.23 installation. The first transaction installs this transitional package and deliberately retains the legacy gitrun registration. "
-                  "After it completes successfully, run gitrun reinstall a second time; the new 1.9.0 updater then selects the signed GitRun-Server DEB and replaces the legacy package registration. "
+                  "After it completes successfully, run gitrun reinstall a second time; the new 1.9.1 updater then selects the signed GitRun-Server DEB and replaces the legacy package registration. "
                   "The replacement preserves existing systemd service state so the new Server package can reload units and restart services that were active. "
                   "Both transactions are required. Do not use this artifact for a fresh installation; fresh installs must use the GitRun-Server packages above.",
                   "",

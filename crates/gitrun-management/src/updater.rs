@@ -3,9 +3,9 @@
 //! This module is owned by gitrun-management so the GUI, TUI and CLI use one
 //! persistence contract. The update engine remains in gitrun-updater.
 
-use super::{load_config, service_status, current_process_is_root};
+use super::{load_config, service_status};
 use gitrun_platform::{ManagedService, ServiceManager};
-use gitrun_updater::{build_plan, resolve_policy_update, ReleaseType, UpdatePolicy};
+use gitrun_updater::{build_plan, resolve_policy_update, UpdatePolicy};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};

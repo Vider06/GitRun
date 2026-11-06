@@ -3937,17 +3937,15 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
             return 1;
         }
     };
-    let Some((manifest, release_type)) = match resolve_selected_manifest(
-        "Vider06/GitRun", &current, &target, None,
-    ) {
+    let selected = match resolve_selected_manifest("Vider06/GitRun", &current, &target, None) {
         Ok(selected) => selected,
         Err(error) => {
             eprintln!("GitRun fix-update: release selection failed: {error}");
             return 1;
         }
-    } else {
-        println!("GitRun fix-update: no newer release matches the active {} policy",
-            gitrun_management::get_updater_settings().map(|settings| settings.policy.as_str().to_owned()).unwrap_or_else(|_| "unknown".into()));
+    };
+    let Some((manifest, release_type)) = selected else {
+        println!("GitRun fix-update: no newer release matches the active updater policy.");
         return if let Err(error) = verify_post_update_doctor(&installed_binary) {
             eprintln!("GitRun fix-update: final doctor verification failed: {error}");
             1

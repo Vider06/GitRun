@@ -125,7 +125,7 @@ def check_release_package_boundaries(errors: list[str]) -> None:
         "release",
     )
     for job in expected_jobs:
-        count = release.count(f"\\n  {job}:\\n")
+        count = release.count(f"\n  {job}:\n")
         if count != 1:
             errors.append(f"release workflow must declare {job} exactly once; found {count}")
 

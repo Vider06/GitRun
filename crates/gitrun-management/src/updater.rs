@@ -134,12 +134,11 @@ fn safe_state_dir(path: &Path, create: bool) -> Result<(), String> {
         std::fs::create_dir_all(path)
             .map_err(|error| format!("create updater state directory: {error}"))?;
     }
-    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
-        format!(
-            "inspect updater state directory {}: {error}",
-            path.display()
-        )
-    })?;
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if !create && error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("inspect updater state directory {}: {error}", path.display())),
+    };
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(format!(
             "refusing unsafe updater state directory: {}",
@@ -220,7 +219,10 @@ fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<(), String> 
 }
 
 pub fn read_settings_local() -> Result<UpdaterSettings, String> {
-    let directory = state_dir()?;
+    let directory = match state_dir() {
+        Ok(directory) => directory,
+        Err(_) => return Ok(UpdaterSettings::default()),
+    };
     safe_state_dir(&directory, false)?;
     let settings: UpdaterSettings = read_json(&directory.join(SETTINGS_FILE))?;
     if settings.schema_version != 1 {
@@ -427,7 +429,6 @@ fn package_abi(target: &str) -> String {
 
 fn service_snapshot() -> Vec<UpdateServiceStatus> {
     let (scheduler_installed, scheduler_active, _) = service_status(ManagedService::Scheduler);
-    let (gsr_installed, gsr_active, _) = service_status(ManagedService::Gsr);
     let manager = gitrun_platform::detect_service_manager();
     let (control_installed, control_active) = if manager == Some(ServiceManager::Systemd) {
         let installed = [
@@ -454,11 +455,6 @@ fn service_snapshot() -> Vec<UpdateServiceStatus> {
             name: "Scheduler".into(),
             installed: scheduler_installed,
             active: scheduler_active,
-        },
-        UpdateServiceStatus {
-            name: "GSR watchdog".into(),
-            installed: gsr_installed,
-            active: gsr_active,
         },
         UpdateServiceStatus {
             name: "Control Manager".into(),
@@ -519,7 +515,7 @@ fn update_check(version: &str, policy: UpdatePolicyChoice, target: &str) -> Upda
 }
 
 pub fn info_local(check: bool) -> Result<UpdaterInfo, String> {
-    let directory = state_dir()?;
+    let directory = state_dir().unwrap_or_else(|_| PathBuf::from("/var/lib/gitrun"));
     safe_state_dir(&directory, false)?;
     let settings = read_settings_local()?;
     let target = if std::env::consts::OS == "linux" {

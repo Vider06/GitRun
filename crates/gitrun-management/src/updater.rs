@@ -367,13 +367,16 @@ fn package_type() -> String {
             return value;
         }
     }
+    if Path::new("/var/lib/dpkg/info/gitrun-server.list").is_file() {
+        return "deb (gitrun-server)".into();
+    }
     if Path::new("/var/lib/dpkg/info/gitrun.list").is_file() {
-        return "deb".into();
+        return "deb (gitrun)".into();
     }
     if Path::new("/var/lib/apk/db/installed").is_file() {
         if std::fs::read_to_string("/var/lib/apk/db/installed")
             .ok()
-            .is_some_and(|raw| raw.lines().any(|line| line == "P:gitrun"))
+            .is_some_and(|raw| raw.lines().any(|line| matches!(line, "P:gitrun-server" | "P:gitrun")))
         {
             return "apk".into();
         }
@@ -384,7 +387,7 @@ fn package_type() -> String {
             .is_some_and(|entries| {
                 entries
                     .filter_map(Result::ok)
-                    .any(|entry| entry.file_name().to_string_lossy().starts_with("gitrun-"))
+                    .any(|entry| entry.file_name().to_string_lossy().starts_with("gitrun-server-") || entry.file_name().to_string_lossy().starts_with("gitrun-"))
             })
         {
             return "pkg.tar.zst".into();
@@ -404,12 +407,20 @@ fn package_type() -> String {
     }
     if Path::new("/var/lib/rpm").exists() || Path::new("/usr/lib/sysimage/rpm").exists() {
         if std::process::Command::new("/usr/bin/rpm")
+            .args(["-q", "gitrun-server"])
+            .output()
+            .ok()
+            .is_some_and(|output| output.status.success())
+        {
+            return "rpm (gitrun-server)".into();
+        }
+        if std::process::Command::new("/usr/bin/rpm")
             .args(["-q", "gitrun"])
             .output()
             .ok()
             .is_some_and(|output| output.status.success())
         {
-            return "rpm".into();
+            return "rpm (gitrun)".into();
         }
     }
     if Path::new("/usr/bin/gitrun").is_file() || Path::new("/usr/local/bin/gitrun").is_file() {

@@ -733,6 +733,3089 @@ jobs:
             esac
             produced="$(find "$out" -maxdepth 1 -type f -name "gitrun*.$ext" -print -quit)"
             test -n "$produced"
+            if [[ "$format" == "apk" ]]; then
+              apk_contents="$(tar -tzf "$produced")"
+              grep -Eq '(^|/)\.pre-deinstall          done
+
+          # XBPS is used by Void Linux, whose default init system is runit.
+          # Build its archive from the neutral stage, never the systemd-enabled
+          # package stage shared by DEB, RPM and Arch.
+          xbps_stage="$RUNNER_TEMP/xbps-stage"
+          rm -rf "$xbps_stage"
+          cp -a "$stage" "$xbps_stage"
+          mkdir -p "$xbps_stage/usr/libexec/gitrun" \
+            "$xbps_stage/etc/sv/gitrun/log" "$xbps_stage/etc/sv/gitrun-gsr/log"
+          install -m 0755 packaging/gitrun-service "$xbps_stage/usr/libexec/gitrun/gitrun-service"
+          install -m 0755 packaging/runit/gitrun/run "$xbps_stage/etc/sv/gitrun/run"
+          install -m 0755 packaging/runit/gitrun/log/run "$xbps_stage/etc/sv/gitrun/log/run"
+          install -m 0755 packaging/runit/gitrun-gsr/run "$xbps_stage/etc/sv/gitrun-gsr/run"
+          install -m 0755 packaging/runit/gitrun-gsr/log/run "$xbps_stage/etc/sv/gitrun-gsr/log/run"
+          xbps_root="$RUNNER_TEMP/xbps"
+          mkdir -p "$xbps_root"
+          curl --fail --silent --show-error --location \
+            "https://repo-default.voidlinux.org/static/xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz" \
+            -o "$RUNNER_TEMP/xbps-static.tar.xz"
+          tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
+          xbps_create="$xbps_root/usr/bin/xbps-create"
+          xbps_rindex="$xbps_root/usr/bin/xbps-rindex"
+          xbps_query="$xbps_root/usr/bin/xbps-query"
+          test -x "$xbps_create" && test -x "$xbps_rindex" && test -x "$xbps_query"
+          export XBPS_ARCH="$xbps_arch"
+          (cd "$out" && "$xbps_create" -A "$xbps_arch" -n "gitrun-server-${VERSION_NUMBER}_1" \
+            -D "$xbps_dep" -H https://github.com/Vider06/GitRun \
+            -l Apache-2.0 -m Vider06 -s "GitRun headless server" "$xbps_stage")
+          xbps_file="$(find "$out" -maxdepth 1 -type f -name 'gitrun-*.xbps' -print -quit)"
+          test -n "$xbps_file"
+          test -s "$xbps_file"
+          xbps_contents="$(tar -tf "$xbps_file")"
+          for required in \
+            ./usr/libexec/gitrun/gitrun-service \
+            ./etc/sv/gitrun/run ./etc/sv/gitrun/log/run \
+            ./etc/sv/gitrun-gsr/run ./etc/sv/gitrun-gsr/log/run; do
+            grep -Fqx "$required" <<< "$xbps_contents" || {
+              echo "XBPS package is missing runit resource: $required" >&2
+              exit 1
+            }
+          done
+          if grep -Eq '^\./(etc|usr/lib)/systemd/' <<< "$xbps_contents"; then
+            echo "XBPS package must contain runit resources, not systemd units" >&2
+            exit 1
+          fi
+          mv "$xbps_file" "$out/GitRun-Server-$VERSION-linux-$cpu-xbps.xbps"
+          # Indexing the local repository parses the XBPS archive and validates its metadata.
+          "$xbps_rindex" -a "$out"/*.xbps
+          server_deps="$("$xbps_query" -R --repository="$out" -x "gitrun-server-${VERSION_NUMBER}_1")"
+          grep -Fq "$xbps_dep" <<< "$server_deps"
+          test "$(find "$out" -maxdepth 1 -type f -name '*.xbps' | wc -l)" -eq 1
+          test "$(find "$out" -maxdepth 1 -type f | wc -l)" -ge 3
+      - name: Upload immutable target packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: server-packages-${{ matrix.target }}
+          path: ${{ runner.temp }}/server-packages/*
+          if-no-files-found: error
+          retention-days: 3
+
+  package-dashboard:
+    name: Package independent Desktop · ${{ matrix.target }}
+    needs: [prepare, collect]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            arch: x86_64
+            package_arch: amd64
+            kind: gnu
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            arch: aarch64
+            package_arch: arm64
+            kind: gnu
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            arch: x86_64
+            package_arch: amd64
+            kind: musl
+            target_triple: x86_64-unknown-linux-musl
+            xbps_static_arch: x86_64
+            xbps_arch: x86_64-musl
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            arch: aarch64
+            package_arch: arm64
+            kind: musl
+            target_triple: aarch64-unknown-linux-musl
+            xbps_static_arch: aarch64
+            xbps_arch: aarch64-musl
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+      TARGET: ${{ matrix.target_triple || matrix.target }}
+      DESKTOP_ARCH: ${{ matrix.arch }}
+      PACKAGE_ARCH: ${{ matrix.package_arch }}
+      XBPS_ARCH: ${{ matrix.xbps_arch }}
+      XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}
+    steps:
+      - name: Checkout packaging metadata
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Download canonical Dashboard build
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: canonical-release-inputs
+          path: canonical
+      - name: Install package inspection tools
+        if: matrix.kind == 'gnu'
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm zstd
+      - name: Set up pinned Go toolchain for nFPM (GNU)
+        if: matrix.kind == 'gnu'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.26.10"
+          check-latest: false
+          cache: false
+      - name: Create separate Dashboard DEB
+        if: matrix.kind == 'gnu'
+        shell: bash
+        run: |
+          set -euo pipefail
+          appimage="$GITHUB_WORKSPACE/canonical/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH.AppImage"
+          test -s "$appimage"
+          stage="$RUNNER_TEMP/dashboard-stage"
+          out="$RUNNER_TEMP/dashboard-package"
+          rm -rf "$stage" "$out"
+          mkdir -p "$stage/opt/gitrun-desktop" "$stage/usr/share/applications" "$out"
+          install -m 0755 "$appimage" "$stage/opt/gitrun-desktop/GitRun.AppImage"
+          cat > "$stage/usr/share/applications/gitrun-desktop.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=GitRun Desktop
+          Comment=GitRun desktop management interface
+          Exec=/opt/gitrun-desktop/GitRun.AppImage
+          Terminal=false
+          Categories=Development;System;
+          DESKTOP
+          command -v go >/dev/null
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          cat > "$RUNNER_TEMP/dashboard-nfpm.yaml" <<NFPM
+          name: gitrun-desktop
+          arch: $PACKAGE_ARCH
+          platform: linux
+          version: $VERSION_NUMBER
+          maintainer: Vider06
+          description: GitRun Tauri Dashboard, independently installable from the server
+          license: Apache-2.0
+          depends: [libwebkit2gtk-4.1-0, policykit-1]
+          overrides:
+            rpm:
+              depends: ["(webkit2gtk4.1 or libwebkit2gtk-4_1-0)", polkit]
+            archlinux:
+              depends: [webkit2gtk-4.1, polkit]
+          contents:
+            - src: $stage/opt/gitrun-desktop/GitRun.AppImage
+              dst: /opt/gitrun-desktop/GitRun.AppImage
+              file_info:
+                mode: 0755
+            - src: $stage/usr/share/applications/gitrun-desktop.desktop
+              dst: /usr/share/applications/gitrun-desktop.desktop
+          NFPM
+          config="$RUNNER_TEMP/dashboard-nfpm.yaml"
+          nfpm package --config "$config" --packager deb --target "$out"
+          deb="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop_*.deb' -print -quit)"
+          test -n "$deb"
+          mv "$deb" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb"
+          test "$(dpkg-deb -f "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb" Package)" = gitrun-desktop
+
+          nfpm package --config "$config" --packager rpm --target "$out"
+          rpm="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.rpm' -print -quit)"
+          test -n "$rpm"
+          mv "$rpm" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm"
+          test "$(rpm -qp --queryformat '%{NAME}' "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm")" = gitrun-desktop
+          rpm_requires="$(rpm -qp --requires "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm")"
+          grep -Fq webkit2gtk4.1 <<< "$rpm_requires"
+          grep -Fq libwebkit2gtk-4_1-0 <<< "$rpm_requires"
+
+          nfpm package --config "$config" --packager archlinux --target "$out"
+          arch="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.pkg.tar.zst' -print -quit)"
+          test -n "$arch"
+          mv "$arch" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst"
+          arch_pkginfo="$(tar --zstd -xOf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst" .PKGINFO)"
+          grep -Fq 'pkgname = gitrun-desktop' <<< "$arch_pkginfo"
+          grep -Fq 'depend = webkit2gtk-4.1' <<< "$arch_pkginfo"
+      - name: Upload separate Dashboard package
+        if: matrix.kind == 'gnu'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dashboard-package-${{ matrix.target }}
+          path: ${{ runner.temp }}/dashboard-package/*
+          if-no-files-found: error
+          retention-days: 3
+      - name: Set up pinned Go toolchain for nFPM (musl)
+        if: matrix.kind == 'musl'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.26.10"
+          check-latest: false
+          cache: false
+      - name: Build musl APK and XBPS packages
+        if: matrix.kind == 'musl'
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="$GITHUB_WORKSPACE/canonical/GitRun-Desktop-$VERSION-$TARGET.bin"
+          test -s "$binary"
+          stage="$RUNNER_TEMP/dashboard-musl-stage"
+          out="$RUNNER_TEMP/dashboard-package"
+          rm -rf "$stage" "$out"
+          mkdir -p "$stage/usr/bin" "$stage/usr/share/applications" "$out"
+          install -m 0755 "$binary" "$stage/usr/bin/gitrun-desktop"
+          cat > "$stage/usr/share/applications/gitrun-desktop.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=GitRun Desktop
+          Comment=GitRun desktop management interface
+          Exec=/usr/bin/gitrun-desktop
+          Terminal=false
+          Categories=Development;System;
+          DESKTOP
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          cat > "$RUNNER_TEMP/dashboard-musl-nfpm.yaml" <<NFPM
+          name: gitrun-desktop
+          arch: $PACKAGE_ARCH
+          platform: linux
+          version: $VERSION_NUMBER
+          maintainer: Vider06
+          description: GitRun Tauri Dashboard for musl Linux, independently installable from the server
+          license: Apache-2.0
+          depends: [musl]
+          overrides:
+            apk:
+              depends: [musl, webkit2gtk-4.1, polkit]
+          contents:
+            - src: $stage/usr/bin/gitrun-desktop
+              dst: /usr/bin/gitrun-desktop
+              file_info:
+                mode: 0755
+            - src: $stage/usr/share/applications/gitrun-desktop.desktop
+              dst: /usr/share/applications/gitrun-desktop.desktop
+          NFPM
+          if [ "$DESKTOP_ARCH" = "x86_64" ]; then
+            nfpm package --config "$RUNNER_TEMP/dashboard-musl-nfpm.yaml" --packager apk --target "$out"
+            apk="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop*.apk' -print -quit)"
+            test -n "$apk"
+            mv "$apk" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk"
+            apk_contents="$(tar -tzf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk")"
+            grep -Fq '.PKGINFO' <<< "$apk_contents"
+          fi
+
+          xbps_stage="$RUNNER_TEMP/dashboard-xbps-stage"
+          cp -a "$stage" "$xbps_stage"
+          xbps_root="$RUNNER_TEMP/xbps-static"
+          mkdir -p "$xbps_root"
+          curl --fail --silent --show-error --location \
+            "https://repo-default.voidlinux.org/static/xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz" \
+            -o "$RUNNER_TEMP/xbps-static.tar.xz"
+          tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
+          xbps_create="$xbps_root/usr/bin/xbps-create"
+          xbps_rindex="$xbps_root/usr/bin/xbps-rindex"
+          xbps_query="$xbps_root/usr/bin/xbps-query"
+          test -x "$xbps_create" && test -x "$xbps_rindex" && test -x "$xbps_query"
+          (cd "$out" && "$xbps_create" -A "$XBPS_ARCH" \
+            -n "gitrun-desktop-${VERSION_NUMBER}_1" -D "musl libwebkit2gtk41 polkit" \
+            -H https://github.com/Vider06/GitRun -l Apache-2.0 -m Vider06 \
+            -s "GitRun Desktop for musl Linux" "$xbps_stage")
+          xbps="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop*.xbps' -print -quit)"
+          test -n "$xbps"
+          mv "$xbps" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-xbps.xbps"
+          "$xbps_rindex" -a "$out"/*.xbps
+          desktop_deps="$("$xbps_query" -R --repository="$out" -x "gitrun-desktop-${VERSION_NUMBER}_1")"
+          grep -Fq musl <<< "$desktop_deps"
+          grep -Fq libwebkit2gtk41 <<< "$desktop_deps"
+          grep -Fq polkit <<< "$desktop_deps"
+      - name: Upload musl Desktop packages
+        if: matrix.kind == 'musl'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dashboard-package-${{ matrix.target }}
+          path: ${{ runner.temp }}/dashboard-package/*
+          if-no-files-found: error
+          retention-days: 3
+
+  migration-package:
+    name: Build optional compatibility package
+    needs: [prepare, collect]
+    if: needs.prepare.outputs.migration_release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+    steps:
+      - name: Checkout legacy packaging inputs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Download new Server binary
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: canonical-release-inputs
+          path: canonical
+      - name: Restore canonical binary permissions
+        run: |
+          set -euo pipefail
+          chmod 0755 canonical/gitrun-x86_64-unknown-linux-gnu
+      - name: Checkout exact 1.8.23 packaging contract
+        run: git clone --quiet --depth 1 --branch v1.8.23 "https://github.com/$GITHUB_REPOSITORY.git" "$RUNNER_TEMP/gitrun-v1.8.23-packaging"
+      - name: Assemble legacy-layout migration package
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dpkg-dev imagemagick
+          test "$VERSION" = v1.9.0
+          binary="$GITHUB_WORKSPACE/canonical/gitrun-x86_64-unknown-linux-gnu"
+          test -x "$binary"
+          root="$RUNNER_TEMP/legacy-deb-root"
+          out="$RUNNER_TEMP/migration-package"
+          rm -rf "$root" "$out"
+          mkdir -p "$root/DEBIAN" "$root/usr/bin" "$root/usr/libexec/gitrun" \
+            "$root/usr/share/gitrun" "$root/usr/share/doc/gitrun" "$root/usr/share/applications" "$out"
+          cat > "$root/DEBIAN/control" <<CONTROL
+          Package: gitrun
+          Version: $VERSION_NUMBER
+          Section: devel
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Vider06
+          Description: GitRun self-hosted GitHub Actions runner manager
+           One-time migration package for existing GitRun 1.8.23 installations.
+          CONTROL
+          install -m 0755 "$binary" "$root/usr/bin/gitrun"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/scripts/reinstall-latest.sh" "$root/usr/libexec/gitrun/reinstall-latest.sh"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/scripts/uninstall.sh" "$root/usr/libexec/gitrun/uninstall.sh"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/packaging/gitrun-prerm" "$root/DEBIAN/prerm"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/packaging/gitrun-postinst" "$root/DEBIAN/postinst"
+          sh -n "$root/DEBIAN/prerm"
+          sh -n "$root/DEBIAN/postinst"
+          install -m 0644 version.txt "$root/usr/share/gitrun/version.txt"
+          install -m 0644 LICENSE "$root/usr/share/doc/gitrun/LICENSE"
+          install -m 0644 README.md "$root/usr/share/doc/gitrun/README.md"
+          install -m 0644 config/config.example.env "$root/usr/share/doc/gitrun/config.example.env"
+          install -m 0644 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/packaging/gitrun.desktop" "$root/usr/share/applications/gitrun.desktop"
+          for size in 32 64 128 256 512; do
+            source="$RUNNER_TEMP/gitrun-v1.8.23-packaging/assets/gitrun-icon-$size.png"
+            destination="$root/usr/share/icons/hicolor/${size}x${size}/apps/gitrun.png"
+            test -s "$source"
+            mkdir -p "$(dirname "$destination")"
+            convert "$source" -alpha on -define png:color-type=6 "PNG32:$destination"
+          done
+          artifact="GitRun-$VERSION-linux-x86_64-deb.deb"
+          dpkg-deb --build --root-owner-group "$root" "$out/$artifact" >/dev/null
+          test "$(dpkg-deb -f "$out/$artifact" Package)" = gitrun
+          test "$(dpkg-deb -f "$out/$artifact" Version)" = "$VERSION_NUMBER"
+          dpkg-deb -x "$out/$artifact" "$RUNNER_TEMP/legacy-package-inspect"
+          test -x "$RUNNER_TEMP/legacy-package-inspect/usr/bin/gitrun"
+          test -x "$RUNNER_TEMP/legacy-package-inspect/usr/libexec/gitrun/reinstall-latest.sh"
+      - name: Upload legacy migration package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: migration-deb-linux-x86_64
+          path: ${{ runner.temp }}/migration-package/*
+          if-no-files-found: error
+          retention-days: 3
+
+  validate:
+    name: Validate collected package matrix
+    needs: [prepare, collect, package-server, package-dashboard, migration-package]
+    if: always() && needs.prepare.result == 'success' && needs.collect.result == 'success' && needs.package-server.result == 'success' && needs.package-dashboard.result == 'success' && (needs.migration-package.result == 'success' || (needs.prepare.outputs.migration_release != 'true' && needs.migration-package.result == 'skipped'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+      MIGRATION_RELEASE: ${{ needs.prepare.outputs.migration_release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Download collected canonical inputs
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: canonical-release-inputs
+          path: all-assets
+      - name: Download all Server package targets
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          pattern: server-packages-*
+          path: all-assets
+          merge-multiple: true
+      - name: Download independent Dashboard package
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          pattern: dashboard-package-*
+          path: all-assets
+          merge-multiple: true
+      - name: Download one-off legacy migration package
+        if: env.MIGRATION_RELEASE == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: migration-deb-linux-x86_64
+          path: all-assets
+      - name: Stage publishable release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          mapfile -d '' -t release_binaries < <(find all-assets -maxdepth 1 -type f -name 'GitRun-*' -print0)
+          if ((${#release_binaries[@]} == 0)); then
+            echo "No GitRun release artifacts were staged" >&2
+            exit 1
+          fi
+          cp -- "${release_binaries[@]}" release-assets/
+          cp all-assets/library.zip all-assets/cargo-metadata.json all-assets/sbom.spdx.json all-assets/provenance.json release-assets/
+          # GitHub artifact ZIP downloads normalize regular files to 0644.
+          # Restore executable modes for the standalone Desktop payloads before validation/publication.
+          find release-assets -maxdepth 1 -type f \
+            \( -name 'GitRun-Desktop-*.AppImage' -o -name 'GitRun-Desktop-*-unknown-linux-musl.bin' \) \
+            -exec chmod 0755 {} +
+          for executable in \
+            "release-assets/GitRun-Desktop-$VERSION-linux-x86_64.AppImage" \
+            "release-assets/GitRun-Desktop-$VERSION-linux-aarch64.AppImage" \
+            "release-assets/GitRun-Desktop-$VERSION-x86_64-unknown-linux-musl.bin" \
+            "release-assets/GitRun-Desktop-$VERSION-aarch64-unknown-linux-musl.bin"; do
+            test -s "$executable"
+            test -x "$executable"
+          done
+      - name: Install release verification tools
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq zstd unzip zip rpm
+      - name: Verify required artifacts and create checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/release-assets"
+          expected_files=()
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            expected_files+=("GitRun-Server-$VERSION-$target-server.tar.gz" "GitRun-Server-$VERSION-$target-server.tar.zst")
+            test -s "$root/GitRun-Server-$VERSION-$target-server.tar.gz"
+            test -s "$root/GitRun-Server-$VERSION-$target-server.tar.zst"
+          done
+          for file in \
+            "GitRun-Server-$VERSION-linux-x86_64-deb.deb" \
+            "GitRun-Server-$VERSION-linux-aarch64-deb.deb" \
+            "GitRun-Server-$VERSION-linux-x86_64-rpm.rpm" \
+            "GitRun-Server-$VERSION-linux-aarch64-rpm.rpm" \
+            "GitRun-Server-$VERSION-linux-x86_64-musl-apk.apk" \
+            "GitRun-Server-$VERSION-linux-aarch64-musl-apk.apk" \
+            "GitRun-Server-$VERSION-linux-x86_64-arch.pkg.tar.zst" \
+            "GitRun-Server-$VERSION-linux-aarch64-arch.pkg.tar.zst" \
+            "GitRun-Server-$VERSION-linux-x86_64-xbps.xbps" \
+            "GitRun-Server-$VERSION-linux-aarch64-xbps.xbps" \
+            "GitRun-Server-$VERSION-linux-x86_64-musl-xbps.xbps" \
+            "GitRun-Server-$VERSION-linux-aarch64-musl-xbps.xbps" \
+            "GitRun-Desktop-$VERSION-linux-x86_64-deb.deb" \
+            "GitRun-Desktop-$VERSION-linux-aarch64-deb.deb" \
+            "GitRun-Desktop-$VERSION-linux-x86_64-rpm.rpm" \
+            "GitRun-Desktop-$VERSION-linux-aarch64-rpm.rpm" \
+            "GitRun-Desktop-$VERSION-linux-x86_64-archlinux.pkg.tar.zst" \
+            "GitRun-Desktop-$VERSION-linux-aarch64-archlinux.pkg.tar.zst" \
+            "GitRun-Desktop-$VERSION-linux-x86_64.AppImage" \
+            "GitRun-Desktop-$VERSION-linux-aarch64.AppImage" \
+            "GitRun-Desktop-$VERSION-x86_64-unknown-linux-musl.bin" \
+            "GitRun-Desktop-$VERSION-aarch64-unknown-linux-musl.bin" \
+            "GitRun-Desktop-$VERSION-linux-x86_64-musl-apk.apk" \
+            "GitRun-Desktop-$VERSION-linux-x86_64-musl-xbps.xbps" \
+            "GitRun-Desktop-$VERSION-linux-aarch64-musl-xbps.xbps" \
+            library.zip cargo-metadata.json sbom.spdx.json provenance.json; do
+            expected_files+=("$file")
+            test -s "$root/$file" || { echo "Missing required artifact: $file" >&2; exit 1; }
+          done
+          for deb in "$root"/GitRun-Server-"$VERSION"-linux-*-deb.deb; do
+            test "$(dpkg-deb -f "$deb" Package)" = gitrun-server
+            test "$(dpkg-deb -f "$deb" Version)" = "$VERSION_NUMBER"
+            test "$(dpkg-deb -f "$deb" Conflicts)" = gitrun
+            test "$(dpkg-deb -f "$deb" Replaces)" = gitrun
+            deb_contents="$(dpkg-deb -c "$deb")"
+            grep -Fq '/usr/lib/systemd/system/gitrun.service' <<< "$deb_contents"
+            control="$RUNNER_TEMP/$(basename "$deb").control"
+            mkdir -p "$control"
+            dpkg-deb --control "$deb" "$control"
+            for script in postinst prerm; do
+              test -s "$control/$script"
+              sh -n "$control/$script"
+            done
+          done
+          for arch in x86_64 aarch64; do
+            server_arch="$root/GitRun-Server-$VERSION-linux-$arch-arch.pkg.tar.zst"
+            server_pkginfo="$(tar --zstd -xOf "$server_arch" .PKGINFO)"
+            grep -Fq 'pkgname = gitrun-server' <<< "$server_pkginfo"
+            server_files="$(tar --zstd -tf "$server_arch")"
+            grep -Fq 'usr/bin/gitrun' <<< "$server_files"
+            grep -Fq 'usr/lib/systemd/system/gitrun.service' <<< "$server_files"
+
+            gui="$root/GitRun-Desktop-$VERSION-linux-$arch-deb.deb"
+            test "$(dpkg-deb -f "$gui" Package)" = gitrun-desktop
+            gui_contents="$(dpkg-deb -c "$gui")"
+            grep -Fq '/opt/gitrun-desktop/GitRun.AppImage' <<< "$gui_contents"
+            gui_dependencies="$(dpkg-deb -f "$gui" Depends | tr ',' '\n' | sed 's/^[[:space:]]*//')"
+            grep -Fxq policykit-1 <<< "$gui_dependencies"
+            if grep -Eq '/usr/bin/gitrun$' <<< "$gui_contents"; then
+              echo "Desktop package unexpectedly contains /usr/bin/gitrun" >&2
+              exit 1
+            fi
+
+            gui_rpm="$root/GitRun-Desktop-$VERSION-linux-$arch-rpm.rpm"
+            test "$(rpm -qp --queryformat '%{NAME}' "$gui_rpm")" = gitrun-desktop
+            rpm_requires="$(rpm -qp --requires "$gui_rpm")"
+            grep -Fq webkit2gtk4.1 <<< "$rpm_requires"
+            grep -Fq libwebkit2gtk-4_1-0 <<< "$rpm_requires"
+
+            gui_arch="$root/GitRun-Desktop-$VERSION-linux-$arch-archlinux.pkg.tar.zst"
+            arch_pkginfo="$(tar --zstd -xOf "$gui_arch" .PKGINFO)"
+            grep -Fq 'pkgname = gitrun-desktop' <<< "$arch_pkginfo"
+            grep -Fq 'depend = webkit2gtk-4.1' <<< "$arch_pkginfo"
+            gui_files="$(tar --zstd -tf "$gui_arch")"
+            grep -Fq 'opt/gitrun-desktop/GitRun.AppImage' <<< "$gui_files"
+          done
+          if [ -e "$root/GitRun-Desktop-$VERSION-linux-aarch64-musl-apk.apk" ]; then
+            echo "Alpine ARM64 Desktop APK must not be published without WebKitGTK 4.1 support" >&2
+            exit 1
+          fi
+          gui_apk="$root/GitRun-Desktop-$VERSION-linux-x86_64-musl-apk.apk"
+          apk_listing="$(tar -tzf "$gui_apk")"
+          grep -Fq '.PKGINFO' <<< "$apk_listing"
+          apk_metadata="$(tar -xOzf "$gui_apk" .PKGINFO)"
+          grep -Fxq 'pkgname = gitrun-desktop' <<< "$apk_metadata"
+          grep -Fxq 'arch = x86_64' <<< "$apk_metadata"
+          grep -Fxq 'depend = musl' <<< "$apk_metadata"
+          grep -Fxq 'depend = webkit2gtk-4.1' <<< "$apk_metadata"
+          grep -Fxq 'depend = polkit' <<< "$apk_metadata"
+          for arch in x86_64 aarch64; do
+            test -s "$root/GitRun-Desktop-$VERSION-linux-$arch-musl-xbps.xbps"
+            test -x "$root/GitRun-Desktop-$VERSION-$arch-unknown-linux-musl.bin"
+          done
+          server_deb_contents="$(dpkg-deb -c "$root/GitRun-Server-$VERSION-linux-x86_64-deb.deb")"
+          if grep -Eq '/GitRun\.AppImage$' <<< "$server_deb_contents"; then
+            echo "Server package unexpectedly contains the Desktop AppImage" >&2
+            exit 1
+          fi
+          if [ "$MIGRATION_RELEASE" = true ]; then
+            legacy="$root/GitRun-$VERSION-linux-x86_64-deb.deb"
+            test -s "$legacy"
+            test "$(dpkg-deb -f "$legacy" Package)" = gitrun
+            test "$(dpkg-deb -f "$legacy" Version)" = "$VERSION_NUMBER"
+            expected_files+=("GitRun-$VERSION-linux-x86_64-deb.deb")
+            legacy_contents="$(dpkg-deb -c "$legacy")"
+            grep -Fq '/usr/libexec/gitrun/reinstall-latest.sh' <<< "$legacy_contents"
+            grep -Fq '/usr/bin/gitrun' <<< "$legacy_contents"
+          else
+            shopt -s nullglob
+            legacy_candidates=("$root"/GitRun-*-linux-x86_64-deb.deb)
+            shopt -u nullglob
+            if (("${#legacy_candidates[@]}" > 0)); then
+              echo "A legacy migration DEB was staged for a standard release" >&2
+              exit 1
+            fi
+          fi
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected_files[@]}" | sort)
+          mapfile -t actual_sorted < <(find "$root" -maxdepth 1 -type f -printf '%f\n' | sort)
+          diff -u <(printf '%s\n' "${expected_sorted[@]}") <(printf '%s\n' "${actual_sorted[@]}")
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            archive="$root/GitRun-Server-$VERSION-$target-server.tar.gz"
+            dir="$RUNNER_TEMP/update-check-$target"
+            rm -rf "$dir"; mkdir -p "$dir"
+            tar -xzf "$archive" -C "$dir"
+            test -x "$dir/gitrun"
+            test "$(cat "$dir/version.txt")" = "$VERSION_NUMBER"
+            archive="$root/GitRun-Server-$VERSION-$target-server.tar.zst"
+            dir="$RUNNER_TEMP/package-check-$target"
+            rm -rf "$dir"; mkdir -p "$dir"
+            tar --zstd -xf "$archive" -C "$dir"
+            test -x "$dir/usr/bin/gitrun"
+            test "$(cat "$dir/usr/share/gitrun/version.txt")" = "$VERSION_NUMBER"
+          done
+          # Inspect the native package metadata and payloads without executing foreign-architecture binaries.
+          mapfile -d '' -t rpm_files < <(find "$root" -maxdepth 1 -type f -name "GitRun-Server-$VERSION-linux-*-rpm.rpm" -print0)
+          for rpm_file in "${rpm_files[@]}"; do
+            rpm -qp --qf '%{NAME} %{VERSION}' "$rpm_file" | grep -Fx "gitrun-server $VERSION_NUMBER"
+            rpm_contents="$(rpm -qpl "$rpm_file")"
+            rpm_requirements="$(rpm -qp --requires "$rpm_file")"
+            grep -Fxq /usr/bin/gitrun <<< "$rpm_contents"
+            grep -Fxq /usr/lib/systemd/system/gitrun.service <<< "$rpm_contents"
+            grep -Fxq glibc <<< "$rpm_requirements"
+            grep -Fxq polkit <<< "$rpm_requirements"
+          done
+          mapfile -d '' -t apk_files < <(find "$root" -maxdepth 1 -type f -name "GitRun-Server-$VERSION-linux-*-apk.apk" -print0)
+          for apk_file in "${apk_files[@]}"; do
+            apk_contents="$(tar -tzf "$apk_file")"
+            grep -Fxq .PKGINFO <<< "$apk_contents"
+          done
+          arch_file="$root/GitRun-Server-$VERSION-linux-x86_64-arch.pkg.tar.zst"
+          arch_contents="$(tar --zstd -tf "$arch_file")"
+          grep -Fxq .PKGINFO <<< "$arch_contents"
+          grep -Fxq usr/bin/gitrun <<< "$arch_contents"
+          grep -Fxq usr/lib/systemd/system/gitrun.service <<< "$arch_contents"
+          arch_pkginfo="$(tar --zstd -xOf "$arch_file" .PKGINFO)"
+          grep -Fxq 'depend = glibc' <<< "$arch_pkginfo"
+          grep -Fxq 'depend = polkit' <<< "$arch_pkginfo"
+
+          mapfile -t library_members < <(unzip -Z1 "$root/library.zip")
+          (("${#library_members[@]}" == 11))
+          for member in "${library_members[@]}"; do
+            [[ "$member" == *.json.Back && "$member" != /* && "$member" != *".."* && "$member" != *\\* ]]
+            unzip -p "$root/library.zip" "$member" | jq -e 'type == "object" or type == "array"' >/dev/null
+          done
+
+          (cd "$root" && sha256sum -- * > SHA256SUMS && sha256sum -c SHA256SUMS)
+      - name: Upload validated release payload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: validated-release-assets
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 3
+
+  sign:
+    name: Sign manifest and verify updater
+    needs: [prepare, validate]
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+      MIGRATION_RELEASE: ${{ needs.prepare.outputs.migration_release }}
+    steps:
+      - name: Checkout updater source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Download validated release payload
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: validated-release-assets
+          path: release-assets
+      - name: Install release manifest tools
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq
+      - name: Install Rust toolchain for updater verification
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Generate complete release manifest
+        env:
+          ROOT: ${{ github.workspace }}/release-assets
+        run: |
+          set -euo pipefail
+          python3 - "$ROOT" "$VERSION" "$GITHUB_SHA" <<'PY'
+          import hashlib, json, os, sys
+          from pathlib import Path
+          root, version, commit = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+          items = []
+          for path in sorted(root.iterdir()):
+              if not path.is_file() or path.name == "release-manifest.json":
+                  continue
+              name = path.name
+              if name == "library.zip": target = "library-json-backup"
+              elif name == "cargo-metadata.json": target = "cargo-metadata"
+              elif name == "sbom.spdx.json": target = "sbom-spdx"
+              elif name == "provenance.json": target = "provenance"
+              elif name == "SHA256SUMS": target = "sha256sums"
+              elif "-server.tar.gz" in name: target = name[len(f"GitRun-Server-{version}-"):-len("-server.tar.gz")]
+              elif "-server.tar.zst" in name:
+                  triple = name[len(f"GitRun-Server-{version}-"):-len("-server.tar.zst")]
+                  cpu, abi = triple.split("-unknown-linux-")
+                  target = f"linux-{cpu}-{abi}-tar-zst"
+              elif name.startswith(f"GitRun-Desktop-{version}-"):
+                  if name.endswith(".AppImage"):
+                      arch = "aarch64" if "-linux-aarch64." in name else "x86_64"
+                      target = f"linux-{arch}-desktop-appimage"
+                  elif name.endswith("-unknown-linux-musl.bin"):
+                      arch = "aarch64" if "aarch64-unknown" in name else "x86_64"
+                      target = f"linux-{arch}-musl-desktop-bin"
+                  else:
+                      arch = "aarch64" if "-linux-aarch64-" in name else "x86_64"
+                      if name.endswith("-deb.deb"):
+                          target = f"linux-{arch}-desktop-deb"
+                      elif name.endswith("-rpm.rpm"):
+                          target = f"linux-{arch}-desktop-rpm"
+                      elif name.endswith("-archlinux.pkg.tar.zst"):
+                          target = f"linux-{arch}-desktop-arch"
+                      elif name.endswith("-musl-apk.apk"):
+                          if arch != "x86_64":
+                              raise SystemExit("Alpine musl APK is only supported on x86_64; ARM64 uses XBPS")
+                          target = f"linux-{arch}-musl-desktop-apk"
+                      elif name.endswith("-musl-xbps.xbps"):
+                          target = f"linux-{arch}-musl-desktop-xbps"
+                      else:
+                          raise SystemExit(f"Unknown Desktop package suffix: {name}")
+              elif name == f"GitRun-{version}-linux-x86_64-deb.deb": target = "linux-x86_64-deb"
+              elif name.startswith(f"GitRun-Server-{version}-linux-"):
+                  package_target = name[len(f"GitRun-Server-{version}-"):]
+                  if package_target.endswith(".pkg.tar.zst"):
+                      package_target = package_target[:-len(".pkg.tar.zst")]
+                  else:
+                      package_target = package_target.rsplit(".", 1)[0]
+                  if package_target.endswith("-deb"): target = package_target[:-4] + "-server-deb"
+                  elif package_target.endswith("-rpm"): target = package_target[:-4] + "-server-rpm"
+                  elif package_target.endswith("-apk"): target = package_target[:-4] + "-server-apk"
+                  elif package_target.endswith("-arch"): target = package_target[:-5] + "-server-arch"
+                  elif package_target.endswith("-xbps"): target = package_target[:-5] + "-server-xbps"
+                  else: raise SystemExit(f"Unknown Server package suffix: {name}")
+              items.append({"target":target,"file":name,"sha256":hashlib.sha256(path.read_bytes()).hexdigest()})
+          required = {
+              "x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu",
+              "x86_64-unknown-linux-musl","aarch64-unknown-linux-musl",
+              "linux-x86_64-gnu-tar-zst","linux-aarch64-gnu-tar-zst",
+              "linux-x86_64-musl-tar-zst","linux-aarch64-musl-tar-zst",
+              "linux-x86_64-desktop-appimage","linux-aarch64-desktop-appimage",
+              "linux-x86_64-desktop-deb","linux-aarch64-desktop-deb",
+              "linux-x86_64-desktop-rpm","linux-aarch64-desktop-rpm",
+              "linux-x86_64-desktop-arch","linux-aarch64-desktop-arch",
+              "linux-x86_64-musl-desktop-bin","linux-aarch64-musl-desktop-bin",
+              "linux-x86_64-musl-desktop-apk",
+              "linux-x86_64-musl-desktop-xbps","linux-aarch64-musl-desktop-xbps",
+              "linux-x86_64-server-deb","linux-aarch64-server-deb",
+              "linux-x86_64-server-rpm","linux-aarch64-server-rpm",
+              "linux-x86_64-musl-server-apk","linux-aarch64-musl-server-apk",
+              "linux-x86_64-server-arch","linux-aarch64-server-arch",
+              "linux-x86_64-server-xbps","linux-aarch64-server-xbps",
+              "linux-x86_64-musl-server-xbps",
+              "linux-aarch64-musl-server-xbps",
+              "library-json-backup","cargo-metadata","sbom-spdx","provenance","sha256sums"
+          }
+          if os.environ.get("MIGRATION_RELEASE") == "true": required.add("linux-x86_64-deb")
+          if os.environ.get("MIGRATION_RELEASE") != "true" and any(item["target"] == "linux-x86_64-deb" for item in items): raise SystemExit("Unexpected legacy migration target")
+          actual_targets = {item["target"] for item in items}
+          if actual_targets != required:
+              raise SystemExit(f"Manifest target mismatch; missing={sorted(required - actual_targets)}, unexpected={sorted(actual_targets - required)}")
+          if len(items) != len(required): raise SystemExit("Manifest contains duplicate targets")
+          manifest = {"name":"GitRun","version":version,"git_commit":commit,"repository":"Vider06/GitRun","artifacts":items}
+          (root/"release-manifest.json").write_text(json.dumps(manifest,indent=2)+"\n",encoding="utf-8")
+          PY
+      - name: Verify updater target-to-archive mapping
+        env:
+          ROOT: ${{ github.workspace }}/release-assets
+        run: |
+          set -euo pipefail
+          python3 - "$ROOT/release-manifest.json" "$VERSION" <<'PY'
+          import json, sys
+          from pathlib import Path
+          manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          version = sys.argv[2]
+          targets = [
+              "x86_64-unknown-linux-gnu",
+              "aarch64-unknown-linux-gnu",
+              "x86_64-unknown-linux-musl",
+              "aarch64-unknown-linux-musl",
+          ]
+          by_target = {item["target"]: item["file"] for item in manifest["artifacts"]}
+          for target in targets:
+              expected = f"GitRun-Server-{version}-{target}-server.tar.gz"
+              if by_target.get(target) != expected:
+                  raise SystemExit(f"Updater target {target} must select {expected}, got {by_target.get(target)!r}")
+          if len(by_target) != len(manifest["artifacts"]):
+              raise SystemExit("Manifest contains duplicate artifact targets")
+          PY
+      - name: Sign manifest with Ed25519
+        env:
+          GITRUN_UPDATE_SIGNING_KEY_ID: ${{ vars.GITRUN_UPDATE_SIGNING_KEY_ID }}
+          GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64 }}
+          ROOT: ${{ github.workspace }}/release-assets
+        run: |
+          set -euo pipefail
+          test -n "$GITRUN_UPDATE_SIGNING_KEY_ID"
+          test -n "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64"
+          key="$RUNNER_TEMP/key.der"; public="$RUNNER_TEMP/public.der"; payload="$RUNNER_TEMP/payload.json"; sigfile="$RUNNER_TEMP/manifest.sig"
+          trap 'rm -f "$key" "$public" "$payload" "$sigfile"' EXIT
+          printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
+          chmod 600 "$key"
+          openssl pkey -inform DER -in "$key" -pubout -outform DER -out "$public"
+          public_hex="$(tail -c 32 "$public" | od -An -v -tx1 | tr -d '[:space:]')"
+          echo "GITRUN_UPDATE_PUBLIC_KEY_HEX=$public_hex" >> "$GITHUB_ENV"
+          echo "GITRUN_UPDATE_PUBLIC_KEY_ID=$GITRUN_UPDATE_SIGNING_KEY_ID" >> "$GITHUB_ENV"
+          jq -S -c '. | del(.signature, .signature_key_id)' "$ROOT/release-manifest.json" | tr -d '\n' > "$payload"
+          openssl pkeyutl -sign -rawin -inkey "$key" -keyform DER -in "$payload" -out "$sigfile"
+          openssl pkeyutl -verify -rawin -pubin -inkey "$public" -keyform DER -in "$payload" -sigfile "$sigfile"
+          signature="$(od -An -v -tx1 "$sigfile" | tr -d '[:space:]')"
+          test "${#signature}" -eq 128
+          jq --arg sig "$signature" --arg key_id "$GITRUN_UPDATE_SIGNING_KEY_ID" \
+            '. + {signature:$sig,signature_key_id:$key_id}' "$ROOT/release-manifest.json" > "$ROOT/manifest.tmp"
+          mv "$ROOT/manifest.tmp" "$ROOT/release-manifest.json"
+      - name: Run updater tests against the aggregated manifest
+        env:
+          GITRUN_UPDATE_SIGNATURE_REQUIRED: "true"
+          GITRUN_RELEASE_MANIFEST: ${{ github.workspace }}/release-assets/release-manifest.json
+        run: |
+          set -euo pipefail
+          cargo test --locked -p gitrun-updater
+          tampered="$RUNNER_TEMP/manifest-tampered.json"
+          jq '.version = (.version + "-tampered")' "$GITRUN_RELEASE_MANIFEST" > "$tampered"
+          if GITRUN_RELEASE_MANIFEST="$tampered" cargo test --locked -p gitrun-updater --test release_manifest_signature; then
+            echo "Updater accepted a tampered manifest" >&2
+            exit 1
+          fi
+          release_root="$(dirname "$GITRUN_RELEASE_MANIFEST")"
+          expected_count="$(find "$release_root" -maxdepth 1 -type f ! -name release-manifest.json | wc -l)"
+          jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" --argjson count "$expected_count" \
+            '.name == "GitRun" and .version == $version and .git_commit == $commit and (.artifacts | length == $count) and all(.artifacts[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.file | test("^[^/\\\\]+$")))' \
+            "$GITRUN_RELEASE_MANIFEST" >/dev/null
+      - name: Upload signed release payload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: signed-release-assets
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 3
+
+  release:
+    name: Publish validated release
+    needs: [prepare, sign]
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+      MIGRATION_RELEASE: ${{ needs.prepare.outputs.migration_release }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Checkout release source for package setup
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download signed release payload
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: signed-release-assets
+          path: release-assets
+      - name: Install 1.8.23 updater build dependencies
+        if: env.MIGRATION_RELEASE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential curl wget file pkg-config libssl-dev imagemagick \
+            libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+
+      - name: Install Rust toolchain for legacy updater verification
+        if: env.MIGRATION_RELEASE == 'true'
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Checkout the legacy 1.8.23 updater source
+        if: env.MIGRATION_RELEASE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/gitrun-v1.8.23"
+          git clone --quiet --depth 1 --branch v1.8.23 "https://github.com/$GITHUB_REPOSITORY.git" "$old"
+          echo "GITRUN_LEGACY_UPDATER_SOURCE=$old" >> "$GITHUB_ENV"
+
+      - name: Normalize legacy Tauri PNG icons to RGBA
+        if: env.MIGRATION_RELEASE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          old="$GITRUN_LEGACY_UPDATER_SOURCE"
+          icon_dir="$old/crates/gitrun-dashboard-tauri/src-tauri/icons"
+          test -d "$icon_dir"
+          shopt -s nullglob
+          icons=("$icon_dir"/*.png)
+          (("${#icons[@]}" > 0))
+          for icon in "${icons[@]}"; do
+            tmp="$(mktemp --suffix=.png)"
+            trap 'rm -f "$tmp"' EXIT
+            convert "$icon" -background none -alpha on -colorspace sRGB -define png:color-type=6 "PNG32:$tmp"
+            identify -format '%m %wx%h %[channels]\\n' "$tmp"
+            channels="$(identify -format '%[channels]' "$tmp")"
+            case "$channels" in
+              *a*) ;;
+              *) echo "Icon was not converted to RGBA: $icon ($channels)" >&2; exit 1 ;;
+            esac
+            mv "$tmp" "$icon"
+            trap - EXIT
+          done
+
+      - name: Verify migration with the actual 1.8.23 updater
+        if: env.MIGRATION_RELEASE == 'true'
+        env:
+          GITRUN_UPDATE_SIGNING_KEY_ID: ${{ vars.GITRUN_UPDATE_SIGNING_KEY_ID }}
+          GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$VERSION" = v1.9.0
+          old="$GITRUN_LEGACY_UPDATER_SOURCE"
+
+          key="$RUNNER_TEMP/migration-key.der"
+          public="$RUNNER_TEMP/migration-public.der"
+          server_pid=""
+          cleanup() {
+            if [ -n "$server_pid" ]; then
+              kill "$server_pid" 2>/dev/null || true
+              wait "$server_pid" 2>/dev/null || true
+            fi
+            rm -f "$key" "$public"
+          }
+          trap cleanup EXIT
+          printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
+          chmod 600 "$key"
+          openssl pkey -inform DER -in "$key" -pubout -outform DER -out "$public"
+          GITRUN_UPDATE_PUBLIC_KEY_HEX="$(tail -c 32 "$public" | od -An -v -tx1 | tr -d '[:space:]')"
+          export GITRUN_UPDATE_PUBLIC_KEY_HEX
+
+          legacy_key_hex="$(python3 - "$old/crates/gitrun-cli/src/main.rs" <<'PYKEY'
+          import re, sys
+          source = open(sys.argv[1], encoding="utf-8").read()
+          match = re.search(r'const DEFAULT_UPDATE_PUBLIC_KEY_HEX: &str\s*=\s*"([0-9a-f]{64})"', source)
+          if not match:
+              raise SystemExit("Could not read the 1.8.23 built-in update trust anchor")
+          print(match.group(1))
+          PYKEY
+          )"
+          legacy_key_id="$(python3 - "$old/crates/gitrun-cli/src/main.rs" <<'PYID'
+          import re, sys
+          source = open(sys.argv[1], encoding="utf-8").read()
+          match = re.search(r'const DEFAULT_UPDATE_PUBLIC_KEY_ID: &str\s*=\s*"([^"]+)"', source)
+          if not match:
+              raise SystemExit("Could not read the 1.8.23 update key identifier")
+          print(match.group(1))
+          PYID
+          )"
+          test "$GITRUN_UPDATE_PUBLIC_KEY_HEX" = "$legacy_key_hex"
+          test "$GITRUN_UPDATE_SIGNING_KEY_ID" = "$legacy_key_id"
+          export GITRUN_UPDATE_PUBLIC_KEY_ID="$GITRUN_UPDATE_SIGNING_KEY_ID"
+          export GITRUN_UPDATE_SIGNATURE_REQUIRED=true
+
+          # Add a loopback-only transport seam to this throwaway 1.8.23 checkout.
+          # No production source or release artifact is modified.
+          python3 - "$old/crates/gitrun-updater/src/lib.rs" "$old/crates/gitrun-cli/src/main.rs" <<'PYPATCH'
+          import re
+          import sys
+          from pathlib import Path
+
+          lib_path, cli_path = map(Path, sys.argv[1:])
+          lib = lib_path.read_text(encoding="utf-8")
+          cli = cli_path.read_text(encoding="utf-8")
+
+          def replace_pattern(source, pattern, replacement, label):
+              updated, count = re.subn(pattern, replacement, source, count=1, flags=re.MULTILINE)
+              if count != 1:
+                  raise SystemExit(f"Expected one {label} anchor, found {count}")
+              return updated
+
+          lib = replace_pattern(
+              lib,
+              r'fn is_https_url\(url: &reqwest::Url\) -> bool \{\s*url\.scheme\(\) == "https"\s*\}',
+              """fn is_https_url(url: &reqwest::Url) -> bool {
+              url.scheme() == "https"
+                  || (url.scheme() == "http"
+                      && url.host_str() == Some("127.0.0.1") /* DevSkim: ignore DS137138 because this HTTP exception exists only in the disposable 1.8.23 migration-test checkout and accepts loopback only. */
+                      && std::env::var("GITRUN_MIGRATION_TEST_BASE_URL").is_ok())
+          }""",
+              "HTTPS validator",
+          )
+          lib = replace_pattern(
+              lib,
+              r"    Ok\(format!\(\s*\"https://github\.com/\{\}/releases/latest/download/release-manifest\.json\",\s*repository\.trim_end_matches\('/'\)\s*\)\)",
+              """    if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
+              if !base_url.starts_with("http://127.0.0.1:") { // DevSkim: ignore DS137138 because this URL is accepted only by the disposable migration-test checkout.
+                  return Err(UpdateError::InvalidManifest(
+                      "migration test URL must use loopback HTTP".into(),
+                  ));
+              }
+              return Ok(format!(
+                  "{}/releases/latest/download/release-manifest.json",
+                  base_url.trim_end_matches('/')
+              ));
+          }
+          Ok(format!(
+              "https://github.com/{}/releases/latest/download/release-manifest.json",
+              repository.trim_end_matches('/')
+          ))""",
+              "latest manifest URL",
+          )
+          cli = replace_pattern(
+              cli,
+              r"    let url = format!\(\s*\"https://github\.com/Vider06/GitRun/releases/download/\{\}/\{\}\",\s*version, artifact_name\s*\);",
+              """    let url = if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
+              if !base_url.starts_with("http://127.0.0.1:") { // DevSkim: ignore DS137138 because this URL is accepted only by the disposable migration-test checkout.
+                  return Err("migration test URL must use loopback HTTP".into());
+              }
+              format!(
+                  "{}/releases/download/{}/{}",
+                  base_url.trim_end_matches('/'),
+                  version,
+                  artifact_name
+              )
+          } else {
+              format!(
+                  "https://github.com/Vider06/GitRun/releases/download/{}/{}",
+                  version, artifact_name
+              )
+          };""",
+              "migration artifact URL",
+          )
+
+          lib_path.write_text(lib, encoding="utf-8")
+          cli_path.write_text(cli, encoding="utf-8")
+          PYPATCH
+
+          (
+            cd "$old"
+            cargo build --locked --release -p gitrun-cli --bin gitrun
+            test -x target/release/gitrun
+            test "$(GITRUN_NO_CAT=1 target/release/gitrun --version --gitrun)" = "GitRun 1.8.23"
+          )
+
+          # Build a disposable 1.9.0 updater with a loopback-only transport seam
+          # so the second migration transaction is exercised without contacting
+          # the public release endpoint. Production package bytes remain unchanged.
+          python3 - "$GITHUB_WORKSPACE/crates/gitrun-updater/src/lib.rs" \
+            "$GITHUB_WORKSPACE/crates/gitrun-cli/src/main.rs" <<'PYPATCHNEW'
+          import re
+          import sys
+          from pathlib import Path
+
+          updater_path, cli_path = map(Path, sys.argv[1:])
+          updater = updater_path.read_text(encoding="utf-8")
+          cli = cli_path.read_text(encoding="utf-8")
+
+          def replace_once(source, pattern, replacement, label):
+              updated, count = re.subn(pattern, replacement, source, count=1, flags=re.MULTILINE)
+              if count != 1:
+                  raise SystemExit(f"Expected one 1.9.0 {label} anchor, found {count}")
+              return updated
+
+          updater = replace_once(
+              updater,
+              r'fn is_https_url\(url: &reqwest::Url\) -> bool \{\s*url\.scheme\(\) == "https"\s*\}',
+              """fn is_https_url(url: &reqwest::Url) -> bool {
+              url.scheme() == "https"
+                  || (url.scheme() == "http"
+                      && url.host_str() == Some("127.0.0.1") /* DevSkim: ignore DS137138 because this HTTP exception exists only in the disposable 1.9.0 migration-test checkout and accepts loopback only. */
+                      && std::env::var("GITRUN_MIGRATION_TEST_BASE_URL").is_ok())
+          }""",
+              "HTTPS validator",
+          )
+          updater = replace_once(
+              updater,
+              r'    Ok\(format!\(\s*"https://github\.com/\{\}/releases/latest/download/release-manifest\.json",\s*repository\.trim_end_matches\(\x27/\x27\)\s*\)\)',
+              """    if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
+              if !base_url.starts_with("http://127.0.0.1:") {
+                  return Err(UpdateError::InvalidManifest(
+                      "migration test URL must use loopback HTTP".into(),
+                  ));
+              }
+              return Ok(format!(
+                  "{}/releases/latest/download/release-manifest.json",
+                  base_url.trim_end_matches('/')
+              ));
+          }
+          Ok(format!(
+              "https://github.com/{}/releases/latest/download/release-manifest.json",
+              repository.trim_end_matches('/')
+          ))""",
+              "latest manifest URL",
+          )
+          cli = replace_once(
+              cli,
+              r'    let url = format!\(\s*"https://github\.com/Vider06/GitRun/releases/download/\{\}/\{\}",\s*version, artifact_name\s*\);',
+              """    let url = if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
+              if !base_url.starts_with("http://127.0.0.1:") {
+                  return Err("migration test URL must use loopback HTTP".into());
+              }
+              format!(
+                  "{}/releases/download/{}/{}",
+                  base_url.trim_end_matches('/'),
+                  version,
+                  artifact_name
+              )
+          } else {
+              format!(
+                  "https://github.com/Vider06/GitRun/releases/download/{}/{}",
+                  version, artifact_name
+              )
+          };""",
+              "artifact download URL",
+          )
+
+          updater_path.write_text(updater, encoding="utf-8")
+          cli_path.write_text(cli, encoding="utf-8")
+          PYPATCHNEW
+          (
+            cd "$GITHUB_WORKSPACE"
+            cargo build --locked --release -p gitrun-cli --bin gitrun
+            install -m 0755 target/release/gitrun "$RUNNER_TEMP/gitrun-1.9.0-loopback-test"
+          )
+
+          legacy_asset="GitRun-$VERSION-linux-x86_64-deb.deb"
+          test -s "release-assets/$legacy_asset"
+          mock_root="$RUNNER_TEMP/migration-http"
+          mkdir -p "$mock_root/releases/latest/download" "$mock_root/releases/download/$VERSION"
+          install -m 0644 release-assets/release-manifest.json \
+            "$mock_root/releases/latest/download/release-manifest.json"
+          install -m 0644 "release-assets/$legacy_asset" \
+            "$mock_root/releases/download/$VERSION/$legacy_asset"
+          server_asset="GitRun-Server-$VERSION-linux-x86_64-deb.deb"
+          test -s "release-assets/$server_asset"
+          install -m 0644 "release-assets/$server_asset" \
+            "$mock_root/releases/download/$VERSION/$server_asset"
+
+          port="$(python3 - <<'PYPORT'
+          import socket
+          with socket.socket() as sock:
+              sock.bind(("127.0.0.1", 0))  # DevSkim: ignore DS137138 because the ephemeral fixture server binds only to loopback.
+              print(sock.getsockname()[1])
+          PYPORT
+          )"
+          python3 -m http.server "$port" --bind 127.0.0.1 --directory "$mock_root" > "$RUNNER_TEMP/migration-http.log" 2>&1 & # DevSkim: ignore DS137138 because this temporary server serves fixtures only to the local migration test.
+          server_pid=$!
+          base="http://127.0.0.1:$port" # DevSkim: ignore DS137138 because this URL is consumed only by the isolated migration test.
+          ready=false
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --fail --silent "$base/releases/latest/download/release-manifest.json" >/dev/null; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = true
+
+          test_dir="$old/crates/gitrun-updater/tests"
+          mkdir -p "$test_dir"
+          cat > "$test_dir/migration_release_compat.rs" <<'RUST'
+          use gitrun_updater::{download_and_verify, fetch_manifest, latest_manifest_download_url};
+          use std::path::PathBuf;
+
+          #[test]
+          fn v1823_verifies_the_signed_latest_manifest_and_legacy_deb() {
+              let base = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL").unwrap();
+              let manifest_url = latest_manifest_download_url("Vider06/GitRun")
+                  .expect("legacy updater must resolve the latest manifest route");
+              assert_eq!(
+                  manifest_url,
+                  format!("{base}/releases/latest/download/release-manifest.json")
+              );
+              let manifest = fetch_manifest(&manifest_url)
+                  .expect("legacy updater must verify the release manifest signature");
+              assert_eq!(manifest.version, "v1.9.0");
+              let artifact = manifest.artifact_for("linux-x86_64-deb")
+                  .expect("legacy reinstall target must exist");
+              assert_eq!(artifact.file, "GitRun-v1.9.0-linux-x86_64-deb.deb");
+
+              let download_url = format!(
+                  "{base}/releases/download/{}/{}",
+                  manifest.version, artifact.file
+              );
+              download_and_verify(
+                  &download_url,
+                  &artifact.sha256,
+                  PathBuf::from(std::env::var("GITRUN_MIGRATION_DOWNLOAD").unwrap()),
+              )
+              .expect("legacy updater must verify the migration package SHA-256");
+          }
+          RUST
+
+          downloaded="$RUNNER_TEMP/GitRun-$VERSION-linux-x86_64-deb.downloaded.deb"
+          (
+            cd "$old"
+            GITRUN_MIGRATION_TEST_BASE_URL="$base" \
+            GITRUN_MIGRATION_DOWNLOAD="$downloaded" \
+            cargo test --locked -p gitrun-updater --test migration_release_compat -- --nocapture
+          )
+          test -s "$downloaded"
+          test "$(dpkg-deb -f "$downloaded" Package)" = gitrun
+          test "$(dpkg-deb -f "$downloaded" Version)" = "$VERSION_NUMBER"
+          dpkg-deb -x "$downloaded" "$RUNNER_TEMP/legacy-updater-package"
+          test -x "$RUNNER_TEMP/legacy-updater-package/usr/bin/gitrun"
+          test -x "$RUNNER_TEMP/legacy-updater-package/usr/libexec/gitrun/reinstall-latest.sh"
+          test "$(cat "$RUNNER_TEMP/legacy-updater-package/usr/share/gitrun/version.txt")" = "$VERSION_NUMBER"
+
+          # Execute the actual 1.8.23 privileged reinstall flow against the local
+          # copy of the signed release payload; publication is not needed here.
+          sudo env "GITRUN_MIGRATION_TEST_BASE_URL=$base" \
+            "$old/target/release/gitrun" --no-cat --reinstall-latest-root
+          test "$(dpkg-query -W -f='${Version}' gitrun)" = "$VERSION_NUMBER"
+          test -x /usr/bin/gitrun
+          test -x /usr/local/bin/gitrun
+          test "$(/usr/local/bin/gitrun --version --gitrun)" = "GitRun $VERSION_NUMBER"
+
+          # Complete the second phase with the newly installed 1.9.0 updater.
+          # It must select the native Server DEB, replace the transitional
+          # legacy package registration and leave the canonical CLI available.
+          sudo install -m 0755 "$RUNNER_TEMP/gitrun-1.9.0-loopback-test" /usr/bin/gitrun
+          sudo env "GITRUN_MIGRATION_TEST_BASE_URL=$base" \
+            /usr/bin/gitrun --no-cat --reinstall-latest-root
+          test "$(dpkg-query -W -f='${db:Status-Status}' gitrun-server)" = installed
+          if dpkg-query -W -f='${db:Status-Status}' gitrun 2>/dev/null | grep -Fxq installed; then
+            echo "Legacy gitrun package remained installed after the Server package transition" >&2
+            exit 1
+          fi
+          test "$(/usr/bin/gitrun --version --gitrun)" = "GitRun $VERSION_NUMBER"
+          test "$(/usr/local/bin/gitrun --version --gitrun)" = "GitRun $VERSION_NUMBER"
+
+      - name: Generate professional release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          MIGRATION_RELEASE: ${{ needs.prepare.outputs.migration_release }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          generated="$RUNNER_TEMP/generated-notes.md"
+          notes="$RUNNER_TEMP/release-notes.md"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$VERSION" -f target_commitish="$GITHUB_SHA" --jq '.body' > "$generated" || : > "$generated"
+          python3 - "$VERSION" "$GITHUB_REPOSITORY" "$MIGRATION_RELEASE" "$generated" "$notes" <<'PY'
+          import hashlib
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          version, repository, migration, generated_path, output_path = sys.argv[1:]
+          root = Path("release-assets")
+          manifest_path = root / "release-manifest.json"
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          if manifest.get("version") != version or manifest.get("name") != "GitRun":
+              raise SystemExit("Release notes refused: manifest identity/version mismatch")
+
+          assets = manifest.get("artifacts", [])
+          if not assets:
+              raise SystemExit("Release notes refused: signed manifest has no assets")
+
+          def sha256_file(path):
+              digest = hashlib.sha256()
+              with path.open("rb") as stream:
+                  for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
+          by_name = {}
+          for item in assets:
+              name = item["file"]
+              path = root / name
+              if not path.is_file():
+                  raise SystemExit(f"Release notes refused: manifest asset is missing: {name}")
+              digest = sha256_file(path)
+              if digest != item["sha256"]:
+                  raise SystemExit(f"Release notes refused: SHA-256 mismatch for {name}")
+              if name in by_name:
+                  raise SystemExit(f"Release notes refused: duplicate asset name: {name}")
+              by_name[name] = {**item, "sha256": digest}
+
+          disk_assets = {p.name for p in root.iterdir() if p.is_file() and p.name != "release-manifest.json"}
+          if disk_assets != set(by_name):
+              raise SystemExit(
+                  "Release notes refused: release files and signed manifest differ; "
+                  f"unlisted={sorted(disk_assets - set(by_name))}, "
+                  f"missing={sorted(set(by_name) - disk_assets)}"
+              )
+
+          def url(name):
+              return f"https://github.com/{repository}/releases/download/{version}/{name}"
+
+          def link(name):
+              return f"[{name}]({url(name)})"
+
+          def table(headers, rows):
+              if not rows:
+                  return ["_No artifacts in this category._", ""]
+              lines = [
+                  "| " + " | ".join(headers) + " |",
+                  "| " + " | ".join("---" for _ in headers) + " |",
+              ]
+              lines.extend("| " + " | ".join(str(value).replace("|", "\\|").replace("\n", " ") for value in row) + " |" for row in rows)
+              lines.append("")
+              return lines
+
+          def digest_cell(item):
+              return item["sha256"]
+
+          def arch_abi(name):
+              prefix = f"GitRun-Server-{version}-"
+              if name.startswith(prefix):
+                  suffix = name[len(prefix):]
+                  for ending in ("-server.tar.gz", "-server.tar.zst"):
+                      if suffix.endswith(ending):
+                          triple = suffix[:-len(ending)]
+                          if triple.startswith("linux-"):
+                              triple = triple[len("linux-"):]
+                          arch, separator, abi = triple.partition("-unknown-linux-")
+                          if separator and arch in {"x86_64", "aarch64"} and abi in {"gnu", "musl"}:
+                              return arch, abi
+              match = re.search(r"linux-(x86_64|aarch64)(?:-(musl))?-(?:deb|rpm|apk|arch|xbps)", name)
+              if match:
+                  return match.group(1), match.group(2) or "gnu"
+              return "—", "—"
+
+          architecture_cases = (
+              (f"GitRun-Server-{version}-x86_64-unknown-linux-gnu-server.tar.gz", ("x86_64", "gnu")),
+              (f"GitRun-Server-{version}-linux-aarch64-unknown-linux-musl-server.tar.zst", ("aarch64", "musl")),
+              (f"GitRun-Server-{version}-linux-x86_64-musl-apk.apk", ("x86_64", "musl")),
+          )
+          for sample, expected in architecture_cases:
+              actual = arch_abi(sample)
+              if actual != expected:
+                  raise SystemExit(f"Release-note architecture parser mismatch for {sample}: {actual!r} != {expected!r}")
+
+          updater_archives, portable_archives, native_packages = [], [], []
+          desktop_assets, migration_assets, metadata_assets = [], [], []
+          for name, item in sorted(by_name.items()):
+              if name.endswith("-server.tar.gz"):
+                  arch, abi = arch_abi(name)
+                  updater_archives.append((arch, abi, "TAR.GZ (updater)", link(name), digest_cell(item)))
+              elif name.endswith("-server.tar.zst"):
+                  arch, abi = arch_abi(name)
+                  portable_archives.append((arch, abi, "TAR.ZST", link(name), digest_cell(item)))
+              elif name.startswith(f"GitRun-Server-{version}-linux-"):
+                  arch, abi = arch_abi(name)
+                  fmt = (
+                      "DEB" if name.endswith(".deb") else
+                      "RPM" if name.endswith(".rpm") else
+                      "APK" if name.endswith(".apk") else
+                      "Arch package" if name.endswith(".pkg.tar.zst") else
+                      "XBPS" if name.endswith(".xbps") else "Unknown"
+                  )
+                  native_packages.append((arch, abi, fmt, link(name), digest_cell(item)))
+              elif name.startswith(f"GitRun-Desktop-{version}-"):
+                  fmt = (
+                      "AppImage" if name.endswith(".AppImage") else
+                      "DEB" if name.endswith(".deb") else
+                      "RPM" if name.endswith(".rpm") else
+                      "Arch Linux" if name.endswith(".pkg.tar.zst") else
+                      "APK" if name.endswith(".apk") else
+                      "XBPS" if name.endswith(".xbps") else
+                      "musl executable" if name.endswith(".bin") else "Unknown"
+                  )
+                  arch = "aarch64" if ("-aarch64" in name or "-arm64" in name) else "x86_64"
+                  abi = "musl" if "musl" in name else "GNU"
+                  desktop_assets.append((arch, abi, fmt, link(name), digest_cell(item)))
+              elif name == f"GitRun-{version}-linux-x86_64-deb.deb":
+                  migration_assets.append(("x86_64", "Debian / Ubuntu", "Legacy DEB; package gitrun", link(name), digest_cell(item)))
+              else:
+                  metadata_assets.append((name, link(name), digest_cell(item)))
+
+          lines = [
+              f"# GitRun {version}",
+              "",
+              "> Your self-hosted GitHub Actions runners, under your control.",
+              "",
+              "This release separates the headless server distribution from the desktop application. "
+              "All downloadable files below are taken from the signed release manifest; each listed "
+              "checksum is verified against the published file before these notes are generated.",
+              "",
+              f"**Published release assets:** {len(assets) + 1} (including the signed manifest).",
+              "",
+              "## Release overview",
+              "",
+              "| Component | Description |",
+              "| --- | --- |",
+              "| **GitRun-Server** | Headless server, CLI, runner management, scheduler and recovery tools. |",
+              "| **GitRun-Desktop** | Independent desktop application; it does not bundle the Server executable. |",
+              "| **Release integrity** | Ed25519-signed manifest, SHA-256 checksums, SPDX SBOM and build provenance. |",
+              "",
+              "## Install or update",
+              "",
+              "- **Existing GitRun installation:** run `gitrun update`. The built-in updater uses the canonical Server TAR.GZ for the detected target; it does not install a distro package.",
+              "- **Debian / Ubuntu:** install the matching Server DEB with `sudo apt install ./<server-package>.deb`.",
+              "- **Fedora / RHEL and compatible distributions:** install the matching Server RPM with `sudo dnf install ./<server-package>.rpm`.",
+              "- **Arch Linux:** install the matching Server package with `sudo pacman -U ./<server-package>.pkg.tar.zst`.",
+              "- **Alpine Linux:** install the matching APK with the host package manager. Verify the downloaded file against the SHA-256 value in this release before installation.",
+              "- **Void Linux:** install the matching XBPS package using the host's local-package workflow, after verifying its SHA-256 value.",
+              "- After installing the Server package for the first time, run `sudo gitrun setup` to configure the host services and runtime.",
+              "- **Desktop:** install the separate GitRun-Desktop package for the matching architecture, or make the AppImage executable and launch it as the regular desktop user. Desktop does not include the Server.",
+              "",
+              "## GitRun-Server downloads",
+              "",
+              "### Updater archives",
+              "",
+              "Use the canonical TAR.GZ archive for the built-in updater. The target is the Rust target triple.",
+              "",
+          ]
+          lines += table(
+              ["Architecture", "ABI", "Format", "Artifact", "SHA-256"],
+              updater_archives,
+          )
+          lines += [
+              "### Portable archives",
+              "",
+              "TAR.ZST archives contain the Server executable and its runtime payload under a standard filesystem layout.",
+              "",
+          ]
+          lines += table(
+              ["Architecture", "ABI", "Format", "Artifact", "SHA-256"],
+              portable_archives,
+          )
+          lines += [
+              "### Native packages",
+              "",
+              "Install the package matching the host architecture and libc. Package-manager dependencies are declared in each package.",
+              "",
+          ]
+          lines += table(
+              ["Architecture", "ABI", "Package format", "Artifact", "SHA-256"],
+              native_packages,
+          )
+          lines += [
+              "### Init-system support",
+              "",
+              "- DEB, RPM and Arch Server packages carry systemd unit files. The first `gitrun setup` installs/configures the scheduler, GSR watchdog and control-manager units, then enables and starts the applicable services.",
+              "- Alpine APK packages include the OpenRC scheduler and GSR service definitions. Package removal stops and unregisters them; package upgrades restart only services that were already active. Run `gitrun setup` to configure and enable them.",
+              "- Void XBPS packages include both runit service trees and the shared service launcher. `gitrun setup` creates the `/var/service` supervision links and starts them. Before removing the package, run `gitrun uninstall` so those runtime-created links and services are stopped and cleaned up.",
+              "- Service integration is performed by the privileged setup flow, not by package installation alone. Containers or hosts without a supported active init system cannot complete service setup.",
+              "",
+              "## GitRun-Desktop downloads",
+              "",
+              "Desktop packages are independent of GitRun-Server and can be installed separately.",
+              "",
+          ]
+          lines += table(
+              ["Architecture", "ABI", "Format", "Artifact", "SHA-256"],
+              desktop_assets,
+          )
+          if migration == "true":
+              if version != "v1.9.0":
+                  raise SystemExit("Migration Release allowlist violation: only v1.9.0 may publish the legacy package")
+              if len(migration_assets) != 1:
+                  raise SystemExit("Migration Release must contain exactly one legacy Debian artifact")
+              lines += [
+                  "## Migration Release",
+                  "",
+                  "> **DO NOT USE FOR FRESH INSTALL!**",
+                  "",
+                  "This one-time compatibility artifact supports only existing GitRun **1.8.23** installations on **x86_64 GNU/Linux with Debian or Ubuntu (APT)**. "
+                  "It preserves the legacy Debian package identity (gitrun), filename and filesystem layout required by the 1.8.23 signed-manifest updater. "
+                  "Its /usr/bin/gitrun payload is the new 1.9.0 Server binary. Other architectures and package managers are outside this migration artifact's support scope.",
+                  "",
+                  "Run gitrun reinstall on the existing 1.8.23 installation. The first transaction installs this transitional package and deliberately retains the legacy gitrun registration. "
+                  "After it completes successfully, run gitrun reinstall a second time; the new 1.9.0 updater then selects the signed GitRun-Server DEB and replaces the legacy package registration. "
+                  "Both transactions are required. Do not use this artifact for a fresh installation; fresh installs must use the GitRun-Server packages above.",
+                  "",
+                  "### Legacy migration artifact",
+                  "",
+              ]
+              lines += table(
+                  ["Architecture", "Distribution", "Compatibility contract", "Artifact", "SHA-256"],
+                  migration_assets,
+              )
+
+
+          lines += [
+              "## Release metadata and verification",
+              "",
+              "The manifest is signed with Ed25519. Its artifact entries contain the SHA-256 digest of every other downloadable release file.",
+              "",
+          ]
+          metadata_rows = sorted(metadata_assets)
+          metadata_rows.append((
+              "release-manifest.json (Ed25519 signed)",
+              link("release-manifest.json"),
+              "Ed25519 signature; self-hash intentionally omitted",
+          ))
+          lines += table(["Metadata artifact", "Download", "Integrity"], metadata_rows)
+          lines += [
+              "- **Signature:** Ed25519; signature and key identifier are embedded in the manifest.",
+              "- **Checksum list:** SHA256SUMS covers the published payload files; the manifest itself is authenticated by its Ed25519 signature.",
+              "",
+              "## Changes",
+              "",
+          ]
+          generated = Path(generated_path).read_text(encoding="utf-8").strip()
+          lines += [generated if generated else "_No generated GitHub changelog was available for this tag._", ""]
+          Path(output_path).write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+          PY
+          echo "NOTES_FILE=$notes" >> "$GITHUB_ENV"
+      - name: Publish all release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          MIGRATION_RELEASE: ${{ needs.prepare.outputs.migration_release }}
+          ROOT: ${{ github.workspace }}/release-assets
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(find "$ROOT" -maxdepth 1 -type f -printf '%p\n' | sort)
+          test -s "$ROOT/release-manifest.json"
+          test -s "$ROOT/SHA256SUMS"
+          (("${#assets[@]}" > 0))
+          if [ "$MIGRATION_RELEASE" = true ]; then
+            title="GitRun $VERSION — Migration Release"
+          else
+            title="GitRun $VERSION"
+          fi
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$VERSION" --repo "$GITHUB_REPOSITORY" --title "$title" --notes-file "$NOTES_FILE"
+            gh release upload "$VERSION" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$VERSION" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "$title" --notes-file "$NOTES_FILE"
+          fi
+          if [ "$MIGRATION_RELEASE" = true ]; then
+            release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$VERSION" --jq .id)"
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+              -F prerelease=false -f make_latest=true >/dev/null
+          fi
+ <<< "$apk_contents" || {
+                echo "APK package is missing its pre-deinstall service cleanup hook" >&2
+                exit 1
+              }
+              grep -Eq '(^|/)\.post-upgrade          done
+
+          # XBPS is used by Void Linux, whose default init system is runit.
+          # Build its archive from the neutral stage, never the systemd-enabled
+          # package stage shared by DEB, RPM and Arch.
+          xbps_stage="$RUNNER_TEMP/xbps-stage"
+          rm -rf "$xbps_stage"
+          cp -a "$stage" "$xbps_stage"
+          mkdir -p "$xbps_stage/usr/libexec/gitrun" \
+            "$xbps_stage/etc/sv/gitrun/log" "$xbps_stage/etc/sv/gitrun-gsr/log"
+          install -m 0755 packaging/gitrun-service "$xbps_stage/usr/libexec/gitrun/gitrun-service"
+          install -m 0755 packaging/runit/gitrun/run "$xbps_stage/etc/sv/gitrun/run"
+          install -m 0755 packaging/runit/gitrun/log/run "$xbps_stage/etc/sv/gitrun/log/run"
+          install -m 0755 packaging/runit/gitrun-gsr/run "$xbps_stage/etc/sv/gitrun-gsr/run"
+          install -m 0755 packaging/runit/gitrun-gsr/log/run "$xbps_stage/etc/sv/gitrun-gsr/log/run"
+          xbps_root="$RUNNER_TEMP/xbps"
+          mkdir -p "$xbps_root"
+          curl --fail --silent --show-error --location \
+            "https://repo-default.voidlinux.org/static/xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz" \
+            -o "$RUNNER_TEMP/xbps-static.tar.xz"
+          tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
+          xbps_create="$xbps_root/usr/bin/xbps-create"
+          xbps_rindex="$xbps_root/usr/bin/xbps-rindex"
+          xbps_query="$xbps_root/usr/bin/xbps-query"
+          test -x "$xbps_create" && test -x "$xbps_rindex" && test -x "$xbps_query"
+          export XBPS_ARCH="$xbps_arch"
+          (cd "$out" && "$xbps_create" -A "$xbps_arch" -n "gitrun-server-${VERSION_NUMBER}_1" \
+            -D "$xbps_dep" -H https://github.com/Vider06/GitRun \
+            -l Apache-2.0 -m Vider06 -s "GitRun headless server" "$xbps_stage")
+          xbps_file="$(find "$out" -maxdepth 1 -type f -name 'gitrun-*.xbps' -print -quit)"
+          test -n "$xbps_file"
+          test -s "$xbps_file"
+          xbps_contents="$(tar -tf "$xbps_file")"
+          for required in \
+            ./usr/libexec/gitrun/gitrun-service \
+            ./etc/sv/gitrun/run ./etc/sv/gitrun/log/run \
+            ./etc/sv/gitrun-gsr/run ./etc/sv/gitrun-gsr/log/run; do
+            grep -Fqx "$required" <<< "$xbps_contents" || {
+              echo "XBPS package is missing runit resource: $required" >&2
+              exit 1
+            }
+          done
+          mv "$xbps_file" "$out/GitRun-Server-$VERSION-linux-$cpu-xbps.xbps"
+          # Indexing the local repository parses the XBPS archive and validates its metadata.
+          "$xbps_rindex" -a "$out"/*.xbps
+          server_deps="$("$xbps_query" -R --repository="$out" -x "gitrun-server-${VERSION_NUMBER}_1")"
+          grep -Fq "$xbps_dep" <<< "$server_deps"
+          test "$(find "$out" -maxdepth 1 -type f -name '*.xbps' | wc -l)" -eq 1
+          test "$(find "$out" -maxdepth 1 -type f | wc -l)" -ge 3
+      - name: Upload immutable target packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: server-packages-${{ matrix.target }}
+          path: ${{ runner.temp }}/server-packages/*
+          if-no-files-found: error
+          retention-days: 3
+
+  package-dashboard:
+    name: Package independent Desktop · ${{ matrix.target }}
+    needs: [prepare, collect]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            arch: x86_64
+            package_arch: amd64
+            kind: gnu
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            arch: aarch64
+            package_arch: arm64
+            kind: gnu
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            arch: x86_64
+            package_arch: amd64
+            kind: musl
+            target_triple: x86_64-unknown-linux-musl
+            xbps_static_arch: x86_64
+            xbps_arch: x86_64-musl
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            arch: aarch64
+            package_arch: arm64
+            kind: musl
+            target_triple: aarch64-unknown-linux-musl
+            xbps_static_arch: aarch64
+            xbps_arch: aarch64-musl
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+      TARGET: ${{ matrix.target_triple || matrix.target }}
+      DESKTOP_ARCH: ${{ matrix.arch }}
+      PACKAGE_ARCH: ${{ matrix.package_arch }}
+      XBPS_ARCH: ${{ matrix.xbps_arch }}
+      XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}
+    steps:
+      - name: Checkout packaging metadata
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Download canonical Dashboard build
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: canonical-release-inputs
+          path: canonical
+      - name: Install package inspection tools
+        if: matrix.kind == 'gnu'
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm zstd
+      - name: Set up pinned Go toolchain for nFPM (GNU)
+        if: matrix.kind == 'gnu'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.26.10"
+          check-latest: false
+          cache: false
+      - name: Create separate Dashboard DEB
+        if: matrix.kind == 'gnu'
+        shell: bash
+        run: |
+          set -euo pipefail
+          appimage="$GITHUB_WORKSPACE/canonical/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH.AppImage"
+          test -s "$appimage"
+          stage="$RUNNER_TEMP/dashboard-stage"
+          out="$RUNNER_TEMP/dashboard-package"
+          rm -rf "$stage" "$out"
+          mkdir -p "$stage/opt/gitrun-desktop" "$stage/usr/share/applications" "$out"
+          install -m 0755 "$appimage" "$stage/opt/gitrun-desktop/GitRun.AppImage"
+          cat > "$stage/usr/share/applications/gitrun-desktop.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=GitRun Desktop
+          Comment=GitRun desktop management interface
+          Exec=/opt/gitrun-desktop/GitRun.AppImage
+          Terminal=false
+          Categories=Development;System;
+          DESKTOP
+          command -v go >/dev/null
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          cat > "$RUNNER_TEMP/dashboard-nfpm.yaml" <<NFPM
+          name: gitrun-desktop
+          arch: $PACKAGE_ARCH
+          platform: linux
+          version: $VERSION_NUMBER
+          maintainer: Vider06
+          description: GitRun Tauri Dashboard, independently installable from the server
+          license: Apache-2.0
+          depends: [libwebkit2gtk-4.1-0, policykit-1]
+          overrides:
+            rpm:
+              depends: ["(webkit2gtk4.1 or libwebkit2gtk-4_1-0)", polkit]
+            archlinux:
+              depends: [webkit2gtk-4.1, polkit]
+          contents:
+            - src: $stage/opt/gitrun-desktop/GitRun.AppImage
+              dst: /opt/gitrun-desktop/GitRun.AppImage
+              file_info:
+                mode: 0755
+            - src: $stage/usr/share/applications/gitrun-desktop.desktop
+              dst: /usr/share/applications/gitrun-desktop.desktop
+          NFPM
+          config="$RUNNER_TEMP/dashboard-nfpm.yaml"
+          nfpm package --config "$config" --packager deb --target "$out"
+          deb="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop_*.deb' -print -quit)"
+          test -n "$deb"
+          mv "$deb" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb"
+          test "$(dpkg-deb -f "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb" Package)" = gitrun-desktop
+
+          nfpm package --config "$config" --packager rpm --target "$out"
+          rpm="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.rpm' -print -quit)"
+          test -n "$rpm"
+          mv "$rpm" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm"
+          test "$(rpm -qp --queryformat '%{NAME}' "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm")" = gitrun-desktop
+          rpm_requires="$(rpm -qp --requires "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm")"
+          grep -Fq webkit2gtk4.1 <<< "$rpm_requires"
+          grep -Fq libwebkit2gtk-4_1-0 <<< "$rpm_requires"
+
+          nfpm package --config "$config" --packager archlinux --target "$out"
+          arch="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.pkg.tar.zst' -print -quit)"
+          test -n "$arch"
+          mv "$arch" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst"
+          arch_pkginfo="$(tar --zstd -xOf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst" .PKGINFO)"
+          grep -Fq 'pkgname = gitrun-desktop' <<< "$arch_pkginfo"
+          grep -Fq 'depend = webkit2gtk-4.1' <<< "$arch_pkginfo"
+      - name: Upload separate Dashboard package
+        if: matrix.kind == 'gnu'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dashboard-package-${{ matrix.target }}
+          path: ${{ runner.temp }}/dashboard-package/*
+          if-no-files-found: error
+          retention-days: 3
+      - name: Set up pinned Go toolchain for nFPM (musl)
+        if: matrix.kind == 'musl'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.26.10"
+          check-latest: false
+          cache: false
+      - name: Build musl APK and XBPS packages
+        if: matrix.kind == 'musl'
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="$GITHUB_WORKSPACE/canonical/GitRun-Desktop-$VERSION-$TARGET.bin"
+          test -s "$binary"
+          stage="$RUNNER_TEMP/dashboard-musl-stage"
+          out="$RUNNER_TEMP/dashboard-package"
+          rm -rf "$stage" "$out"
+          mkdir -p "$stage/usr/bin" "$stage/usr/share/applications" "$out"
+          install -m 0755 "$binary" "$stage/usr/bin/gitrun-desktop"
+          cat > "$stage/usr/share/applications/gitrun-desktop.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=GitRun Desktop
+          Comment=GitRun desktop management interface
+          Exec=/usr/bin/gitrun-desktop
+          Terminal=false
+          Categories=Development;System;
+          DESKTOP
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          cat > "$RUNNER_TEMP/dashboard-musl-nfpm.yaml" <<NFPM
+          name: gitrun-desktop
+          arch: $PACKAGE_ARCH
+          platform: linux
+          version: $VERSION_NUMBER
+          maintainer: Vider06
+          description: GitRun Tauri Dashboard for musl Linux, independently installable from the server
+          license: Apache-2.0
+          depends: [musl]
+          overrides:
+            apk:
+              depends: [musl, webkit2gtk-4.1, polkit]
+          contents:
+            - src: $stage/usr/bin/gitrun-desktop
+              dst: /usr/bin/gitrun-desktop
+              file_info:
+                mode: 0755
+            - src: $stage/usr/share/applications/gitrun-desktop.desktop
+              dst: /usr/share/applications/gitrun-desktop.desktop
+          NFPM
+          if [ "$DESKTOP_ARCH" = "x86_64" ]; then
+            nfpm package --config "$RUNNER_TEMP/dashboard-musl-nfpm.yaml" --packager apk --target "$out"
+            apk="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop*.apk' -print -quit)"
+            test -n "$apk"
+            mv "$apk" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk"
+            apk_contents="$(tar -tzf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk")"
+            grep -Fq '.PKGINFO' <<< "$apk_contents"
+          fi
+
+          xbps_stage="$RUNNER_TEMP/dashboard-xbps-stage"
+          cp -a "$stage" "$xbps_stage"
+          xbps_root="$RUNNER_TEMP/xbps-static"
+          mkdir -p "$xbps_root"
+          curl --fail --silent --show-error --location \
+            "https://repo-default.voidlinux.org/static/xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz" \
+            -o "$RUNNER_TEMP/xbps-static.tar.xz"
+          tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
+          xbps_create="$xbps_root/usr/bin/xbps-create"
+          xbps_rindex="$xbps_root/usr/bin/xbps-rindex"
+          xbps_query="$xbps_root/usr/bin/xbps-query"
+          test -x "$xbps_create" && test -x "$xbps_rindex" && test -x "$xbps_query"
+          (cd "$out" && "$xbps_create" -A "$XBPS_ARCH" \
+            -n "gitrun-desktop-${VERSION_NUMBER}_1" -D "musl libwebkit2gtk41 polkit" \
+            -H https://github.com/Vider06/GitRun -l Apache-2.0 -m Vider06 \
+            -s "GitRun Desktop for musl Linux" "$xbps_stage")
+          xbps="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop*.xbps' -print -quit)"
+          test -n "$xbps"
+          mv "$xbps" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-xbps.xbps"
+          "$xbps_rindex" -a "$out"/*.xbps
+          desktop_deps="$("$xbps_query" -R --repository="$out" -x "gitrun-desktop-${VERSION_NUMBER}_1")"
+          grep -Fq musl <<< "$desktop_deps"
+          grep -Fq libwebkit2gtk41 <<< "$desktop_deps"
+          grep -Fq polkit <<< "$desktop_deps"
+      - name: Upload musl Desktop packages
+        if: matrix.kind == 'musl'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dashboard-package-${{ matrix.target }}
+          path: ${{ runner.temp }}/dashboard-package/*
+          if-no-files-found: error
+          retention-days: 3
+
+  migration-package:
+    name: Build optional compatibility package
+    needs: [prepare, collect]
+    if: needs.prepare.outputs.migration_release == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+    steps:
+      - name: Checkout legacy packaging inputs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Download new Server binary
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: canonical-release-inputs
+          path: canonical
+      - name: Restore canonical binary permissions
+        run: |
+          set -euo pipefail
+          chmod 0755 canonical/gitrun-x86_64-unknown-linux-gnu
+      - name: Checkout exact 1.8.23 packaging contract
+        run: git clone --quiet --depth 1 --branch v1.8.23 "https://github.com/$GITHUB_REPOSITORY.git" "$RUNNER_TEMP/gitrun-v1.8.23-packaging"
+      - name: Assemble legacy-layout migration package
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dpkg-dev imagemagick
+          test "$VERSION" = v1.9.0
+          binary="$GITHUB_WORKSPACE/canonical/gitrun-x86_64-unknown-linux-gnu"
+          test -x "$binary"
+          root="$RUNNER_TEMP/legacy-deb-root"
+          out="$RUNNER_TEMP/migration-package"
+          rm -rf "$root" "$out"
+          mkdir -p "$root/DEBIAN" "$root/usr/bin" "$root/usr/libexec/gitrun" \
+            "$root/usr/share/gitrun" "$root/usr/share/doc/gitrun" "$root/usr/share/applications" "$out"
+          cat > "$root/DEBIAN/control" <<CONTROL
+          Package: gitrun
+          Version: $VERSION_NUMBER
+          Section: devel
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Vider06
+          Description: GitRun self-hosted GitHub Actions runner manager
+           One-time migration package for existing GitRun 1.8.23 installations.
+          CONTROL
+          install -m 0755 "$binary" "$root/usr/bin/gitrun"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/scripts/reinstall-latest.sh" "$root/usr/libexec/gitrun/reinstall-latest.sh"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/scripts/uninstall.sh" "$root/usr/libexec/gitrun/uninstall.sh"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/packaging/gitrun-prerm" "$root/DEBIAN/prerm"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/packaging/gitrun-postinst" "$root/DEBIAN/postinst"
+          sh -n "$root/DEBIAN/prerm"
+          sh -n "$root/DEBIAN/postinst"
+          install -m 0644 version.txt "$root/usr/share/gitrun/version.txt"
+          install -m 0644 LICENSE "$root/usr/share/doc/gitrun/LICENSE"
+          install -m 0644 README.md "$root/usr/share/doc/gitrun/README.md"
+          install -m 0644 config/config.example.env "$root/usr/share/doc/gitrun/config.example.env"
+          install -m 0644 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/packaging/gitrun.desktop" "$root/usr/share/applications/gitrun.desktop"
+          for size in 32 64 128 256 512; do
+            source="$RUNNER_TEMP/gitrun-v1.8.23-packaging/assets/gitrun-icon-$size.png"
+            destination="$root/usr/share/icons/hicolor/${size}x${size}/apps/gitrun.png"
+            test -s "$source"
+            mkdir -p "$(dirname "$destination")"
+            convert "$source" -alpha on -define png:color-type=6 "PNG32:$destination"
+          done
+          artifact="GitRun-$VERSION-linux-x86_64-deb.deb"
+          dpkg-deb --build --root-owner-group "$root" "$out/$artifact" >/dev/null
+          test "$(dpkg-deb -f "$out/$artifact" Package)" = gitrun
+          test "$(dpkg-deb -f "$out/$artifact" Version)" = "$VERSION_NUMBER"
+          dpkg-deb -x "$out/$artifact" "$RUNNER_TEMP/legacy-package-inspect"
+          test -x "$RUNNER_TEMP/legacy-package-inspect/usr/bin/gitrun"
+          test -x "$RUNNER_TEMP/legacy-package-inspect/usr/libexec/gitrun/reinstall-latest.sh"
+      - name: Upload legacy migration package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: migration-deb-linux-x86_64
+          path: ${{ runner.temp }}/migration-package/*
+          if-no-files-found: error
+          retention-days: 3
+
+  validate:
+    name: Validate collected package matrix
+    needs: [prepare, collect, package-server, package-dashboard, migration-package]
+    if: always() && needs.prepare.result == 'success' && needs.collect.result == 'success' && needs.package-server.result == 'success' && needs.package-dashboard.result == 'success' && (needs.migration-package.result == 'success' || (needs.prepare.outputs.migration_release != 'true' && needs.migration-package.result == 'skipped'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+      MIGRATION_RELEASE: ${{ needs.prepare.outputs.migration_release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Download collected canonical inputs
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: canonical-release-inputs
+          path: all-assets
+      - name: Download all Server package targets
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          pattern: server-packages-*
+          path: all-assets
+          merge-multiple: true
+      - name: Download independent Dashboard package
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          pattern: dashboard-package-*
+          path: all-assets
+          merge-multiple: true
+      - name: Download one-off legacy migration package
+        if: env.MIGRATION_RELEASE == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: migration-deb-linux-x86_64
+          path: all-assets
+      - name: Stage publishable release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          mapfile -d '' -t release_binaries < <(find all-assets -maxdepth 1 -type f -name 'GitRun-*' -print0)
+          if ((${#release_binaries[@]} == 0)); then
+            echo "No GitRun release artifacts were staged" >&2
+            exit 1
+          fi
+          cp -- "${release_binaries[@]}" release-assets/
+          cp all-assets/library.zip all-assets/cargo-metadata.json all-assets/sbom.spdx.json all-assets/provenance.json release-assets/
+          # GitHub artifact ZIP downloads normalize regular files to 0644.
+          # Restore executable modes for the standalone Desktop payloads before validation/publication.
+          find release-assets -maxdepth 1 -type f \
+            \( -name 'GitRun-Desktop-*.AppImage' -o -name 'GitRun-Desktop-*-unknown-linux-musl.bin' \) \
+            -exec chmod 0755 {} +
+          for executable in \
+            "release-assets/GitRun-Desktop-$VERSION-linux-x86_64.AppImage" \
+            "release-assets/GitRun-Desktop-$VERSION-linux-aarch64.AppImage" \
+            "release-assets/GitRun-Desktop-$VERSION-x86_64-unknown-linux-musl.bin" \
+            "release-assets/GitRun-Desktop-$VERSION-aarch64-unknown-linux-musl.bin"; do
+            test -s "$executable"
+            test -x "$executable"
+          done
+      - name: Install release verification tools
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq zstd unzip zip rpm
+      - name: Verify required artifacts and create checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/release-assets"
+          expected_files=()
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            expected_files+=("GitRun-Server-$VERSION-$target-server.tar.gz" "GitRun-Server-$VERSION-$target-server.tar.zst")
+            test -s "$root/GitRun-Server-$VERSION-$target-server.tar.gz"
+            test -s "$root/GitRun-Server-$VERSION-$target-server.tar.zst"
+          done
+          for file in \
+            "GitRun-Server-$VERSION-linux-x86_64-deb.deb" \
+            "GitRun-Server-$VERSION-linux-aarch64-deb.deb" \
+            "GitRun-Server-$VERSION-linux-x86_64-rpm.rpm" \
+            "GitRun-Server-$VERSION-linux-aarch64-rpm.rpm" \
+            "GitRun-Server-$VERSION-linux-x86_64-musl-apk.apk" \
+            "GitRun-Server-$VERSION-linux-aarch64-musl-apk.apk" \
+            "GitRun-Server-$VERSION-linux-x86_64-arch.pkg.tar.zst" \
+            "GitRun-Server-$VERSION-linux-aarch64-arch.pkg.tar.zst" \
+            "GitRun-Server-$VERSION-linux-x86_64-xbps.xbps" \
+            "GitRun-Server-$VERSION-linux-aarch64-xbps.xbps" \
+            "GitRun-Server-$VERSION-linux-x86_64-musl-xbps.xbps" \
+            "GitRun-Server-$VERSION-linux-aarch64-musl-xbps.xbps" \
+            "GitRun-Desktop-$VERSION-linux-x86_64-deb.deb" \
+            "GitRun-Desktop-$VERSION-linux-aarch64-deb.deb" \
+            "GitRun-Desktop-$VERSION-linux-x86_64-rpm.rpm" \
+            "GitRun-Desktop-$VERSION-linux-aarch64-rpm.rpm" \
+            "GitRun-Desktop-$VERSION-linux-x86_64-archlinux.pkg.tar.zst" \
+            "GitRun-Desktop-$VERSION-linux-aarch64-archlinux.pkg.tar.zst" \
+            "GitRun-Desktop-$VERSION-linux-x86_64.AppImage" \
+            "GitRun-Desktop-$VERSION-linux-aarch64.AppImage" \
+            "GitRun-Desktop-$VERSION-x86_64-unknown-linux-musl.bin" \
+            "GitRun-Desktop-$VERSION-aarch64-unknown-linux-musl.bin" \
+            "GitRun-Desktop-$VERSION-linux-x86_64-musl-apk.apk" \
+            "GitRun-Desktop-$VERSION-linux-x86_64-musl-xbps.xbps" \
+            "GitRun-Desktop-$VERSION-linux-aarch64-musl-xbps.xbps" \
+            library.zip cargo-metadata.json sbom.spdx.json provenance.json; do
+            expected_files+=("$file")
+            test -s "$root/$file" || { echo "Missing required artifact: $file" >&2; exit 1; }
+          done
+          for deb in "$root"/GitRun-Server-"$VERSION"-linux-*-deb.deb; do
+            test "$(dpkg-deb -f "$deb" Package)" = gitrun-server
+            test "$(dpkg-deb -f "$deb" Version)" = "$VERSION_NUMBER"
+            test "$(dpkg-deb -f "$deb" Conflicts)" = gitrun
+            test "$(dpkg-deb -f "$deb" Replaces)" = gitrun
+            deb_contents="$(dpkg-deb -c "$deb")"
+            grep -Fq '/usr/lib/systemd/system/gitrun.service' <<< "$deb_contents"
+            control="$RUNNER_TEMP/$(basename "$deb").control"
+            mkdir -p "$control"
+            dpkg-deb --control "$deb" "$control"
+            for script in postinst prerm; do
+              test -s "$control/$script"
+              sh -n "$control/$script"
+            done
+          done
+          for arch in x86_64 aarch64; do
+            server_arch="$root/GitRun-Server-$VERSION-linux-$arch-arch.pkg.tar.zst"
+            server_pkginfo="$(tar --zstd -xOf "$server_arch" .PKGINFO)"
+            grep -Fq 'pkgname = gitrun-server' <<< "$server_pkginfo"
+            server_files="$(tar --zstd -tf "$server_arch")"
+            grep -Fq 'usr/bin/gitrun' <<< "$server_files"
+            grep -Fq 'usr/lib/systemd/system/gitrun.service' <<< "$server_files"
+
+            gui="$root/GitRun-Desktop-$VERSION-linux-$arch-deb.deb"
+            test "$(dpkg-deb -f "$gui" Package)" = gitrun-desktop
+            gui_contents="$(dpkg-deb -c "$gui")"
+            grep -Fq '/opt/gitrun-desktop/GitRun.AppImage' <<< "$gui_contents"
+            gui_dependencies="$(dpkg-deb -f "$gui" Depends | tr ',' '\n' | sed 's/^[[:space:]]*//')"
+            grep -Fxq policykit-1 <<< "$gui_dependencies"
+            if grep -Eq '/usr/bin/gitrun$' <<< "$gui_contents"; then
+              echo "Desktop package unexpectedly contains /usr/bin/gitrun" >&2
+              exit 1
+            fi
+
+            gui_rpm="$root/GitRun-Desktop-$VERSION-linux-$arch-rpm.rpm"
+            test "$(rpm -qp --queryformat '%{NAME}' "$gui_rpm")" = gitrun-desktop
+            rpm_requires="$(rpm -qp --requires "$gui_rpm")"
+            grep -Fq webkit2gtk4.1 <<< "$rpm_requires"
+            grep -Fq libwebkit2gtk-4_1-0 <<< "$rpm_requires"
+
+            gui_arch="$root/GitRun-Desktop-$VERSION-linux-$arch-archlinux.pkg.tar.zst"
+            arch_pkginfo="$(tar --zstd -xOf "$gui_arch" .PKGINFO)"
+            grep -Fq 'pkgname = gitrun-desktop' <<< "$arch_pkginfo"
+            grep -Fq 'depend = webkit2gtk-4.1' <<< "$arch_pkginfo"
+            gui_files="$(tar --zstd -tf "$gui_arch")"
+            grep -Fq 'opt/gitrun-desktop/GitRun.AppImage' <<< "$gui_files"
+          done
+          if [ -e "$root/GitRun-Desktop-$VERSION-linux-aarch64-musl-apk.apk" ]; then
+            echo "Alpine ARM64 Desktop APK must not be published without WebKitGTK 4.1 support" >&2
+            exit 1
+          fi
+          gui_apk="$root/GitRun-Desktop-$VERSION-linux-x86_64-musl-apk.apk"
+          apk_listing="$(tar -tzf "$gui_apk")"
+          grep -Fq '.PKGINFO' <<< "$apk_listing"
+          apk_metadata="$(tar -xOzf "$gui_apk" .PKGINFO)"
+          grep -Fxq 'pkgname = gitrun-desktop' <<< "$apk_metadata"
+          grep -Fxq 'arch = x86_64' <<< "$apk_metadata"
+          grep -Fxq 'depend = musl' <<< "$apk_metadata"
+          grep -Fxq 'depend = webkit2gtk-4.1' <<< "$apk_metadata"
+          grep -Fxq 'depend = polkit' <<< "$apk_metadata"
+          for arch in x86_64 aarch64; do
+            test -s "$root/GitRun-Desktop-$VERSION-linux-$arch-musl-xbps.xbps"
+            test -x "$root/GitRun-Desktop-$VERSION-$arch-unknown-linux-musl.bin"
+          done
+          server_deb_contents="$(dpkg-deb -c "$root/GitRun-Server-$VERSION-linux-x86_64-deb.deb")"
+          if grep -Eq '/GitRun\.AppImage$' <<< "$server_deb_contents"; then
+            echo "Server package unexpectedly contains the Desktop AppImage" >&2
+            exit 1
+          fi
+          if [ "$MIGRATION_RELEASE" = true ]; then
+            legacy="$root/GitRun-$VERSION-linux-x86_64-deb.deb"
+            test -s "$legacy"
+            test "$(dpkg-deb -f "$legacy" Package)" = gitrun
+            test "$(dpkg-deb -f "$legacy" Version)" = "$VERSION_NUMBER"
+            expected_files+=("GitRun-$VERSION-linux-x86_64-deb.deb")
+            legacy_contents="$(dpkg-deb -c "$legacy")"
+            grep -Fq '/usr/libexec/gitrun/reinstall-latest.sh' <<< "$legacy_contents"
+            grep -Fq '/usr/bin/gitrun' <<< "$legacy_contents"
+          else
+            shopt -s nullglob
+            legacy_candidates=("$root"/GitRun-*-linux-x86_64-deb.deb)
+            shopt -u nullglob
+            if (("${#legacy_candidates[@]}" > 0)); then
+              echo "A legacy migration DEB was staged for a standard release" >&2
+              exit 1
+            fi
+          fi
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected_files[@]}" | sort)
+          mapfile -t actual_sorted < <(find "$root" -maxdepth 1 -type f -printf '%f\n' | sort)
+          diff -u <(printf '%s\n' "${expected_sorted[@]}") <(printf '%s\n' "${actual_sorted[@]}")
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            archive="$root/GitRun-Server-$VERSION-$target-server.tar.gz"
+            dir="$RUNNER_TEMP/update-check-$target"
+            rm -rf "$dir"; mkdir -p "$dir"
+            tar -xzf "$archive" -C "$dir"
+            test -x "$dir/gitrun"
+            test "$(cat "$dir/version.txt")" = "$VERSION_NUMBER"
+            archive="$root/GitRun-Server-$VERSION-$target-server.tar.zst"
+            dir="$RUNNER_TEMP/package-check-$target"
+            rm -rf "$dir"; mkdir -p "$dir"
+            tar --zstd -xf "$archive" -C "$dir"
+            test -x "$dir/usr/bin/gitrun"
+            test "$(cat "$dir/usr/share/gitrun/version.txt")" = "$VERSION_NUMBER"
+          done
+          # Inspect the native package metadata and payloads without executing foreign-architecture binaries.
+          mapfile -d '' -t rpm_files < <(find "$root" -maxdepth 1 -type f -name "GitRun-Server-$VERSION-linux-*-rpm.rpm" -print0)
+          for rpm_file in "${rpm_files[@]}"; do
+            rpm -qp --qf '%{NAME} %{VERSION}' "$rpm_file" | grep -Fx "gitrun-server $VERSION_NUMBER"
+            rpm_contents="$(rpm -qpl "$rpm_file")"
+            rpm_requirements="$(rpm -qp --requires "$rpm_file")"
+            grep -Fxq /usr/bin/gitrun <<< "$rpm_contents"
+            grep -Fxq /usr/lib/systemd/system/gitrun.service <<< "$rpm_contents"
+            grep -Fxq glibc <<< "$rpm_requirements"
+            grep -Fxq polkit <<< "$rpm_requirements"
+          done
+          mapfile -d '' -t apk_files < <(find "$root" -maxdepth 1 -type f -name "GitRun-Server-$VERSION-linux-*-apk.apk" -print0)
+          for apk_file in "${apk_files[@]}"; do
+            apk_contents="$(tar -tzf "$apk_file")"
+            grep -Fxq .PKGINFO <<< "$apk_contents"
+          done
+          arch_file="$root/GitRun-Server-$VERSION-linux-x86_64-arch.pkg.tar.zst"
+          arch_contents="$(tar --zstd -tf "$arch_file")"
+          grep -Fxq .PKGINFO <<< "$arch_contents"
+          grep -Fxq usr/bin/gitrun <<< "$arch_contents"
+          grep -Fxq usr/lib/systemd/system/gitrun.service <<< "$arch_contents"
+          arch_pkginfo="$(tar --zstd -xOf "$arch_file" .PKGINFO)"
+          grep -Fxq 'depend = glibc' <<< "$arch_pkginfo"
+          grep -Fxq 'depend = polkit' <<< "$arch_pkginfo"
+
+          mapfile -t library_members < <(unzip -Z1 "$root/library.zip")
+          (("${#library_members[@]}" == 11))
+          for member in "${library_members[@]}"; do
+            [[ "$member" == *.json.Back && "$member" != /* && "$member" != *".."* && "$member" != *\\* ]]
+            unzip -p "$root/library.zip" "$member" | jq -e 'type == "object" or type == "array"' >/dev/null
+          done
+
+          (cd "$root" && sha256sum -- * > SHA256SUMS && sha256sum -c SHA256SUMS)
+      - name: Upload validated release payload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: validated-release-assets
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 3
+
+  sign:
+    name: Sign manifest and verify updater
+    needs: [prepare, validate]
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+      MIGRATION_RELEASE: ${{ needs.prepare.outputs.migration_release }}
+    steps:
+      - name: Checkout updater source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Download validated release payload
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: validated-release-assets
+          path: release-assets
+      - name: Install release manifest tools
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq
+      - name: Install Rust toolchain for updater verification
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Generate complete release manifest
+        env:
+          ROOT: ${{ github.workspace }}/release-assets
+        run: |
+          set -euo pipefail
+          python3 - "$ROOT" "$VERSION" "$GITHUB_SHA" <<'PY'
+          import hashlib, json, os, sys
+          from pathlib import Path
+          root, version, commit = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+          items = []
+          for path in sorted(root.iterdir()):
+              if not path.is_file() or path.name == "release-manifest.json":
+                  continue
+              name = path.name
+              if name == "library.zip": target = "library-json-backup"
+              elif name == "cargo-metadata.json": target = "cargo-metadata"
+              elif name == "sbom.spdx.json": target = "sbom-spdx"
+              elif name == "provenance.json": target = "provenance"
+              elif name == "SHA256SUMS": target = "sha256sums"
+              elif "-server.tar.gz" in name: target = name[len(f"GitRun-Server-{version}-"):-len("-server.tar.gz")]
+              elif "-server.tar.zst" in name:
+                  triple = name[len(f"GitRun-Server-{version}-"):-len("-server.tar.zst")]
+                  cpu, abi = triple.split("-unknown-linux-")
+                  target = f"linux-{cpu}-{abi}-tar-zst"
+              elif name.startswith(f"GitRun-Desktop-{version}-"):
+                  if name.endswith(".AppImage"):
+                      arch = "aarch64" if "-linux-aarch64." in name else "x86_64"
+                      target = f"linux-{arch}-desktop-appimage"
+                  elif name.endswith("-unknown-linux-musl.bin"):
+                      arch = "aarch64" if "aarch64-unknown" in name else "x86_64"
+                      target = f"linux-{arch}-musl-desktop-bin"
+                  else:
+                      arch = "aarch64" if "-linux-aarch64-" in name else "x86_64"
+                      if name.endswith("-deb.deb"):
+                          target = f"linux-{arch}-desktop-deb"
+                      elif name.endswith("-rpm.rpm"):
+                          target = f"linux-{arch}-desktop-rpm"
+                      elif name.endswith("-archlinux.pkg.tar.zst"):
+                          target = f"linux-{arch}-desktop-arch"
+                      elif name.endswith("-musl-apk.apk"):
+                          if arch != "x86_64":
+                              raise SystemExit("Alpine musl APK is only supported on x86_64; ARM64 uses XBPS")
+                          target = f"linux-{arch}-musl-desktop-apk"
+                      elif name.endswith("-musl-xbps.xbps"):
+                          target = f"linux-{arch}-musl-desktop-xbps"
+                      else:
+                          raise SystemExit(f"Unknown Desktop package suffix: {name}")
+              elif name == f"GitRun-{version}-linux-x86_64-deb.deb": target = "linux-x86_64-deb"
+              elif name.startswith(f"GitRun-Server-{version}-linux-"):
+                  package_target = name[len(f"GitRun-Server-{version}-"):]
+                  if package_target.endswith(".pkg.tar.zst"):
+                      package_target = package_target[:-len(".pkg.tar.zst")]
+                  else:
+                      package_target = package_target.rsplit(".", 1)[0]
+                  if package_target.endswith("-deb"): target = package_target[:-4] + "-server-deb"
+                  elif package_target.endswith("-rpm"): target = package_target[:-4] + "-server-rpm"
+                  elif package_target.endswith("-apk"): target = package_target[:-4] + "-server-apk"
+                  elif package_target.endswith("-arch"): target = package_target[:-5] + "-server-arch"
+                  elif package_target.endswith("-xbps"): target = package_target[:-5] + "-server-xbps"
+                  else: raise SystemExit(f"Unknown Server package suffix: {name}")
+              items.append({"target":target,"file":name,"sha256":hashlib.sha256(path.read_bytes()).hexdigest()})
+          required = {
+              "x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu",
+              "x86_64-unknown-linux-musl","aarch64-unknown-linux-musl",
+              "linux-x86_64-gnu-tar-zst","linux-aarch64-gnu-tar-zst",
+              "linux-x86_64-musl-tar-zst","linux-aarch64-musl-tar-zst",
+              "linux-x86_64-desktop-appimage","linux-aarch64-desktop-appimage",
+              "linux-x86_64-desktop-deb","linux-aarch64-desktop-deb",
+              "linux-x86_64-desktop-rpm","linux-aarch64-desktop-rpm",
+              "linux-x86_64-desktop-arch","linux-aarch64-desktop-arch",
+              "linux-x86_64-musl-desktop-bin","linux-aarch64-musl-desktop-bin",
+              "linux-x86_64-musl-desktop-apk",
+              "linux-x86_64-musl-desktop-xbps","linux-aarch64-musl-desktop-xbps",
+              "linux-x86_64-server-deb","linux-aarch64-server-deb",
+              "linux-x86_64-server-rpm","linux-aarch64-server-rpm",
+              "linux-x86_64-musl-server-apk","linux-aarch64-musl-server-apk",
+              "linux-x86_64-server-arch","linux-aarch64-server-arch",
+              "linux-x86_64-server-xbps","linux-aarch64-server-xbps",
+              "linux-x86_64-musl-server-xbps",
+              "linux-aarch64-musl-server-xbps",
+              "library-json-backup","cargo-metadata","sbom-spdx","provenance","sha256sums"
+          }
+          if os.environ.get("MIGRATION_RELEASE") == "true": required.add("linux-x86_64-deb")
+          if os.environ.get("MIGRATION_RELEASE") != "true" and any(item["target"] == "linux-x86_64-deb" for item in items): raise SystemExit("Unexpected legacy migration target")
+          actual_targets = {item["target"] for item in items}
+          if actual_targets != required:
+              raise SystemExit(f"Manifest target mismatch; missing={sorted(required - actual_targets)}, unexpected={sorted(actual_targets - required)}")
+          if len(items) != len(required): raise SystemExit("Manifest contains duplicate targets")
+          manifest = {"name":"GitRun","version":version,"git_commit":commit,"repository":"Vider06/GitRun","artifacts":items}
+          (root/"release-manifest.json").write_text(json.dumps(manifest,indent=2)+"\n",encoding="utf-8")
+          PY
+      - name: Verify updater target-to-archive mapping
+        env:
+          ROOT: ${{ github.workspace }}/release-assets
+        run: |
+          set -euo pipefail
+          python3 - "$ROOT/release-manifest.json" "$VERSION" <<'PY'
+          import json, sys
+          from pathlib import Path
+          manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          version = sys.argv[2]
+          targets = [
+              "x86_64-unknown-linux-gnu",
+              "aarch64-unknown-linux-gnu",
+              "x86_64-unknown-linux-musl",
+              "aarch64-unknown-linux-musl",
+          ]
+          by_target = {item["target"]: item["file"] for item in manifest["artifacts"]}
+          for target in targets:
+              expected = f"GitRun-Server-{version}-{target}-server.tar.gz"
+              if by_target.get(target) != expected:
+                  raise SystemExit(f"Updater target {target} must select {expected}, got {by_target.get(target)!r}")
+          if len(by_target) != len(manifest["artifacts"]):
+              raise SystemExit("Manifest contains duplicate artifact targets")
+          PY
+      - name: Sign manifest with Ed25519
+        env:
+          GITRUN_UPDATE_SIGNING_KEY_ID: ${{ vars.GITRUN_UPDATE_SIGNING_KEY_ID }}
+          GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64 }}
+          ROOT: ${{ github.workspace }}/release-assets
+        run: |
+          set -euo pipefail
+          test -n "$GITRUN_UPDATE_SIGNING_KEY_ID"
+          test -n "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64"
+          key="$RUNNER_TEMP/key.der"; public="$RUNNER_TEMP/public.der"; payload="$RUNNER_TEMP/payload.json"; sigfile="$RUNNER_TEMP/manifest.sig"
+          trap 'rm -f "$key" "$public" "$payload" "$sigfile"' EXIT
+          printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
+          chmod 600 "$key"
+          openssl pkey -inform DER -in "$key" -pubout -outform DER -out "$public"
+          public_hex="$(tail -c 32 "$public" | od -An -v -tx1 | tr -d '[:space:]')"
+          echo "GITRUN_UPDATE_PUBLIC_KEY_HEX=$public_hex" >> "$GITHUB_ENV"
+          echo "GITRUN_UPDATE_PUBLIC_KEY_ID=$GITRUN_UPDATE_SIGNING_KEY_ID" >> "$GITHUB_ENV"
+          jq -S -c '. | del(.signature, .signature_key_id)' "$ROOT/release-manifest.json" | tr -d '\n' > "$payload"
+          openssl pkeyutl -sign -rawin -inkey "$key" -keyform DER -in "$payload" -out "$sigfile"
+          openssl pkeyutl -verify -rawin -pubin -inkey "$public" -keyform DER -in "$payload" -sigfile "$sigfile"
+          signature="$(od -An -v -tx1 "$sigfile" | tr -d '[:space:]')"
+          test "${#signature}" -eq 128
+          jq --arg sig "$signature" --arg key_id "$GITRUN_UPDATE_SIGNING_KEY_ID" \
+            '. + {signature:$sig,signature_key_id:$key_id}' "$ROOT/release-manifest.json" > "$ROOT/manifest.tmp"
+          mv "$ROOT/manifest.tmp" "$ROOT/release-manifest.json"
+      - name: Run updater tests against the aggregated manifest
+        env:
+          GITRUN_UPDATE_SIGNATURE_REQUIRED: "true"
+          GITRUN_RELEASE_MANIFEST: ${{ github.workspace }}/release-assets/release-manifest.json
+        run: |
+          set -euo pipefail
+          cargo test --locked -p gitrun-updater
+          tampered="$RUNNER_TEMP/manifest-tampered.json"
+          jq '.version = (.version + "-tampered")' "$GITRUN_RELEASE_MANIFEST" > "$tampered"
+          if GITRUN_RELEASE_MANIFEST="$tampered" cargo test --locked -p gitrun-updater --test release_manifest_signature; then
+            echo "Updater accepted a tampered manifest" >&2
+            exit 1
+          fi
+          release_root="$(dirname "$GITRUN_RELEASE_MANIFEST")"
+          expected_count="$(find "$release_root" -maxdepth 1 -type f ! -name release-manifest.json | wc -l)"
+          jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" --argjson count "$expected_count" \
+            '.name == "GitRun" and .version == $version and .git_commit == $commit and (.artifacts | length == $count) and all(.artifacts[]; (.sha256 | test("^[0-9a-f]{64}$")) and (.file | test("^[^/\\\\]+$")))' \
+            "$GITRUN_RELEASE_MANIFEST" >/dev/null
+      - name: Upload signed release payload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: signed-release-assets
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 3
+
+  release:
+    name: Publish validated release
+    needs: [prepare, sign]
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+      MIGRATION_RELEASE: ${{ needs.prepare.outputs.migration_release }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Checkout release source for package setup
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download signed release payload
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: signed-release-assets
+          path: release-assets
+      - name: Install 1.8.23 updater build dependencies
+        if: env.MIGRATION_RELEASE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            build-essential curl wget file pkg-config libssl-dev imagemagick \
+            libglib2.0-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+
+      - name: Install Rust toolchain for legacy updater verification
+        if: env.MIGRATION_RELEASE == 'true'
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Checkout the legacy 1.8.23 updater source
+        if: env.MIGRATION_RELEASE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/gitrun-v1.8.23"
+          git clone --quiet --depth 1 --branch v1.8.23 "https://github.com/$GITHUB_REPOSITORY.git" "$old"
+          echo "GITRUN_LEGACY_UPDATER_SOURCE=$old" >> "$GITHUB_ENV"
+
+      - name: Normalize legacy Tauri PNG icons to RGBA
+        if: env.MIGRATION_RELEASE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          old="$GITRUN_LEGACY_UPDATER_SOURCE"
+          icon_dir="$old/crates/gitrun-dashboard-tauri/src-tauri/icons"
+          test -d "$icon_dir"
+          shopt -s nullglob
+          icons=("$icon_dir"/*.png)
+          (("${#icons[@]}" > 0))
+          for icon in "${icons[@]}"; do
+            tmp="$(mktemp --suffix=.png)"
+            trap 'rm -f "$tmp"' EXIT
+            convert "$icon" -background none -alpha on -colorspace sRGB -define png:color-type=6 "PNG32:$tmp"
+            identify -format '%m %wx%h %[channels]\\n' "$tmp"
+            channels="$(identify -format '%[channels]' "$tmp")"
+            case "$channels" in
+              *a*) ;;
+              *) echo "Icon was not converted to RGBA: $icon ($channels)" >&2; exit 1 ;;
+            esac
+            mv "$tmp" "$icon"
+            trap - EXIT
+          done
+
+      - name: Verify migration with the actual 1.8.23 updater
+        if: env.MIGRATION_RELEASE == 'true'
+        env:
+          GITRUN_UPDATE_SIGNING_KEY_ID: ${{ vars.GITRUN_UPDATE_SIGNING_KEY_ID }}
+          GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$VERSION" = v1.9.0
+          old="$GITRUN_LEGACY_UPDATER_SOURCE"
+
+          key="$RUNNER_TEMP/migration-key.der"
+          public="$RUNNER_TEMP/migration-public.der"
+          server_pid=""
+          cleanup() {
+            if [ -n "$server_pid" ]; then
+              kill "$server_pid" 2>/dev/null || true
+              wait "$server_pid" 2>/dev/null || true
+            fi
+            rm -f "$key" "$public"
+          }
+          trap cleanup EXIT
+          printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
+          chmod 600 "$key"
+          openssl pkey -inform DER -in "$key" -pubout -outform DER -out "$public"
+          GITRUN_UPDATE_PUBLIC_KEY_HEX="$(tail -c 32 "$public" | od -An -v -tx1 | tr -d '[:space:]')"
+          export GITRUN_UPDATE_PUBLIC_KEY_HEX
+
+          legacy_key_hex="$(python3 - "$old/crates/gitrun-cli/src/main.rs" <<'PYKEY'
+          import re, sys
+          source = open(sys.argv[1], encoding="utf-8").read()
+          match = re.search(r'const DEFAULT_UPDATE_PUBLIC_KEY_HEX: &str\s*=\s*"([0-9a-f]{64})"', source)
+          if not match:
+              raise SystemExit("Could not read the 1.8.23 built-in update trust anchor")
+          print(match.group(1))
+          PYKEY
+          )"
+          legacy_key_id="$(python3 - "$old/crates/gitrun-cli/src/main.rs" <<'PYID'
+          import re, sys
+          source = open(sys.argv[1], encoding="utf-8").read()
+          match = re.search(r'const DEFAULT_UPDATE_PUBLIC_KEY_ID: &str\s*=\s*"([^"]+)"', source)
+          if not match:
+              raise SystemExit("Could not read the 1.8.23 update key identifier")
+          print(match.group(1))
+          PYID
+          )"
+          test "$GITRUN_UPDATE_PUBLIC_KEY_HEX" = "$legacy_key_hex"
+          test "$GITRUN_UPDATE_SIGNING_KEY_ID" = "$legacy_key_id"
+          export GITRUN_UPDATE_PUBLIC_KEY_ID="$GITRUN_UPDATE_SIGNING_KEY_ID"
+          export GITRUN_UPDATE_SIGNATURE_REQUIRED=true
+
+          # Add a loopback-only transport seam to this throwaway 1.8.23 checkout.
+          # No production source or release artifact is modified.
+          python3 - "$old/crates/gitrun-updater/src/lib.rs" "$old/crates/gitrun-cli/src/main.rs" <<'PYPATCH'
+          import re
+          import sys
+          from pathlib import Path
+
+          lib_path, cli_path = map(Path, sys.argv[1:])
+          lib = lib_path.read_text(encoding="utf-8")
+          cli = cli_path.read_text(encoding="utf-8")
+
+          def replace_pattern(source, pattern, replacement, label):
+              updated, count = re.subn(pattern, replacement, source, count=1, flags=re.MULTILINE)
+              if count != 1:
+                  raise SystemExit(f"Expected one {label} anchor, found {count}")
+              return updated
+
+          lib = replace_pattern(
+              lib,
+              r'fn is_https_url\(url: &reqwest::Url\) -> bool \{\s*url\.scheme\(\) == "https"\s*\}',
+              """fn is_https_url(url: &reqwest::Url) -> bool {
+              url.scheme() == "https"
+                  || (url.scheme() == "http"
+                      && url.host_str() == Some("127.0.0.1") /* DevSkim: ignore DS137138 because this HTTP exception exists only in the disposable 1.8.23 migration-test checkout and accepts loopback only. */
+                      && std::env::var("GITRUN_MIGRATION_TEST_BASE_URL").is_ok())
+          }""",
+              "HTTPS validator",
+          )
+          lib = replace_pattern(
+              lib,
+              r"    Ok\(format!\(\s*\"https://github\.com/\{\}/releases/latest/download/release-manifest\.json\",\s*repository\.trim_end_matches\('/'\)\s*\)\)",
+              """    if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
+              if !base_url.starts_with("http://127.0.0.1:") { // DevSkim: ignore DS137138 because this URL is accepted only by the disposable migration-test checkout.
+                  return Err(UpdateError::InvalidManifest(
+                      "migration test URL must use loopback HTTP".into(),
+                  ));
+              }
+              return Ok(format!(
+                  "{}/releases/latest/download/release-manifest.json",
+                  base_url.trim_end_matches('/')
+              ));
+          }
+          Ok(format!(
+              "https://github.com/{}/releases/latest/download/release-manifest.json",
+              repository.trim_end_matches('/')
+          ))""",
+              "latest manifest URL",
+          )
+          cli = replace_pattern(
+              cli,
+              r"    let url = format!\(\s*\"https://github\.com/Vider06/GitRun/releases/download/\{\}/\{\}\",\s*version, artifact_name\s*\);",
+              """    let url = if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
+              if !base_url.starts_with("http://127.0.0.1:") { // DevSkim: ignore DS137138 because this URL is accepted only by the disposable migration-test checkout.
+                  return Err("migration test URL must use loopback HTTP".into());
+              }
+              format!(
+                  "{}/releases/download/{}/{}",
+                  base_url.trim_end_matches('/'),
+                  version,
+                  artifact_name
+              )
+          } else {
+              format!(
+                  "https://github.com/Vider06/GitRun/releases/download/{}/{}",
+                  version, artifact_name
+              )
+          };""",
+              "migration artifact URL",
+          )
+
+          lib_path.write_text(lib, encoding="utf-8")
+          cli_path.write_text(cli, encoding="utf-8")
+          PYPATCH
+
+          (
+            cd "$old"
+            cargo build --locked --release -p gitrun-cli --bin gitrun
+            test -x target/release/gitrun
+            test "$(GITRUN_NO_CAT=1 target/release/gitrun --version --gitrun)" = "GitRun 1.8.23"
+          )
+
+          # Build a disposable 1.9.0 updater with a loopback-only transport seam
+          # so the second migration transaction is exercised without contacting
+          # the public release endpoint. Production package bytes remain unchanged.
+          python3 - "$GITHUB_WORKSPACE/crates/gitrun-updater/src/lib.rs" \
+            "$GITHUB_WORKSPACE/crates/gitrun-cli/src/main.rs" <<'PYPATCHNEW'
+          import re
+          import sys
+          from pathlib import Path
+
+          updater_path, cli_path = map(Path, sys.argv[1:])
+          updater = updater_path.read_text(encoding="utf-8")
+          cli = cli_path.read_text(encoding="utf-8")
+
+          def replace_once(source, pattern, replacement, label):
+              updated, count = re.subn(pattern, replacement, source, count=1, flags=re.MULTILINE)
+              if count != 1:
+                  raise SystemExit(f"Expected one 1.9.0 {label} anchor, found {count}")
+              return updated
+
+          updater = replace_once(
+              updater,
+              r'fn is_https_url\(url: &reqwest::Url\) -> bool \{\s*url\.scheme\(\) == "https"\s*\}',
+              """fn is_https_url(url: &reqwest::Url) -> bool {
+              url.scheme() == "https"
+                  || (url.scheme() == "http"
+                      && url.host_str() == Some("127.0.0.1") /* DevSkim: ignore DS137138 because this HTTP exception exists only in the disposable 1.9.0 migration-test checkout and accepts loopback only. */
+                      && std::env::var("GITRUN_MIGRATION_TEST_BASE_URL").is_ok())
+          }""",
+              "HTTPS validator",
+          )
+          updater = replace_once(
+              updater,
+              r'    Ok\(format!\(\s*"https://github\.com/\{\}/releases/latest/download/release-manifest\.json",\s*repository\.trim_end_matches\(\x27/\x27\)\s*\)\)',
+              """    if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
+              if !base_url.starts_with("http://127.0.0.1:") {
+                  return Err(UpdateError::InvalidManifest(
+                      "migration test URL must use loopback HTTP".into(),
+                  ));
+              }
+              return Ok(format!(
+                  "{}/releases/latest/download/release-manifest.json",
+                  base_url.trim_end_matches('/')
+              ));
+          }
+          Ok(format!(
+              "https://github.com/{}/releases/latest/download/release-manifest.json",
+              repository.trim_end_matches('/')
+          ))""",
+              "latest manifest URL",
+          )
+          cli = replace_once(
+              cli,
+              r'    let url = format!\(\s*"https://github\.com/Vider06/GitRun/releases/download/\{\}/\{\}",\s*version, artifact_name\s*\);',
+              """    let url = if let Ok(base_url) = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL") {
+              if !base_url.starts_with("http://127.0.0.1:") {
+                  return Err("migration test URL must use loopback HTTP".into());
+              }
+              format!(
+                  "{}/releases/download/{}/{}",
+                  base_url.trim_end_matches('/'),
+                  version,
+                  artifact_name
+              )
+          } else {
+              format!(
+                  "https://github.com/Vider06/GitRun/releases/download/{}/{}",
+                  version, artifact_name
+              )
+          };""",
+              "artifact download URL",
+          )
+
+          updater_path.write_text(updater, encoding="utf-8")
+          cli_path.write_text(cli, encoding="utf-8")
+          PYPATCHNEW
+          (
+            cd "$GITHUB_WORKSPACE"
+            cargo build --locked --release -p gitrun-cli --bin gitrun
+            install -m 0755 target/release/gitrun "$RUNNER_TEMP/gitrun-1.9.0-loopback-test"
+          )
+
+          legacy_asset="GitRun-$VERSION-linux-x86_64-deb.deb"
+          test -s "release-assets/$legacy_asset"
+          mock_root="$RUNNER_TEMP/migration-http"
+          mkdir -p "$mock_root/releases/latest/download" "$mock_root/releases/download/$VERSION"
+          install -m 0644 release-assets/release-manifest.json \
+            "$mock_root/releases/latest/download/release-manifest.json"
+          install -m 0644 "release-assets/$legacy_asset" \
+            "$mock_root/releases/download/$VERSION/$legacy_asset"
+          server_asset="GitRun-Server-$VERSION-linux-x86_64-deb.deb"
+          test -s "release-assets/$server_asset"
+          install -m 0644 "release-assets/$server_asset" \
+            "$mock_root/releases/download/$VERSION/$server_asset"
+
+          port="$(python3 - <<'PYPORT'
+          import socket
+          with socket.socket() as sock:
+              sock.bind(("127.0.0.1", 0))  # DevSkim: ignore DS137138 because the ephemeral fixture server binds only to loopback.
+              print(sock.getsockname()[1])
+          PYPORT
+          )"
+          python3 -m http.server "$port" --bind 127.0.0.1 --directory "$mock_root" > "$RUNNER_TEMP/migration-http.log" 2>&1 & # DevSkim: ignore DS137138 because this temporary server serves fixtures only to the local migration test.
+          server_pid=$!
+          base="http://127.0.0.1:$port" # DevSkim: ignore DS137138 because this URL is consumed only by the isolated migration test.
+          ready=false
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --fail --silent "$base/releases/latest/download/release-manifest.json" >/dev/null; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = true
+
+          test_dir="$old/crates/gitrun-updater/tests"
+          mkdir -p "$test_dir"
+          cat > "$test_dir/migration_release_compat.rs" <<'RUST'
+          use gitrun_updater::{download_and_verify, fetch_manifest, latest_manifest_download_url};
+          use std::path::PathBuf;
+
+          #[test]
+          fn v1823_verifies_the_signed_latest_manifest_and_legacy_deb() {
+              let base = std::env::var("GITRUN_MIGRATION_TEST_BASE_URL").unwrap();
+              let manifest_url = latest_manifest_download_url("Vider06/GitRun")
+                  .expect("legacy updater must resolve the latest manifest route");
+              assert_eq!(
+                  manifest_url,
+                  format!("{base}/releases/latest/download/release-manifest.json")
+              );
+              let manifest = fetch_manifest(&manifest_url)
+                  .expect("legacy updater must verify the release manifest signature");
+              assert_eq!(manifest.version, "v1.9.0");
+              let artifact = manifest.artifact_for("linux-x86_64-deb")
+                  .expect("legacy reinstall target must exist");
+              assert_eq!(artifact.file, "GitRun-v1.9.0-linux-x86_64-deb.deb");
+
+              let download_url = format!(
+                  "{base}/releases/download/{}/{}",
+                  manifest.version, artifact.file
+              );
+              download_and_verify(
+                  &download_url,
+                  &artifact.sha256,
+                  PathBuf::from(std::env::var("GITRUN_MIGRATION_DOWNLOAD").unwrap()),
+              )
+              .expect("legacy updater must verify the migration package SHA-256");
+          }
+          RUST
+
+          downloaded="$RUNNER_TEMP/GitRun-$VERSION-linux-x86_64-deb.downloaded.deb"
+          (
+            cd "$old"
+            GITRUN_MIGRATION_TEST_BASE_URL="$base" \
+            GITRUN_MIGRATION_DOWNLOAD="$downloaded" \
+            cargo test --locked -p gitrun-updater --test migration_release_compat -- --nocapture
+          )
+          test -s "$downloaded"
+          test "$(dpkg-deb -f "$downloaded" Package)" = gitrun
+          test "$(dpkg-deb -f "$downloaded" Version)" = "$VERSION_NUMBER"
+          dpkg-deb -x "$downloaded" "$RUNNER_TEMP/legacy-updater-package"
+          test -x "$RUNNER_TEMP/legacy-updater-package/usr/bin/gitrun"
+          test -x "$RUNNER_TEMP/legacy-updater-package/usr/libexec/gitrun/reinstall-latest.sh"
+          test "$(cat "$RUNNER_TEMP/legacy-updater-package/usr/share/gitrun/version.txt")" = "$VERSION_NUMBER"
+
+          # Execute the actual 1.8.23 privileged reinstall flow against the local
+          # copy of the signed release payload; publication is not needed here.
+          sudo env "GITRUN_MIGRATION_TEST_BASE_URL=$base" \
+            "$old/target/release/gitrun" --no-cat --reinstall-latest-root
+          test "$(dpkg-query -W -f='${Version}' gitrun)" = "$VERSION_NUMBER"
+          test -x /usr/bin/gitrun
+          test -x /usr/local/bin/gitrun
+          test "$(/usr/local/bin/gitrun --version --gitrun)" = "GitRun $VERSION_NUMBER"
+
+          # Complete the second phase with the newly installed 1.9.0 updater.
+          # It must select the native Server DEB, replace the transitional
+          # legacy package registration and leave the canonical CLI available.
+          sudo install -m 0755 "$RUNNER_TEMP/gitrun-1.9.0-loopback-test" /usr/bin/gitrun
+          sudo env "GITRUN_MIGRATION_TEST_BASE_URL=$base" \
+            /usr/bin/gitrun --no-cat --reinstall-latest-root
+          test "$(dpkg-query -W -f='${db:Status-Status}' gitrun-server)" = installed
+          if dpkg-query -W -f='${db:Status-Status}' gitrun 2>/dev/null | grep -Fxq installed; then
+            echo "Legacy gitrun package remained installed after the Server package transition" >&2
+            exit 1
+          fi
+          test "$(/usr/bin/gitrun --version --gitrun)" = "GitRun $VERSION_NUMBER"
+          test "$(/usr/local/bin/gitrun --version --gitrun)" = "GitRun $VERSION_NUMBER"
+
+      - name: Generate professional release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          MIGRATION_RELEASE: ${{ needs.prepare.outputs.migration_release }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          generated="$RUNNER_TEMP/generated-notes.md"
+          notes="$RUNNER_TEMP/release-notes.md"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$VERSION" -f target_commitish="$GITHUB_SHA" --jq '.body' > "$generated" || : > "$generated"
+          python3 - "$VERSION" "$GITHUB_REPOSITORY" "$MIGRATION_RELEASE" "$generated" "$notes" <<'PY'
+          import hashlib
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          version, repository, migration, generated_path, output_path = sys.argv[1:]
+          root = Path("release-assets")
+          manifest_path = root / "release-manifest.json"
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          if manifest.get("version") != version or manifest.get("name") != "GitRun":
+              raise SystemExit("Release notes refused: manifest identity/version mismatch")
+
+          assets = manifest.get("artifacts", [])
+          if not assets:
+              raise SystemExit("Release notes refused: signed manifest has no assets")
+
+          def sha256_file(path):
+              digest = hashlib.sha256()
+              with path.open("rb") as stream:
+                  for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
+          by_name = {}
+          for item in assets:
+              name = item["file"]
+              path = root / name
+              if not path.is_file():
+                  raise SystemExit(f"Release notes refused: manifest asset is missing: {name}")
+              digest = sha256_file(path)
+              if digest != item["sha256"]:
+                  raise SystemExit(f"Release notes refused: SHA-256 mismatch for {name}")
+              if name in by_name:
+                  raise SystemExit(f"Release notes refused: duplicate asset name: {name}")
+              by_name[name] = {**item, "sha256": digest}
+
+          disk_assets = {p.name for p in root.iterdir() if p.is_file() and p.name != "release-manifest.json"}
+          if disk_assets != set(by_name):
+              raise SystemExit(
+                  "Release notes refused: release files and signed manifest differ; "
+                  f"unlisted={sorted(disk_assets - set(by_name))}, "
+                  f"missing={sorted(set(by_name) - disk_assets)}"
+              )
+
+          def url(name):
+              return f"https://github.com/{repository}/releases/download/{version}/{name}"
+
+          def link(name):
+              return f"[{name}]({url(name)})"
+
+          def table(headers, rows):
+              if not rows:
+                  return ["_No artifacts in this category._", ""]
+              lines = [
+                  "| " + " | ".join(headers) + " |",
+                  "| " + " | ".join("---" for _ in headers) + " |",
+              ]
+              lines.extend("| " + " | ".join(str(value).replace("|", "\\|").replace("\n", " ") for value in row) + " |" for row in rows)
+              lines.append("")
+              return lines
+
+          def digest_cell(item):
+              return item["sha256"]
+
+          def arch_abi(name):
+              prefix = f"GitRun-Server-{version}-"
+              if name.startswith(prefix):
+                  suffix = name[len(prefix):]
+                  for ending in ("-server.tar.gz", "-server.tar.zst"):
+                      if suffix.endswith(ending):
+                          triple = suffix[:-len(ending)]
+                          if triple.startswith("linux-"):
+                              triple = triple[len("linux-"):]
+                          arch, separator, abi = triple.partition("-unknown-linux-")
+                          if separator and arch in {"x86_64", "aarch64"} and abi in {"gnu", "musl"}:
+                              return arch, abi
+              match = re.search(r"linux-(x86_64|aarch64)(?:-(musl))?-(?:deb|rpm|apk|arch|xbps)", name)
+              if match:
+                  return match.group(1), match.group(2) or "gnu"
+              return "—", "—"
+
+          architecture_cases = (
+              (f"GitRun-Server-{version}-x86_64-unknown-linux-gnu-server.tar.gz", ("x86_64", "gnu")),
+              (f"GitRun-Server-{version}-linux-aarch64-unknown-linux-musl-server.tar.zst", ("aarch64", "musl")),
+              (f"GitRun-Server-{version}-linux-x86_64-musl-apk.apk", ("x86_64", "musl")),
+          )
+          for sample, expected in architecture_cases:
+              actual = arch_abi(sample)
+              if actual != expected:
+                  raise SystemExit(f"Release-note architecture parser mismatch for {sample}: {actual!r} != {expected!r}")
+
+          updater_archives, portable_archives, native_packages = [], [], []
+          desktop_assets, migration_assets, metadata_assets = [], [], []
+          for name, item in sorted(by_name.items()):
+              if name.endswith("-server.tar.gz"):
+                  arch, abi = arch_abi(name)
+                  updater_archives.append((arch, abi, "TAR.GZ (updater)", link(name), digest_cell(item)))
+              elif name.endswith("-server.tar.zst"):
+                  arch, abi = arch_abi(name)
+                  portable_archives.append((arch, abi, "TAR.ZST", link(name), digest_cell(item)))
+              elif name.startswith(f"GitRun-Server-{version}-linux-"):
+                  arch, abi = arch_abi(name)
+                  fmt = (
+                      "DEB" if name.endswith(".deb") else
+                      "RPM" if name.endswith(".rpm") else
+                      "APK" if name.endswith(".apk") else
+                      "Arch package" if name.endswith(".pkg.tar.zst") else
+                      "XBPS" if name.endswith(".xbps") else "Unknown"
+                  )
+                  native_packages.append((arch, abi, fmt, link(name), digest_cell(item)))
+              elif name.startswith(f"GitRun-Desktop-{version}-"):
+                  fmt = (
+                      "AppImage" if name.endswith(".AppImage") else
+                      "DEB" if name.endswith(".deb") else
+                      "RPM" if name.endswith(".rpm") else
+                      "Arch Linux" if name.endswith(".pkg.tar.zst") else
+                      "APK" if name.endswith(".apk") else
+                      "XBPS" if name.endswith(".xbps") else
+                      "musl executable" if name.endswith(".bin") else "Unknown"
+                  )
+                  arch = "aarch64" if ("-aarch64" in name or "-arm64" in name) else "x86_64"
+                  abi = "musl" if "musl" in name else "GNU"
+                  desktop_assets.append((arch, abi, fmt, link(name), digest_cell(item)))
+              elif name == f"GitRun-{version}-linux-x86_64-deb.deb":
+                  migration_assets.append(("x86_64", "Debian / Ubuntu", "Legacy DEB; package gitrun", link(name), digest_cell(item)))
+              else:
+                  metadata_assets.append((name, link(name), digest_cell(item)))
+
+          lines = [
+              f"# GitRun {version}",
+              "",
+              "> Your self-hosted GitHub Actions runners, under your control.",
+              "",
+              "This release separates the headless server distribution from the desktop application. "
+              "All downloadable files below are taken from the signed release manifest; each listed "
+              "checksum is verified against the published file before these notes are generated.",
+              "",
+              f"**Published release assets:** {len(assets) + 1} (including the signed manifest).",
+              "",
+              "## Release overview",
+              "",
+              "| Component | Description |",
+              "| --- | --- |",
+              "| **GitRun-Server** | Headless server, CLI, runner management, scheduler and recovery tools. |",
+              "| **GitRun-Desktop** | Independent desktop application; it does not bundle the Server executable. |",
+              "| **Release integrity** | Ed25519-signed manifest, SHA-256 checksums, SPDX SBOM and build provenance. |",
+              "",
+              "## Install or update",
+              "",
+              "- **Existing GitRun installation:** run `gitrun update`. The built-in updater uses the canonical Server TAR.GZ for the detected target; it does not install a distro package.",
+              "- **Debian / Ubuntu:** install the matching Server DEB with `sudo apt install ./<server-package>.deb`.",
+              "- **Fedora / RHEL and compatible distributions:** install the matching Server RPM with `sudo dnf install ./<server-package>.rpm`.",
+              "- **Arch Linux:** install the matching Server package with `sudo pacman -U ./<server-package>.pkg.tar.zst`.",
+              "- **Alpine Linux:** install the matching APK with the host package manager. Verify the downloaded file against the SHA-256 value in this release before installation.",
+              "- **Void Linux:** install the matching XBPS package using the host's local-package workflow, after verifying its SHA-256 value.",
+              "- After installing the Server package for the first time, run `sudo gitrun setup` to configure the host services and runtime.",
+              "- **Desktop:** install the separate GitRun-Desktop package for the matching architecture, or make the AppImage executable and launch it as the regular desktop user. Desktop does not include the Server.",
+              "",
+              "## GitRun-Server downloads",
+              "",
+              "### Updater archives",
+              "",
+              "Use the canonical TAR.GZ archive for the built-in updater. The target is the Rust target triple.",
+              "",
+          ]
+          lines += table(
+              ["Architecture", "ABI", "Format", "Artifact", "SHA-256"],
+              updater_archives,
+          )
+          lines += [
+              "### Portable archives",
+              "",
+              "TAR.ZST archives contain the Server executable and its runtime payload under a standard filesystem layout.",
+              "",
+          ]
+          lines += table(
+              ["Architecture", "ABI", "Format", "Artifact", "SHA-256"],
+              portable_archives,
+          )
+          lines += [
+              "### Native packages",
+              "",
+              "Install the package matching the host architecture and libc. Package-manager dependencies are declared in each package.",
+              "",
+          ]
+          lines += table(
+              ["Architecture", "ABI", "Package format", "Artifact", "SHA-256"],
+              native_packages,
+          )
+          lines += [
+              "### Init-system support",
+              "",
+              "- DEB, RPM and Arch Server packages carry systemd unit files. The first `gitrun setup` installs/configures the scheduler, GSR watchdog and control-manager units, then enables and starts the applicable services.",
+              "- Alpine APK packages include the OpenRC scheduler and GSR service definitions. Package removal stops and unregisters them; package upgrades restart only services that were already active. Run `gitrun setup` to configure and enable them.",
+              "- Void XBPS packages include both runit service trees and the shared service launcher. `gitrun setup` creates the `/var/service` supervision links and starts them. Before removing the package, run `gitrun uninstall` so those runtime-created links and services are stopped and cleaned up.",
+              "- Service integration is performed by the privileged setup flow, not by package installation alone. Containers or hosts without a supported active init system cannot complete service setup.",
+              "",
+              "## GitRun-Desktop downloads",
+              "",
+              "Desktop packages are independent of GitRun-Server and can be installed separately.",
+              "",
+          ]
+          lines += table(
+              ["Architecture", "ABI", "Format", "Artifact", "SHA-256"],
+              desktop_assets,
+          )
+          if migration == "true":
+              if version != "v1.9.0":
+                  raise SystemExit("Migration Release allowlist violation: only v1.9.0 may publish the legacy package")
+              if len(migration_assets) != 1:
+                  raise SystemExit("Migration Release must contain exactly one legacy Debian artifact")
+              lines += [
+                  "## Migration Release",
+                  "",
+                  "> **DO NOT USE FOR FRESH INSTALL!**",
+                  "",
+                  "This one-time compatibility artifact supports only existing GitRun **1.8.23** installations on **x86_64 GNU/Linux with Debian or Ubuntu (APT)**. "
+                  "It preserves the legacy Debian package identity (gitrun), filename and filesystem layout required by the 1.8.23 signed-manifest updater. "
+                  "Its /usr/bin/gitrun payload is the new 1.9.0 Server binary. Other architectures and package managers are outside this migration artifact's support scope.",
+                  "",
+                  "Run gitrun reinstall on the existing 1.8.23 installation. The first transaction installs this transitional package and deliberately retains the legacy gitrun registration. "
+                  "After it completes successfully, run gitrun reinstall a second time; the new 1.9.0 updater then selects the signed GitRun-Server DEB and replaces the legacy package registration. "
+                  "Both transactions are required. Do not use this artifact for a fresh installation; fresh installs must use the GitRun-Server packages above.",
+                  "",
+                  "### Legacy migration artifact",
+                  "",
+              ]
+              lines += table(
+                  ["Architecture", "Distribution", "Compatibility contract", "Artifact", "SHA-256"],
+                  migration_assets,
+              )
+
+
+          lines += [
+              "## Release metadata and verification",
+              "",
+              "The manifest is signed with Ed25519. Its artifact entries contain the SHA-256 digest of every other downloadable release file.",
+              "",
+          ]
+          metadata_rows = sorted(metadata_assets)
+          metadata_rows.append((
+              "release-manifest.json (Ed25519 signed)",
+              link("release-manifest.json"),
+              "Ed25519 signature; self-hash intentionally omitted",
+          ))
+          lines += table(["Metadata artifact", "Download", "Integrity"], metadata_rows)
+          lines += [
+              "- **Signature:** Ed25519; signature and key identifier are embedded in the manifest.",
+              "- **Checksum list:** SHA256SUMS covers the published payload files; the manifest itself is authenticated by its Ed25519 signature.",
+              "",
+              "## Changes",
+              "",
+          ]
+          generated = Path(generated_path).read_text(encoding="utf-8").strip()
+          lines += [generated if generated else "_No generated GitHub changelog was available for this tag._", ""]
+          Path(output_path).write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+          PY
+          echo "NOTES_FILE=$notes" >> "$GITHUB_ENV"
+      - name: Publish all release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          MIGRATION_RELEASE: ${{ needs.prepare.outputs.migration_release }}
+          ROOT: ${{ github.workspace }}/release-assets
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(find "$ROOT" -maxdepth 1 -type f -printf '%p\n' | sort)
+          test -s "$ROOT/release-manifest.json"
+          test -s "$ROOT/SHA256SUMS"
+          (("${#assets[@]}" > 0))
+          if [ "$MIGRATION_RELEASE" = true ]; then
+            title="GitRun $VERSION — Migration Release"
+          else
+            title="GitRun $VERSION"
+          fi
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$VERSION" --repo "$GITHUB_REPOSITORY" --title "$title" --notes-file "$NOTES_FILE"
+            gh release upload "$VERSION" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$VERSION" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "$title" --notes-file "$NOTES_FILE"
+          fi
+          if [ "$MIGRATION_RELEASE" = true ]; then
+            release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$VERSION" --jq .id)"
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+              -F prerelease=false -f make_latest=true >/dev/null
+          fi
+ <<< "$apk_contents" || {
+                echo "APK package is missing its post-upgrade service restart hook" >&2
+                exit 1
+              }
+              if grep -Eq '(^|/)(etc|usr/lib)/systemd/' <<< "$apk_contents"; then
+                echo "APK package must contain OpenRC resources, not systemd units" >&2
+                exit 1
+              fi
+            fi
             mv "$produced" "$out/GitRun-Server-$VERSION-linux-$cpu-$suffix.$ext"
           done
 

@@ -65,6 +65,7 @@ fn action_is_allowed(operation: &str, action: &str) -> bool {
                     | "config_save"
                     | "dashboard_settings_save"
                     | "updater_settings_save"
+                    | "updater_operation_record"
                     | "service_control"
                     | "maintenance_task"
                     | "json_recovery"

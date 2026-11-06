@@ -250,6 +250,7 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
@@ -753,6 +754,7 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
@@ -806,7 +808,8 @@ jobs:
           sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm zstd
-      - name: Set up pinned Go toolchain for nFPM
+      - name: Set up pinned Go toolchain for nFPM (GNU)
+        if: matrix.kind == 'gnu'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: "1.26.10"

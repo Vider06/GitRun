@@ -12,7 +12,9 @@ use std::{
 use thiserror::Error;
 
 pub mod release_policy;
-pub use release_policy::{resolve_policy_update, select_release, PolicyUpdate, ReleaseType, SelectedRelease, UpdatePolicy};
+pub use release_policy::{
+    resolve_policy_update, select_release, PolicyUpdate, ReleaseType, SelectedRelease, UpdatePolicy,
+};
 
 const MAX_RELEASE_ARTIFACT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 100_000;

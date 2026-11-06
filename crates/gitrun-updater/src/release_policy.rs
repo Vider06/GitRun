@@ -1,4 +1,6 @@
-use super::{compare_versions, fetch_manifest, release_manifest_download_url, ReleaseManifest, UpdateError};
+use super::{
+    compare_versions, fetch_manifest, release_manifest_download_url, ReleaseManifest, UpdateError,
+};
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use std::cmp::Ordering;
@@ -29,9 +31,12 @@ impl ReleaseType {
         let mut found = None;
         for line in body.lines().map(str::trim) {
             if let Some(value) = line.strip_prefix(RELEASE_TYPE_MARKER) {
-                let value = value.strip_suffix("-->").ok_or_else(|| {
-                    UpdateError::InvalidManifest("malformed release type marker".into())
-                })?.trim();
+                let value = value
+                    .strip_suffix("-->")
+                    .ok_or_else(|| {
+                        UpdateError::InvalidManifest("malformed release type marker".into())
+                    })?
+                    .trim();
                 if found.is_some() {
                     return Err(UpdateError::InvalidManifest(
                         "release description contains duplicate release type markers".into(),
@@ -41,15 +46,19 @@ impl ReleaseType {
                     "pre" => Self::Pre,
                     "full" => Self::Full,
                     "security" => Self::Security,
-                    _ => return Err(UpdateError::InvalidManifest(
-                        format!("unknown release type marker: {value}"),
-                    )),
+                    _ => {
+                        return Err(UpdateError::InvalidManifest(format!(
+                            "unknown release type marker: {value}"
+                        )))
+                    }
                 });
             }
         }
-        found.ok_or_else(|| UpdateError::InvalidManifest(
-            "release description is missing its GitRun release type marker".into(),
-        ))
+        found.ok_or_else(|| {
+            UpdateError::InvalidManifest(
+                "release description is missing its GitRun release type marker".into(),
+            )
+        })
     }
 }
 
@@ -121,7 +130,8 @@ pub fn select_release(
             "https://api.github.com/repos/{}/releases?per_page={RELEASES_PER_PAGE}&page={page}",
             repository.trim_end_matches('/')
         );
-        let response = client.get(url)
+        let response = client
+            .get(url)
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28")
             .send()?
@@ -135,7 +145,10 @@ pub fn select_release(
             if release.draft {
                 continue;
             }
-            let version = release.tag_name.strip_prefix('v').unwrap_or(&release.tag_name);
+            let version = release
+                .tag_name
+                .strip_prefix('v')
+                .unwrap_or(&release.tag_name);
             if compare_versions(version, installed_version)? != Ordering::Greater {
                 continue;
             }
@@ -161,9 +174,7 @@ pub fn select_release(
         }
     }
 
-    candidates.sort_by(|a, b| {
-        compare_versions(&b.version, &a.version).unwrap_or(Ordering::Equal)
-    });
+    candidates.sort_by(|a, b| compare_versions(&b.version, &a.version).unwrap_or(Ordering::Equal));
     Ok(candidates.into_iter().next())
 }
 
@@ -194,13 +205,15 @@ mod tests {
     #[test]
     fn release_type_marker_is_strict_and_unique() {
         assert_eq!(
-            ReleaseType::from_release_body("Notes\n<!-- GITRUN_RELEASE_TYPE: security -->").unwrap(),
+            ReleaseType::from_release_body("Notes\n<!-- GITRUN_RELEASE_TYPE: security -->")
+                .unwrap(),
             ReleaseType::Security
         );
         assert!(ReleaseType::from_release_body("no marker").is_err());
         assert!(ReleaseType::from_release_body(
             "<!-- GITRUN_RELEASE_TYPE: pre -->\n<!-- GITRUN_RELEASE_TYPE: full -->"
-        ).is_err());
+        )
+        .is_err());
         assert!(ReleaseType::from_release_body("<!-- GITRUN_RELEASE_TYPE: beta -->").is_err());
     }
 

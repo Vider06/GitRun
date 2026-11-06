@@ -254,7 +254,6 @@ fn service_status(service: ManagedService) -> (bool, bool, Option<ServiceManager
     }
     let spec = gitrun_platform::service_command(manager, ServiceAction::Status, service);
     let active = gitrun_platform::trusted_service_manager_binary(manager).is_some_and(|program| {
-        let args = spec.args.iter().map(String::as_str).collect::<Vec<_>>();
         command_success_with_timeout(&program, &spec.args, std::time::Duration::from_secs(3))
     });
     (installed, active, Some(manager))

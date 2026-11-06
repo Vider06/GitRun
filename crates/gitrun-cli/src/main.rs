@@ -3881,6 +3881,76 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
     0
 }
 
+fn run_update_info(perform_check: bool) -> i32 {
+    let system_install = system_install_paths().is_some();
+    if perform_check {
+        initialize_update_signing_environment(system_install);
+    }
+    match gitrun_management::get_updater_info(perform_check) {
+        Ok(info) => {
+            println!("GitRun Updater Information");
+            println!("Installation");
+            println!("  Version:          {}", info.version);
+            println!("  Package:          {}", info.package);
+            println!("  Architecture:     {}", info.architecture);
+            println!("  ABI:              {}", info.abi);
+            println!("  Target:           {}", info.target);
+            println!("Update policy");
+            println!("  Selected:         {}", info.policy);
+            println!("  Description:      {}", info.policy_description);
+            println!("Update lock");
+            println!("  Status:           {}", info.lock.status);
+            println!("  Owner PID:        {}", info.lock.owner_pid.map(|pid| pid.to_string()).unwrap_or_else(|| "None".into()));
+            println!("  Detail:           {}", info.lock.detail);
+            println!("Required services");
+            for service in &info.services {
+                println!("  {}: installed={}, active={}", service.name, service.installed, service.active);
+            }
+            println!("Recent operations");
+            if info.recent_operations.is_empty() {
+                println!("  None recorded");
+            } else {
+                for operation in &info.recent_operations {
+                    println!("  {}: {} -> {} ({})", operation.timestamp, operation.from_version,
+                        operation.to_version.as_deref().unwrap_or("unchanged"), operation.result);
+                    if let Some(error) = operation.error.as_deref() {
+                        println!("    Error: {error}");
+                    }
+                }
+            }
+            println!("Recent updater errors");
+            if info.recent_errors.is_empty() {
+                println!("  None recorded");
+            } else {
+                for operation in &info.recent_errors {
+                    println!("  {}: {} — {}", operation.timestamp, operation.from_version,
+                        operation.error.as_deref().unwrap_or("unspecified updater error"));
+                }
+            }
+            let mut exit_code = 0;
+            if let Some(check_result) = info.check {
+                println!("Release check");
+                println!("  Status:           {}", if check_result.checked { "Completed" } else { "Failed" });
+                println!("  Available:        {}", check_result.available);
+                println!("  Selected version: {}", check_result.selected_version.as_deref().unwrap_or("None"));
+                println!("  Release type:     {}", check_result.release_type.as_deref().unwrap_or("None"));
+                println!("  Artifact:         {}", check_result.artifact.as_deref().unwrap_or("None"));
+                println!("  Detail:           {}", check_result.detail);
+                if let Some(error) = check_result.error.as_deref() {
+                    println!("  Error:            {error}");
+                }
+                if !check_result.checked { exit_code = 1; }
+            }
+            println!("No update was installed or modified by this diagnostic command.");
+            exit_code
+        }
+        Err(error) => {
+            eprintln!("GitRun updater diagnostics: FAIL — {error}");
+            1
+        }
+    }
+}
+
 fn run_update_check(manifest_url: Option<&str>) -> i32 {
     // Keep the read-only path separate from the update transaction dispatcher:
     // this function never reaches dependency changes, file installation or

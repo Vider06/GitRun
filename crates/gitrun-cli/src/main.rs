@@ -2313,7 +2313,10 @@ enum Command {
     SaveUpdaterSettingsRoot { input_path: String },
     /// Internal privileged read of updater diagnostics.
     #[command(name = "--read-updater-info-root", hide = true)]
-    ReadUpdaterInfoRoot { #[arg(long)] check: bool },
+    ReadUpdaterInfoRoot {
+        #[arg(long)]
+        check: bool,
+    },
     /// Internal privileged write of one bounded updater operation record.
     #[command(name = "--record-updater-operation-root", hide = true)]
     RecordUpdaterOperationRoot { input_path: String },

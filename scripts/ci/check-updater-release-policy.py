@@ -54,20 +54,21 @@ checks = {
     and "UpdateError::UnsupportedTarget" in engine,
     "release classification participates in signed manifest data": "pub release_type: ReleaseType" in manifest_engine
     and "unsigned.signature = None" in manifest_engine,
-    "management owns persistent updater policy and diagnostics": 'mod updater;' in management
-    and "pub fn get_updater_settings" in management
-    and "pub fn save_updater_settings" in management
-    and "pub fn get_updater_info" in management,
-    "management stores bounded update history": "HISTORY_LIMIT" in management_updater
-    and "updater-history.json" in management_updater,
+    "updater crate owns persistent policy and diagnostics": "pub mod state;" in manifest_engine
+    and "pub fn info_local" in read("crates/gitrun-updater/src/state.rs")
+    and "pub fn local_settings_save" in read("crates/gitrun-updater/src/state.rs"),
+    "management delegates state to updater": "gitrun_updater::state::info_local" in management_updater
+    and "gitrun_updater::state::record_cli_operation" in management_updater,
     "Control Manager exposes only fixed updater IPC actions": '"updater_settings"' in control_manager
     and '"updater_info"' in control_manager
     and '"updater_settings_save"' in control_manager,
     "CLI exposes info and combined info check": "info: bool" in cli
     and "fn run_update_info" in cli
     and "get_updater_info(perform_check)" in cli,
-    "CLI uses the management-owned release policy": "get_updater_settings()" in cli
-    and "resolve_policy_update_for_target" in cli,
+    "CLI queries updater crate directly": "gitrun_updater::state::current_settings_local()" in cli
+    and "gitrun_updater::state::info_local(perform_check)" in cli
+    and "gitrun_management::get_updater_info" not in cli
+    and "gitrun_management::get_updater_settings" not in cli,
     "TUI uses shared updater settings actions": "updater_settings" in tui
     and "updater_settings_save" in tui
     and "choose_update_policy" in tui,

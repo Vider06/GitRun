@@ -216,6 +216,8 @@ def check_native_init_package_resources(errors: list[str]) -> None:
         "packaging/runit/gitrun-gsr/log/run": ("#!/bin/sh", "svlogd -tt /var/log/gitrun/gitrun-gsr"),
         "packaging/apk-pre-remove": ("rc-service", "rc-update del"),
         "packaging/apk-post-upgrade": ("rc-service", "restart"),
+        "packaging/xbps/INSTALL": ("ACTION", "sv restart", "UPDATE"),
+        "packaging/xbps/REMOVE": ("ACTION", "sv down", "UPDATE"),
     }
     for relative, markers in expected.items():
         path = ROOT / relative
@@ -279,6 +281,10 @@ def check_native_init_package_resources(errors: list[str]) -> None:
         "postupgrade: packaging/apk-post-upgrade",
         ".pre-deinstall$",
         ".post-upgrade$",
+        'install -m 0755 packaging/xbps/INSTALL "$xbps_stage/INSTALL"',
+        'install -m 0755 packaging/xbps/REMOVE "$xbps_stage/REMOVE"',
+        ' -p install-script -S ',
+        ' -p remove-script -S ',
         'install -m 0755 packaging/runit/gitrun/run "$xbps_stage/etc/sv/gitrun/run"',
         'install -m 0755 packaging/runit/gitrun/log/run "$xbps_stage/etc/sv/gitrun/log/run"',
         'install -m 0755 packaging/runit/gitrun-gsr/run "$xbps_stage/etc/sv/gitrun-gsr/run"',

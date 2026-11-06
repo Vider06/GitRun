@@ -622,8 +622,10 @@ jobs:
           rm -rf "$package_stage"
           cp -a "$stage" "$package_stage"
           unit_contents=""
-          # Only systemd package formats carry systemd units. APK and XBPS remain
-          # init-neutral; gitrun setup creates the native OpenRC/runit service definitions.
+          init_contents=""
+          # GNU packages carry systemd units. Alpine APK ships OpenRC definitions;
+          # Void XBPS ships runit definitions. GitRun setup owns enable/start and
+          # creates only the runit supervision links after runtime configuration.
           if [[ "$TARGET" == *-gnu ]]; then
             mkdir -p "$package_stage/usr/lib/systemd/system"
             for unit in gitrun.service gitrun-gsr.service gitrun-control.service; do
@@ -639,6 +641,26 @@ jobs:
               dst: /usr/lib/systemd/system/gitrun-gsr.service
             - src: $package_stage/usr/lib/systemd/system/gitrun-control.service
               dst: /usr/lib/systemd/system/gitrun-control.service
+          YAML
+          )"
+          elif [[ "$TARGET" == *-musl ]]; then
+            mkdir -p "$package_stage/etc/init.d" "$package_stage/usr/libexec/gitrun"
+            install -m 0755 packaging/gitrun-service "$package_stage/usr/libexec/gitrun/gitrun-service"
+            install -m 0755 packaging/openrc/gitrun "$package_stage/etc/init.d/gitrun"
+            install -m 0755 packaging/openrc/gitrun-gsr "$package_stage/etc/init.d/gitrun-gsr"
+            init_contents="$(cat <<YAML
+            - src: $package_stage/usr/libexec/gitrun/gitrun-service
+              dst: /usr/libexec/gitrun/gitrun-service
+              file_info:
+                mode: 0755
+            - src: $package_stage/etc/init.d/gitrun
+              dst: /etc/init.d/gitrun
+              file_info:
+                mode: 0755
+            - src: $package_stage/etc/init.d/gitrun-gsr
+              dst: /etc/init.d/gitrun-gsr
+              file_info:
+                mode: 0755
           YAML
           )"
           fi
@@ -676,6 +698,7 @@ jobs:
             - src: $package_stage/usr/share/doc/gitrun/config.example.env
               dst: /usr/share/doc/gitrun/config.example.env
           $unit_contents
+          $init_contents
           depends: [$base_dep]
           overrides:
             deb:
@@ -691,6 +714,9 @@ jobs:
               depends: [glibc, polkit]
             apk:
               depends: [musl]
+              scripts:
+                preremove: packaging/apk-pre-remove
+                postupgrade: packaging/apk-post-upgrade
             archlinux:
               depends: [glibc, polkit]
           NFPM
@@ -713,6 +739,13 @@ jobs:
           xbps_stage="$RUNNER_TEMP/xbps-stage"
           rm -rf "$xbps_stage"
           cp -a "$stage" "$xbps_stage"
+          mkdir -p "$xbps_stage/usr/libexec/gitrun" \
+            "$xbps_stage/etc/sv/gitrun/log" "$xbps_stage/etc/sv/gitrun-gsr/log"
+          install -m 0755 packaging/gitrun-service "$xbps_stage/usr/libexec/gitrun/gitrun-service"
+          install -m 0755 packaging/runit/gitrun/run "$xbps_stage/etc/sv/gitrun/run"
+          install -m 0755 packaging/runit/gitrun/log/run "$xbps_stage/etc/sv/gitrun/log/run"
+          install -m 0755 packaging/runit/gitrun-gsr/run "$xbps_stage/etc/sv/gitrun-gsr/run"
+          install -m 0755 packaging/runit/gitrun-gsr/log/run "$xbps_stage/etc/sv/gitrun-gsr/log/run"
           xbps_root="$RUNNER_TEMP/xbps"
           mkdir -p "$xbps_root"
           curl --fail --silent --show-error --location \
@@ -730,6 +763,16 @@ jobs:
           xbps_file="$(find "$out" -maxdepth 1 -type f -name 'gitrun-*.xbps' -print -quit)"
           test -n "$xbps_file"
           test -s "$xbps_file"
+          xbps_contents="$(tar -tf "$xbps_file")"
+          for required in \
+            ./usr/libexec/gitrun/gitrun-service \
+            ./etc/sv/gitrun/run ./etc/sv/gitrun/log/run \
+            ./etc/sv/gitrun-gsr/run ./etc/sv/gitrun-gsr/log/run; do
+            grep -Fqx "$required" <<< "$xbps_contents" || {
+              echo "XBPS package is missing runit resource: $required" >&2
+              exit 1
+            }
+          done
           mv "$xbps_file" "$out/GitRun-Server-$VERSION-linux-$cpu-xbps.xbps"
           # Indexing the local repository parses the XBPS archive and validates its metadata.
           "$xbps_rindex" -a "$out"/*.xbps

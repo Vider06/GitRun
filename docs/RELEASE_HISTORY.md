@@ -2,6 +2,13 @@
 
 Current source target: GitRun <!-- gitrun-version:start -->1.9.0<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
 
+## GitRun 1.9.1 — wait for active runner reconciliation during system updates
+
+- **Source/product target:** `1.9.1`, recorded in `version.txt`. This entry describes source changes and does not assert that a signed release artifact has been published.
+- Make system updates wait for an active scheduler lifecycle critical section to finish instead of immediately failing with `another GTUU run is already active`. Keep scheduler reconciliation nonblocking, preserve the shared exclusive lock, and bound the updater wait to five minutes.
+- Add regression coverage for successful lock acquisition after release and timeout while the lock remains held.
+- Bump `gitrun-cli` from `0.13.25` to `0.13.26` and `gitrun-scheduler` from `0.11.16` to `0.11.17`; keep `Cargo.lock`, `version.txt` and current-source Markdown markers aligned.
+
 ## GitRun 1.9.0 — Linux platform foundation, shared management backend and release split
 
 - **Source/product target:** `1.9.0`, recorded in `version.txt`. This entry describes source changes and does not assert that a signed multi-distribution release is published.

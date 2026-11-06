@@ -40,6 +40,7 @@ class DevSkimTauriCspFilterTests(unittest.TestCase):
             "ordinary workflow line",
             *[f"inserted line {index}" for index in range(40)],
             f"{anchors[0]} /* {RELEASE_SUPPRESSION_MARKER} */",
+            f"{anchors[0]} /* {RELEASE_SUPPRESSION_MARKER} */",
             f"{anchors[1]} /* {RELEASE_SUPPRESSION_MARKER} */",
             f"{anchors[1]} /* {RELEASE_SUPPRESSION_MARKER} */",
             f"{anchors[2]} # {RELEASE_SUPPRESSION_MARKER}",
@@ -47,7 +48,7 @@ class DevSkimTauriCspFilterTests(unittest.TestCase):
             f"{anchors[4]} # {RELEASE_SUPPRESSION_MARKER}",
         ]
         allowed = release_migration_loopback_lines(fixture)
-        self.assertEqual(allowed, set(range(42, 48)))
+        self.assertEqual(allowed, set(range(42, 49)))
         self.assertTrue(
             is_release_migration_loopback_fixture(
                 finding("DS137138", path=RELEASE_TARGET, line=42),
@@ -61,6 +62,7 @@ class DevSkimTauriCspFilterTests(unittest.TestCase):
             for anchor in RELEASE_LOOPBACK_ANCHORS
         ]
         fixture.insert(2, f'{RELEASE_LOOPBACK_ANCHORS[1]} # {RELEASE_SUPPRESSION_MARKER}')
+        fixture.append(f'{RELEASE_LOOPBACK_ANCHORS[0]} # {RELEASE_SUPPRESSION_MARKER}')
         with self.assertRaises(ValueError):
             release_migration_loopback_lines(fixture[:-1])
         fixture[0] = f'ordinary HTTP operation # {RELEASE_SUPPRESSION_MARKER}'

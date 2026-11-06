@@ -4188,18 +4188,32 @@ fn run_updater_payload_as_root(command_name: &str, payload: &[u8]) -> Result<(),
     if payload.len() > 64 * 1024 {
         return Err("updater state request exceeds the 64 KiB safety limit".into());
     }
-    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?.as_nanos();
-    let path = std::env::temp_dir().join(format!("gitrun-updater-request-{}-{nonce}.json", std::process::id()));
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "gitrun-updater-request-{}-{nonce}.json",
+        std::process::id()
+    ));
     let result = (|| -> Result<(), String> {
-        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600)
-            .open(&path).map_err(|error| error.to_string())?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|error| error.to_string())?;
         file.write_all(payload).map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
-        let status = authorized_cli_command(&cli)?.arg(command_name).arg(&path).status()
+        let status = authorized_cli_command(&cli)?
+            .arg(command_name)
+            .arg(&path)
+            .status()
             .map_err(|error| format!("unable to request updater authorization: {error}"))?;
         if !status.success() {
-            return Err(format!("administrator-authorized updater operation failed with status {status}"));
+            return Err(format!(
+                "administrator-authorized updater operation failed with status {status}"
+            ));
         }
         Ok(())
     })();
@@ -4217,9 +4231,13 @@ pub fn get_updater_settings() -> Result<UpdaterSettings, String> {
             .map_err(|error| format!("decode updater settings from Control Manager: {error}"));
     }
     #[cfg(target_os = "linux")]
-    if !current_process_is_root() && trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
+    if !current_process_is_root()
+        && trusted_system_cli_path().is_some()
+        && Path::new("/etc/gitrun/gitrun.env").is_file()
+    {
         let raw = run_privileged_cli_helper("--read-updater-settings-root", &[])?;
-        return serde_json::from_str(raw.trim()).map_err(|error| format!("decode authorized updater settings: {error}"));
+        return serde_json::from_str(raw.trim())
+            .map_err(|error| format!("decode authorized updater settings: {error}"));
     }
     updater::current_settings_local()
 }
@@ -4264,10 +4282,18 @@ pub fn get_updater_info(check: bool) -> Result<UpdaterInfo, String> {
             .map_err(|error| format!("decode updater diagnostics from Control Manager: {error}"));
     }
     #[cfg(target_os = "linux")]
-    if !current_process_is_root() && trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
-        let args = if check { vec!["--check".to_owned()] } else { Vec::new() };
+    if !current_process_is_root()
+        && trusted_system_cli_path().is_some()
+        && Path::new("/etc/gitrun/gitrun.env").is_file()
+    {
+        let args = if check {
+            vec!["--check".to_owned()]
+        } else {
+            Vec::new()
+        };
         let raw = run_privileged_cli_helper("--read-updater-info-root", &args)?;
-        return serde_json::from_str(raw.trim()).map_err(|error| format!("decode authorized updater diagnostics: {error}"));
+        return serde_json::from_str(raw.trim())
+            .map_err(|error| format!("decode authorized updater diagnostics: {error}"));
     }
     updater::info_local(check)
 }

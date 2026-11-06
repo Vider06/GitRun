@@ -596,9 +596,8 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         let first = GtuuLock::acquire(&dir).expect("first lock should succeed");
         let waiter_dir = dir.clone();
-        let waiter = std::thread::spawn(move || {
-            GtuuLock::acquire_wait(&waiter_dir, Duration::from_secs(2))
-        });
+        let waiter =
+            std::thread::spawn(move || GtuuLock::acquire_wait(&waiter_dir, Duration::from_secs(2)));
 
         std::thread::sleep(Duration::from_millis(50));
         drop(first);

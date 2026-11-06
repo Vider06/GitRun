@@ -1740,6 +1740,10 @@ jobs:
             "$mock_root/releases/latest/download/release-manifest.json"
           install -m 0644 "release-assets/$legacy_asset" \
             "$mock_root/releases/download/$VERSION/$legacy_asset"
+          server_asset="GitRun-Server-$VERSION-linux-x86_64-deb.deb"
+          test -s "release-assets/$server_asset"
+          install -m 0644 "release-assets/$server_asset" \
+            "$mock_root/releases/download/$VERSION/$server_asset"
 
           port="$(python3 - <<'PYPORT'
           import socket
@@ -1818,6 +1822,19 @@ jobs:
           test "$(dpkg-query -W -f='${Version}' gitrun)" = "$VERSION_NUMBER"
           test -x /usr/bin/gitrun
           test -x /usr/local/bin/gitrun
+          test "$(/usr/local/bin/gitrun --version --gitrun)" = "GitRun $VERSION_NUMBER"
+
+          # Complete the second phase with the newly installed 1.9.0 updater.
+          # It must select the native Server DEB, replace the transitional
+          # legacy package registration and leave the canonical CLI available.
+          sudo env "GITRUN_MIGRATION_TEST_BASE_URL=$base" \
+            /usr/bin/gitrun --no-cat --reinstall-latest-root
+          test "$(dpkg-query -W -f='${db:Status-Status}' gitrun-server)" = installed
+          if dpkg-query -W -f='${db:Status-Status}' gitrun 2>/dev/null | grep -Fxq installed; then
+            echo "Legacy gitrun package remained installed after the Server package transition" >&2
+            exit 1
+          fi
+          test "$(/usr/bin/gitrun --version --gitrun)" = "GitRun $VERSION_NUMBER"
           test "$(/usr/local/bin/gitrun --version --gitrun)" = "GitRun $VERSION_NUMBER"
 
       - name: Generate professional release notes

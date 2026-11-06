@@ -89,10 +89,9 @@ jobs:
           printf '%s' "$SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
           chmod 600 "$key"
           openssl pkey -inform DER -in "$key" -pubout -outform DER -out "$public"
-          public_hex="$(tail -c 32 "$public" | od -An -v -tx1 | tr -d '[:space:]')"
-          expected_public_hex="11cc9eaf0147dada407ffd3497c2ce"\
-            "bce17d195e21c06030c1e2e1dc688f41f1"
-          if [ "$public_hex" != "$expected_public_hex" ]; then
+          public_bytes="$(tail -c 32 "$public" | od -An -v -tu1 | awk '{$1=$1; print}')"
+          expected_public_bytes="17 204 158 175 1 71 218 218 64 127 253 52 151 194 206 188 225 125 25 94 33 192 96 48 193 226 225 220 104 143 65 241"
+          if [ "$public_bytes" != "$expected_public_bytes" ]; then
             echo "Signing key does not match the configured updater trust anchor" >&2
             exit 1
           fi

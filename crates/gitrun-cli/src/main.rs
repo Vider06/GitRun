@@ -518,7 +518,7 @@ fn save_updater_settings(
             ]);
             let _ = std::fs::remove_file(input);
             result.map_err(|helper_error| {
-                format!("{error}; privileged fallback failed: {helper_error}")
+                std::io::Error::other(format!("{error}; privileged fallback failed: {helper_error}"))
             })?;
             Ok(gitrun_updater::state::UpdaterSettings {
                 schema_version: 1,
@@ -550,7 +550,7 @@ fn read_updater_info(
             })?;
             Ok(serde_json::from_str(raw.trim())?)
         }
-        Err(error) => Err(error.into()),
+        Err(error) => Err(std::io::Error::other(error).into()),
     }
 }
 

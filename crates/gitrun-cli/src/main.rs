@@ -3928,14 +3928,7 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
     }
     println!("GitRun fix-update: control service PASS");
 
-    println!("GitRun fix-update: checking the latest official signed release");
-    let manifest = match latest_manifest("Vider06/GitRun") {
-        Ok(manifest) => manifest,
-        Err(error) => {
-            eprintln!("GitRun fix-update: unable to read the latest signed release: {error}");
-            return 1;
-        }
-    };
+    println!("GitRun fix-update: checking the selected official signed release");
     let current = current_version();
     let target = match target_triple() {
         Ok(target) => target,
@@ -3944,7 +3937,27 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
             return 1;
         }
     };
+    let Some((manifest, release_type)) = match resolve_selected_manifest(
+        "Vider06/GitRun", &current, &target, None,
+    ) {
+        Ok(selected) => selected,
+        Err(error) => {
+            eprintln!("GitRun fix-update: release selection failed: {error}");
+            return 1;
+        }
+    } else {
+        println!("GitRun fix-update: no newer release matches the active {} policy",
+            gitrun_management::get_updater_settings().map(|settings| settings.policy.as_str().to_owned()).unwrap_or_else(|_| "unknown".into()));
+        return if let Err(error) = verify_post_update_doctor(&installed_binary) {
+            eprintln!("GitRun fix-update: final doctor verification failed: {error}");
+            1
+        } else {
+            println!("GitRun fix-update: PASS (systemd integration and doctor verified)");
+            0
+        };
+    };
 
+    println!("GitRun fix-update: selected {} release {}", release_type.as_str(), manifest.version);
     match build_plan(&manifest, &current, &target, &dependency_snapshot()) {
         Ok(plan) => {
             println!(

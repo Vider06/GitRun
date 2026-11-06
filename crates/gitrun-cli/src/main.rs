@@ -3955,7 +3955,11 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
         };
     };
 
-    println!("GitRun fix-update: selected {} release {}", release_type.as_str(), manifest.version);
+    println!(
+        "GitRun fix-update: selected {} release {}",
+        release_type.as_str(),
+        manifest.version
+    );
     match build_plan(&manifest, &current, &target, &dependency_snapshot()) {
         Ok(plan) => {
             println!(

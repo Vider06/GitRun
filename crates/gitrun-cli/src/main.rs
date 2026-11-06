@@ -6282,6 +6282,7 @@ mod debian_reinstall_artifact_tests {
         gitrun_updater::ReleaseManifest {
             name: "GitRun".into(),
             version: "v1.9.0".into(),
+            release_type: ReleaseType::Full,
             git_commit: "test-commit-id".into(),
             artifacts,
             signature: None,

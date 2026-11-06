@@ -1760,10 +1760,11 @@ jobs:
     steps:
       - *checkout
       - *boot
-      - name: Verify Server, Desktop and migration release contracts
+      - name: Verify Server, Desktop and updater release contracts
         shell: bash
         run: |
           set -euo pipefail
+          python3 scripts/ci/check-updater-release-policy.py
           python3 - <<'PY'
           from pathlib import Path
 

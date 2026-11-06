@@ -33,7 +33,7 @@ The matching package manager resolves declared dependencies. Docker and GitHub c
 
 Alpine APK packages carry OpenRC service definitions. APK removal stops and unregisters GitRun services; APK upgrades restart only services that were already active. Void XBPS packages carry runit service trees and `INSTALL`/`REMOVE` hooks; setup creates the `/var/service` links, upgrades restart only previously running services, and removal stops GitRun and removes only its setup-created links. Package hooks preserve configuration and state; use the explicit `gitrun uninstall` command for destructive cleanup.
 
-The automatic `gitrun reinstall` package-replacement path is currently limited to x86_64 GNU/Linux with APT. The one-time 1.9.0 migration DEB is only for existing 1.8.23 x86_64 Debian/Ubuntu installations and must never be used for a fresh install. The separate Desktop packages do not include the Server executable.
+The automatic `gitrun reinstall` package-replacement path is currently limited to x86_64 GNU/Linux with APT. The one-time 1.9.1 migration DEB is only for existing 1.8.23 x86_64 Debian/Ubuntu installations and must never be used for a fresh install. The separate Desktop packages do not include the Server executable.
 
 ## Main Library release archive
 

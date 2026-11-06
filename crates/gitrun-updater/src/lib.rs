@@ -13,7 +13,8 @@ use thiserror::Error;
 
 pub mod release_policy;
 pub use release_policy::{
-    resolve_policy_update, select_release, PolicyUpdate, ReleaseType, SelectedRelease, UpdatePolicy,
+    resolve_policy_update, resolve_policy_update_for_target, select_release, select_releases,
+    PolicyUpdate, ReleaseType, SelectedRelease, UpdatePolicy,
 };
 
 const MAX_RELEASE_ARTIFACT_BYTES: u64 = 2 * 1024 * 1024 * 1024;

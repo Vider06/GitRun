@@ -259,7 +259,11 @@ pub fn save_settings_local(policy: &str) -> Result<UpdaterSettings, String> {
 }
 
 fn bounded_safe_text(value: &str, limit: usize) -> String {
-    value.chars().filter(|character| !character.is_control()).take(limit).collect()
+    value
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(limit)
+        .collect()
 }
 
 pub fn record_operation(

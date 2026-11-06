@@ -4492,9 +4492,11 @@ pub fn management_write(
             )?;
             Ok(serde_json::json!({ "ok": true }))
         }
-        "updater_settings_save" => management_value(save_updater_settings(
-            management_arg::<String>(&args, "policy")?,
-        )?),
+        "updater_settings_save" => {
+            management_value(save_updater_settings(management_arg::<String>(
+                &args, "policy",
+            )?)?)
+        }
         "updater_operation_record" => {
             updater::record_cli_operation(
                 &management_arg::<String>(&args, "from_version")?,

@@ -3185,13 +3185,11 @@ mod tests {
     use gitrun_platform::PackageManager;
 
     #[test]
-    fn non_systemd_service_wrapper_loads_environment_and_uses_recovery_start_contract() {
+    fn non_systemd_service_wrapper_loads_environment_and_dispatches_to_gitrun_cli() {
         let wrapper = gitrun_service_environment_wrapper(true);
-        assert!(wrapper.contains("export \"$key=$value\""));
-        assert!(wrapper.contains("export GITRUN_BINARY_PATH=\"$executable\""));
-        assert!(wrapper.contains("exec /usr/local/bin/gitrun-recovery start scheduler \"$@\""));
-        assert!(wrapper.contains("exec \"$executable\" \"$@\""));
-        assert!(!wrapper.contains("exec /usr/local/bin/gitrun-recovery \"$@\""));
+        assert!(wrapper.contains("export \\"$key=$value\\""));
+        assert!(wrapper.contains("exec \\"$executable\\" \\"$@\\""));
+        assert!(!wrapper.contains("gitrun-recovery"));
         assert!(!wrapper.contains(". /etc/gitrun/gitrun.env"));
         assert!(!wrapper.contains("eval "));
     }

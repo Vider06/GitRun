@@ -230,7 +230,7 @@ pub fn resolve_policy_update_for_target(
 ) -> Result<Option<PolicyUpdate>, UpdateError> {
     for release in select_releases(repository, installed_version, policy)? {
         let manifest = fetch_manifest(&release.manifest_url)?;
-        if manifest.version != release.version || manifest.release_type != release.release_type {
+        if manifest.version.strip_prefix('v').unwrap_or(&manifest.version) != release.version || manifest.release_type != release.release_type {
             return Err(UpdateError::InvalidManifest(
                 "release manifest version/type does not match its GitHub release".into(),
             ));

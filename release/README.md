@@ -10,6 +10,18 @@ A source-version update, merged pull request or successful build does not prove 
 
 For source-line scope and historical verification boundaries, use the [consolidated release history](../docs/RELEASE_HISTORY.md). Kitty behavior and its operational limits are documented in the [Kitty Smart Scheduler guide](../docs/SMART_SCHEDULER.md).
 
+## Release classifications and updater policy
+
+New releases are published initially as `pre` with GitHub's prerelease flag enabled. A maintainer can later run the manual **GitRun Release Type Change** workflow to classify an existing signed release as `pre`, `full` or `security`. The workflow re-signs the manifest after changing its classification and synchronizes the release description marker and GitHub prerelease flag without rebuilding binaries.
+
+The updater policy is shared by the CLI, desktop GUI and Management TUI:
+
+- `security_only`: Security releases only.
+- `security_full`: Security and consolidated Full releases (default).
+- `security_full_pre`: Security, Full and Pre releases.
+
+The signed manifest classification, GitHub description marker and prerelease flag must agree. Full releases should consolidate security fixes published since the previous Full release. See the [Updater Release Policy](../docs/UPDATER_RELEASE_POLICY.md).
+
 ## Main Library reference artifact
 
 The release workflow publishes library.zip as the library-json-backup target in the signed release-manifest.json. The archive contains 11 selected JSON reference inputs, each stored with a .json.Back suffix:

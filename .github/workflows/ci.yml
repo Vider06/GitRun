@@ -2544,6 +2544,7 @@ jobs:
       - gsr-watchdog
       - runtime-contracts
       - systemd-verify
+      - native-service-manager-contracts
       - platform-target-check
       - platform-compatibility
       - multi-distro-contracts
@@ -2606,6 +2607,7 @@ jobs:
           gsr-watchdog|GSR watchdog lifecycle and failure detection|rust|rust-lint
           runtime-contracts|Runtime contracts and configuration integration|rust|rust-lint
           systemd-verify|systemd-analyze unit verification|rust|
+          native-service-manager-contracts|OpenRC and runit service-manager contracts|native|
           platform-target-check|Server and updater Linux target matrix|rust|rust-build
           platform-compatibility|Linux platform and updater target contracts|rust|rust-lint
           multi-distro-contracts|Multi-distro portability contracts|rust|rust-lint
@@ -2631,6 +2633,9 @@ jobs:
             esac
             DEPS[$id]="${DEP_IDS[$id]// /, }"; DEPS[$id]="${DEPS[$id]:-–}"
             if [ "$flag" = always ] || { [ "$detect_ok" = true ] && [ "$(out cargo-lock "$flag")" = true ]; } || { [ "$id" = cargo-lock ] && [ "$detect_ok" != true ]; }; then en=1; else en=0; fi
+            if [ "$id" = native-service-manager-contracts ]; then
+              if [ "$(out cargo-lock rust)" = true ] || [ "$(out cargo-lock workflows)" = true ]; then en=1; else en=0; fi
+            fi
             case "$r" in
               success) STATE[$id]=ok; nok=$((nok + 1)) ;;
               failure) STATE[$id]=fail; nfail=$((nfail + 1)) ;;

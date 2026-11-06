@@ -719,6 +719,7 @@ const CONTROL_MANAGER_MAX_MESSAGE: usize = 1024 * 1024;
 fn control_manager_enabled() -> bool {
     #[cfg(target_os = "linux")]
     {
+        use std::os::unix::fs::FileTypeExt;
         gitrun_platform::detect_service_manager() == Some(ServiceManager::Systemd)
             && Path::new("/etc/gitrun/gitrun.env").is_file()
             && [

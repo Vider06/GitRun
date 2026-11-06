@@ -64,6 +64,10 @@ checks = {
     and "gitrun_updater::state::record_cli_operation" in management_updater
     and "updater::get_updater_info(check)" in management
     and "updater::get_updater_settings()" in management,
+    "updater state writes serialize across processes": "libc::flock" in read("crates/gitrun-updater/src/state.rs")
+    and '".updater-state.lock"' in read("crates/gitrun-updater/src/state.rs")
+    and "libc::LOCK_EX" in read("crates/gitrun-updater/src/state.rs")
+    and "UPDATER_STATE_WRITE_LOCK" in read("crates/gitrun-updater/src/state.rs"),
     "Control Manager exposes only fixed updater IPC actions": '"updater_settings"' in control_manager
     and '"updater_info"' in control_manager
     and '"updater_settings_save"' in control_manager

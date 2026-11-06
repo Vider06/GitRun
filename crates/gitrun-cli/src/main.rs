@@ -490,7 +490,7 @@ fn read_updater_settings(
         {
             let raw =
                 updater_root_helper(&["--read-updater-settings-root"]).map_err(|helper_error| {
-                    format!("{error}; privileged fallback failed: {helper_error}")
+                    std::io::Error::other(format!("{error}; privileged fallback failed: {helper_error}"))
                 })?;
             Ok(serde_json::from_str(raw.trim())?)
         }
@@ -524,7 +524,7 @@ fn save_updater_settings(
                     .map_err(std::io::Error::other)?,
             })
         }
-        Err(error) => Err(error.into()),
+        Err(error) => Err(std::io::Error::other(error).into()),
     }
 }
 

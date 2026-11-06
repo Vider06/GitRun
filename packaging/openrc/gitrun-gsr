@@ -1,8 +1,11 @@
 #!/sbin/openrc-run
 name="GitRun GSR watchdog"
 command="/usr/libexec/gitrun/gitrun-service"
-command_args="gsr-watchdog"
-command_background=true
+command_args_foreground="gsr-watchdog"
+supervisor=supervise-daemon
+respawn_delay=5
+respawn_max=3
+respawn_period=60
 pidfile="/run/gitrun-gsr.pid"
 output_log="/var/log/gitrun/gsr.log"
 error_log="/var/log/gitrun/gsr.log"

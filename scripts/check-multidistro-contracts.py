@@ -63,6 +63,7 @@ CONTEXT_ALLOWLIST = {
     "crates/gitrun-core/src/compatibility.rs": "command compatibility classifier; strings are not executed",
     "crates/gitrun-scheduler/src/api_service.rs": "package installation runs as container root inside the pinned Debian runner image",
     "scripts/ci/ci-lib.sh": "CI-only apt/dpkg helpers provision Debian-based GitHub Actions runners; they are not product runtime paths",
+    "scripts/ci/force-ubuntu-archive-mirror.sh": "CI-only apt-get configures the Ubuntu archive mirror on the runner; it is not a product runtime path",
 }
 
 PREFIX_ALLOWLIST = (

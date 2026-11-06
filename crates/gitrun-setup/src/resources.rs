@@ -65,14 +65,10 @@ pub(crate) const SYSTEMD_GSR_SERVICE: &str = include_str!("../../../systemd/gitr
 pub(crate) const SYSTEMD_CONTROL_MANAGER_SERVICE: &str =
     include_str!("../../../systemd/gitrun-control.service");
 
-pub(crate) const GITRUN_SERVICE: &str =
-    include_str!("../../../packaging/gitrun-service");
-pub(crate) const OPENRC_GITRUN: &str =
-    include_str!("../../../packaging/openrc/gitrun");
-pub(crate) const OPENRC_GITRUN_GSR: &str =
-    include_str!("../../../packaging/openrc/gitrun-gsr");
-pub(crate) const RUNIT_GITRUN_RUN: &str =
-    include_str!("../../../packaging/runit/gitrun/run");
+pub(crate) const GITRUN_SERVICE: &str = include_str!("../../../packaging/gitrun-service");
+pub(crate) const OPENRC_GITRUN: &str = include_str!("../../../packaging/openrc/gitrun");
+pub(crate) const OPENRC_GITRUN_GSR: &str = include_str!("../../../packaging/openrc/gitrun-gsr");
+pub(crate) const RUNIT_GITRUN_RUN: &str = include_str!("../../../packaging/runit/gitrun/run");
 pub(crate) const RUNIT_GITRUN_LOG_RUN: &str =
     include_str!("../../../packaging/runit/gitrun/log/run");
 pub(crate) const RUNIT_GITRUN_GSR_RUN: &str =

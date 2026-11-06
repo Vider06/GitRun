@@ -575,14 +575,17 @@ fn update_command(
         );
     }
 
-    // Use the same lock as scheduled GTUU before changing dependencies or the
-    // installed executable. If a scheduled update is already running, this
-    // fails before the system update performs any mutations.
+    // Serialize the update with runner reconciliation before changing host
+    // dependencies or the installed executable. A scheduler reconciliation
+    // holds this lock only for its lifecycle critical section; wait for that
+    // section to finish instead of failing the entire user-requested update.
     let mut gtuu_lock = if system_install.is_some() {
         let config = load_config()?;
-        Some(gitrun_scheduler::gtuu::GtuuLock::acquire(Path::new(
-            &config.state_dir,
-        ))?)
+        println!("GitRun update: waiting for active runner reconciliation to finish");
+        Some(gitrun_scheduler::gtuu::GtuuLock::acquire_wait(
+            Path::new(&config.state_dir),
+            std::time::Duration::from_secs(300),
+        )?)
     } else {
         None
     };
@@ -639,10 +642,9 @@ fn update_command(
             .and_then(|value| value.parse::<u32>().ok())
             .filter(|uid| *uid != 0);
 
-        // The exclusive GTUU lock has been held since before the update
-        // transaction began. Stop the scheduler while holding it, even when
-        // no image refresh is needed, so a newly scheduled run cannot race the
-        // executable replacement or the subsequent systemd reconciliation.
+        // Stop the scheduler while holding the lifecycle lock, even when no
+        // image refresh is needed, so a new reconcile cycle cannot race the
+        // executable replacement or subsequent systemd reconciliation.
         println!("GitRun update: stopping scheduler before completing the system update");
         if let Err(error) = stop_scheduler_service_for_update() {
             let rollback_error = rollback_installed_update_with_config(

@@ -833,7 +833,7 @@ pub fn save_settings(policy: &str) -> Result<UpdaterSettings, String> {
 }
 
 pub fn info(check: bool) -> Result<UpdaterInfo, String> {
-    if control_manager_enabled() {
+    if control_manager_enabled() && !current_process_is_root() {
         return serde_json::from_value(control_manager_request(
             "read",
             "updater_info",
@@ -859,7 +859,7 @@ pub fn record_cli_operation(
     release_type: Option<&str>,
     exit_code: i32,
 ) {
-    if control_manager_enabled() {
+    if control_manager_enabled() && !current_process_is_root() {
         let _ = control_manager_request(
             "write",
             "updater_operation_record",

@@ -4064,6 +4064,28 @@ fn run_update(
     force: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> i32 {
+    let before = gitrun_management::get_updater_info(false)
+        .map(|info| info.version)
+        .unwrap_or_else(|_| current_version());
+    let exit_code = run_update_inner(manifest_url, only_containers, force, presenter);
+    let after = gitrun_management::get_updater_info(false)
+        .map(|info| info.version)
+        .unwrap_or_else(|_| current_version());
+    gitrun_management::record_cli_update_operation(
+        &before,
+        (after != before).then_some(after.as_str()),
+        None,
+        exit_code,
+    );
+    exit_code
+}
+
+fn run_update_inner(
+    manifest_url: Option<&str>,
+    only_containers: bool,
+    force: bool,
+    presenter: &mut presenter::CatPresenter,
+) -> i32 {
     // Installed-system invocations must never inherit caller-selected update
     // keys, signature policy, or config paths. Direct-root and --only-containers
     // paths bypass the privilege helper's normal signing-key hand-off, so initialize the fixed

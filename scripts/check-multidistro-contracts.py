@@ -32,6 +32,9 @@ RUNTIME_BASELINE = {
         "apt-get": 13, "dpkg": 12, "systemctl": 38, "systemd-path": 28,
     },
     "crates/gitrun-updater/src/lib.rs": {"apt-get": 14},
+    # Updater diagnostics: Debian package identity markers and Control Manager
+    # unit-file probes. The latter are reached only after Systemd detection.
+    "crates/gitrun-updater/src/state.rs": {"dpkg": 2, "systemd-path": 6},
     "crates/gitrun-cli/src/main.rs": {
         "apt-get": 2, "dpkg": 5, "systemctl": 6, "systemd-path": 12,
     },

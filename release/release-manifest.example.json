@@ -1,7 +1,6 @@
 {
   "name": "GitRun",
   "version": "0.4.0",
-  "release_type": "pre",
   "git_commit": "0000000000000000000000000000000000000000",
   "repository": "Vider06/GitRun",
   "artifacts": [

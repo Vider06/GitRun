@@ -438,8 +438,57 @@ fn dependency_snapshot() -> Vec<(String, Option<String>)> {
     .collect()
 }
 
+fn updater_root_helper(args: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
+    let executable = std::env::current_exe()?;
+    let mut command = trusted_privilege_command()?;
+    command.arg(executable).arg("--no-cat").args(args);
+    let output = command.output()?;
+    if !output.status.success() {
+        return Err(format!("privileged updater helper failed: {}", String::from_utf8_lossy(&output.stderr).trim()).into());
+    }
+    String::from_utf8(output.stdout).map_err(|error| error.into())
+}
+
+fn read_updater_settings() -> Result<gitrun_updater::state::UpdaterSettings, Box<dyn std::error::Error>> {
+    #[cfg(target_os = "linux")]
+    if system_install_paths().is_some() && !running_as_root() {
+        let raw = updater_root_helper(&["--read-updater-settings-root"])?;
+        return Ok(serde_json::from_str(raw.trim())?);
+    }
+    Ok(gitrun_updater::state::current_settings_local()?)
+}
+
+fn save_updater_settings(policy: &str) -> Result<gitrun_updater::state::UpdaterSettings, Box<dyn std::error::Error>> {
+    #[cfg(target_os = "linux")]
+    if system_install_paths().is_some() && !running_as_root() {
+        let payload = serde_json::to_vec(&serde_json::json!({ "policy": policy }))?;
+        let input = write_updater_privileged_payload(&payload, "updater-settings")?;
+        let raw = updater_root_helper(&["--save-updater-settings-root", input.to_string_lossy().as_ref()])?;
+        let _ = std::fs::remove_file(input);
+        let _ = raw;
+        return Ok(gitrun_updater::state::UpdaterSettings {
+            schema_version: 1,
+            policy: gitrun_updater::state::UpdatePolicyChoice::try_from(policy)?,
+        });
+    }
+    Ok(gitrun_updater::state::local_settings_save(policy)?)
+}
+
+fn read_updater_info(check: bool) -> Result<gitrun_updater::state::UpdaterInfo, Box<dyn std::error::Error>> {
+    #[cfg(target_os = "linux")]
+    if system_install_paths().is_some() && !running_as_root() {
+        let raw = if check {
+            updater_root_helper(&["--read-updater-info-root", "--check"])?
+        } else {
+            updater_root_helper(&["--read-updater-info-root"])?
+        };
+        return Ok(serde_json::from_str(raw.trim())?);
+    }
+    Ok(gitrun_updater::state::info_local(check)?)
+}
+
 fn configured_update_policy() -> Result<UpdatePolicy, Box<dyn std::error::Error>> {
-    let settings = gitrun_updater::state::current_settings_local().map_err(|error| {
+    let settings = read_updater_settings().map_err(|error| {
         std::io::Error::other(format!("unable to read shared updater policy: {error}"))
     })?;
     Ok(match settings.policy.as_str() {
@@ -3997,7 +4046,7 @@ fn run_update_info(perform_check: bool) -> i32 {
     if perform_check {
         initialize_update_signing_environment(true);
     }
-    match gitrun_updater::state::info_local(perform_check) {
+    match read_updater_info(perform_check) {
         Ok(info) => {
             println!("GitRun Updater Information");
             println!("Installation");
@@ -5133,8 +5182,8 @@ fn prepare_trusted_updater_state() -> Result<(), Box<dyn std::error::Error>> {
     }
     initialize_system_update_config_path(true);
     let _config = trusted_root_config_for_updater_state()?;
-    // gitrun-management validates every existing ancestor of the configured
-    // state directory and safely handles the not-yet-created final directory.
+    // gitrun-updater validates the trusted state-directory ancestry before
+    // reading or writing updater-owned state.
     Ok(())
 }
 
@@ -5144,7 +5193,7 @@ fn read_updater_settings_root_command() -> Result<(), Box<dyn std::error::Error>
         return Err("reading protected updater settings requires administrator privileges".into());
     }
     prepare_trusted_updater_state()?;
-    let settings = gitrun_updater::state::current_settings_local()?;
+    let settings = read_updater_settings()?;
     println!("{}", serde_json::to_string(&settings)?);
     Ok(())
 }
@@ -5167,7 +5216,7 @@ fn save_updater_settings_root_command(input_path: &str) -> Result<(), Box<dyn st
         .and_then(serde_json::Value::as_str)
         .ok_or("updater settings payload must contain a policy string")?;
     prepare_trusted_updater_state()?;
-    gitrun_updater::state::local_settings_save(&policy.to_owned())?;
+    save_updater_settings(&policy)?;
     println!("GitRun updater release line saved.");
     Ok(())
 }
@@ -5183,7 +5232,7 @@ fn read_updater_info_root_command(check: bool) -> Result<(), Box<dyn std::error:
     if check {
         initialize_update_signing_environment(true);
     }
-    let info = gitrun_updater::state::info_local(check)?;
+    let info = read_updater_info(check)?;
     println!("{}", serde_json::to_string(&info)?);
     Ok(())
 }

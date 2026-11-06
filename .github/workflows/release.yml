@@ -743,7 +743,8 @@ jobs:
                   exit 1
                 }
               done
-              grep -Eq '(^|/)\.pre-deinstall                echo "APK package is missing its pre-deinstall service cleanup hook" >&2
+              grep -Eq '(^|/)\.pre-deinstall$' <<< "$apk_contents" || {
+                echo "APK package is missing its pre-deinstall service cleanup hook" >&2
                 exit 1
               }
               grep -Eq '(^|/)\.post-upgrade$' <<< "$apk_contents" || {

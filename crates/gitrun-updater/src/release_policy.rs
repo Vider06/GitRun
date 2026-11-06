@@ -154,7 +154,7 @@ pub fn select_releases(
             }
             let body = release.body.as_deref().unwrap_or_default();
             let release_type = ReleaseType::from_release_body(body)?;
-            if (release.prerelease != (release_type == ReleaseType::Pre)) {
+            if release.prerelease != (release_type == ReleaseType::Pre) {
                 return Err(UpdateError::InvalidManifest(format!(
                     "GitHub prerelease flag disagrees with release type for tag {}",
                     release.tag_name

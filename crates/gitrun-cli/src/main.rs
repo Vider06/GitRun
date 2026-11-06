@@ -5,7 +5,7 @@ use gitrun_smart_scheduler::KittySettings;
 use gitrun_updater::{
     apply_installed_update, apply_update, build_plan, dependency_status, download_and_verify,
     fetch_manifest, latest_manifest, pin_runner_image, release_manifest_download_url,
-    resolve_policy_update, rollback, rollback_installed_update_with_config,
+    resolve_policy_update_for_target, rollback, rollback_installed_update_with_config,
     update_incompatible_dependencies, update_runner_image, BackupRecord, InstalledArtifact,
     InstalledBackupRecord, ReleaseType, UpdateError, UpdatePaths, UpdatePolicy,
 };

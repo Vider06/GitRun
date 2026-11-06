@@ -56,12 +56,19 @@ checks = {
     and "unsigned.signature = None" in manifest_engine,
     "updater crate owns persistent policy and diagnostics": "pub mod state;" in manifest_engine
     and "pub fn info_local" in read("crates/gitrun-updater/src/state.rs")
-    and "pub fn local_settings_save" in read("crates/gitrun-updater/src/state.rs"),
-    "management delegates state to updater": "gitrun_updater::state::info_local" in management_updater
-    and "gitrun_updater::state::record_cli_operation" in management_updater,
+    and "pub fn read_settings()" in read("crates/gitrun-updater/src/state.rs")
+    and "pub fn save_settings(" in read("crates/gitrun-updater/src/state.rs"),
+    "management delegates state to updater": "gitrun_updater::state::info(" in management_updater
+    and "gitrun_updater::state::read_settings()" in management_updater
+    and "gitrun_updater::state::save_settings(" in management_updater
+    and "gitrun_updater::state::record_cli_operation" in management_updater
+    and "updater::get_updater_info(check)" in management
+    and "updater::get_updater_settings()" in management,
     "Control Manager exposes only fixed updater IPC actions": '"updater_settings"' in control_manager
     and '"updater_info"' in control_manager
-    and '"updater_settings_save"' in control_manager,
+    and '"updater_settings_save"' in control_manager
+    and '"updater_operation_record"' in control_manager
+    and "CONTROL_MANAGER_MAX_MESSAGE" in read("crates/gitrun-updater/src/state.rs"),
     "CLI exposes info and combined info check": "info: bool" in cli
     and "fn run_update_info" in cli
     and "read_updater_info(perform_check)" in cli,

@@ -127,6 +127,35 @@ def main() -> int:
         if "/etc/init.d/gitrun" not in install_body or "/etc/sv" not in install_body:
             fail("setup must install native OpenRC and runit service trees", errors)
 
+
+    # Systemd remains a first-class service manager on Debian, Fedora, Arch,
+    # openSUSE and other systemd-based distributions; do not infer it from the
+    # package manager or distro ID.
+    platform = read("crates/gitrun-platform/src/lib.rs", errors)
+    for marker in (
+        "Systemd",
+        '"systemd"',
+        '"/usr/bin/systemctl"',
+        '"/bin/systemctl"',
+        "systemd_unit_paths",
+        "systemd_unit()",
+        '"/run/systemd/system"',
+        'init_name == "systemd"',
+        '"is-active"',
+        "trusted_service_manager_binary",
+    ):
+        if marker not in platform:
+            fail(f"gitrun-platform: missing systemd service contract {marker!r}", errors)
+
+    # The same action contract must be available to all supported native
+    # managers, including the status probe used by updater diagnostics.
+    for manager in ("Systemd", "OpenRc", "Runit"):
+        if f"ServiceManager::{manager}" not in platform:
+            fail(f"gitrun-platform: missing {manager} service-manager branch", errors)
+    for action in ("Start", "Stop", "Restart", "Status"):
+        if f"ServiceAction::{action}" not in platform:
+            fail(f"gitrun-platform: missing {action} service action", errors)
+
     launcher = read("packaging/gitrun-service", errors)
     if 'exec "$executable" "$@"' not in launcher:
         fail("native service launcher must dispatch to the canonical GitRun CLI", errors)

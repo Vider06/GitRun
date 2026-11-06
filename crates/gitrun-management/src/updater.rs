@@ -137,7 +137,12 @@ fn safe_state_dir(path: &Path, create: bool) -> Result<(), String> {
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if !create && error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(format!("inspect updater state directory {}: {error}", path.display())),
+        Err(error) => {
+            return Err(format!(
+                "inspect updater state directory {}: {error}",
+                path.display()
+            ))
+        }
     };
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(format!(

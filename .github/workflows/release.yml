@@ -1978,6 +1978,17 @@ jobs:
               "| **GitRun-Desktop** | Independent desktop application; it does not bundle the Server executable. |",
               "| **Release integrity** | Ed25519-signed manifest, SHA-256 checksums, SPDX SBOM and build provenance. |",
               "",
+              "## Install or update",
+              "",
+              "- **Existing GitRun installation:** run `gitrun update`. The built-in updater uses the canonical Server TAR.GZ for the detected target; it does not install a distro package.",
+              "- **Debian / Ubuntu:** install the matching Server DEB with `sudo apt install ./<server-package>.deb`.",
+              "- **Fedora / RHEL and compatible distributions:** install the matching Server RPM with `sudo dnf install ./<server-package>.rpm`.",
+              "- **Arch Linux:** install the matching Server package with `sudo pacman -U ./<server-package>.pkg.tar.zst`.",
+              "- **Alpine Linux:** install the matching APK with the host package manager. Verify the downloaded file against the SHA-256 value in this release before installation.",
+              "- **Void Linux:** install the matching XBPS package using the host's local-package workflow, after verifying its SHA-256 value.",
+              "- After installing the Server package for the first time, run `sudo gitrun setup` to configure the host services and runtime.",
+              "- **Desktop:** install the separate GitRun-Desktop package for the matching architecture, or make the AppImage executable and launch it as the regular desktop user. Desktop does not include the Server.",
+              "",
               "## GitRun-Server downloads",
               "",
               "### Updater archives",
@@ -2012,8 +2023,9 @@ jobs:
           lines += [
               "### Init-system support",
               "",
-              "- GNU packages include the GitRun systemd service units.",
-              "- APK and XBPS packages are intentionally init-neutral; native OpenRC/runit service integration is not included yet.",
+              "- DEB, RPM and Arch Server packages carry systemd unit files. The first `gitrun setup` installs/configures the scheduler, GSR watchdog and control-manager units, then enables and starts the applicable services.",
+              "- Alpine APK and Void XBPS packages do not ship systemd units. On hosts running OpenRC or runit, `gitrun setup` creates the native service definitions, registers/links the scheduler and GSR watchdog, and starts them.",
+              "- Service integration is performed by the privileged setup flow, not by package installation alone. Containers or hosts without a supported active init system cannot complete service setup.",
               "",
               "## GitRun-Desktop downloads",
               "",
@@ -2040,16 +2052,6 @@ jobs:
           lines += [
               "- **Signature:** Ed25519; signature and key identifier are embedded in the manifest.",
               "- **Checksum list:** SHA256SUMS covers the published payload files; the manifest itself is authenticated by its Ed25519 signature.",
-              "",
-              "## Installation notes",
-              "",
-              "- **Debian / Ubuntu:** install the matching Server or Desktop DEB with apt. The GitRun-Server DEB declares the legacy gitrun package transition so apt can replace an existing migration-era installation.",
-              "- **RPM-based distributions:** install the matching Server RPM with dnf.",
-              "- **Arch Linux:** install the Server package with pacman.",
-              "- **Alpine:** install the matching musl APK using the system package manager and the package's declared dependencies.",
-              "- **Void Linux:** install the matching XBPS package using the host's local-package workflow.",
-              "- **AppImage:** make the Desktop AppImage executable and launch it as a regular user.",
-              "- **Updater:** gitrun update uses the canonical TAR.GZ target archive, not a distribution-specific package.",
               "",
               "## Changes",
               "",
@@ -2082,13 +2084,6 @@ jobs:
                   ["Architecture", "Distribution", "Compatibility contract", "Artifact", "SHA-256"],
                   migration_assets,
               )
-          else:
-              lines += [
-                  "## Migration status",
-                  "",
-                  "No migration needed, updater/release system has not been changed in a way that requires a migration package.",
-                  "",
-              ]
 
           Path(output_path).write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
           PY

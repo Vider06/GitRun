@@ -5101,13 +5101,23 @@ fn read_gsr_events_root_command(_limit: usize) -> Result<(), Box<dyn std::error:
 }
 
 #[cfg(target_os = "linux")]
+fn trusted_root_config_for_updater_state() -> Result<Config, Box<dyn std::error::Error>> {
+    let path = trusted_system_config_path()
+        .ok_or("trusted system GitRun configuration is missing or unsafe")?;
+    let config = Config::from_env_file(path)?;
+    config.validate()?;
+    Ok(config)
+}
+
+#[cfg(target_os = "linux")]
 fn prepare_trusted_updater_state() -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
         return Err("protected updater state requires administrator privileges".into());
     }
     initialize_system_update_config_path(true);
-    let config = trusted_root_config_for_state_access()?;
-    gitrun_setup::validate_system_state_directory(Path::new(&config.state_dir))?;
+    let _config = trusted_root_config_for_updater_state()?;
+    // gitrun-management validates every existing ancestor of the configured
+    // state directory and safely handles the not-yet-created final directory.
     Ok(())
 }
 

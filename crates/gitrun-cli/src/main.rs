@@ -444,12 +444,17 @@ fn updater_root_helper(args: &[&str]) -> Result<String, Box<dyn std::error::Erro
     command.arg(executable).arg("--no-cat").args(args);
     let output = command.output()?;
     if !output.status.success() {
-        return Err(format!("privileged updater helper failed: {}", String::from_utf8_lossy(&output.stderr).trim()).into());
+        return Err(format!(
+            "privileged updater helper failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into());
     }
     String::from_utf8(output.stdout).map_err(|error| error.into())
 }
 
-fn read_updater_settings() -> Result<gitrun_updater::state::UpdaterSettings, Box<dyn std::error::Error>> {
+fn read_updater_settings(
+) -> Result<gitrun_updater::state::UpdaterSettings, Box<dyn std::error::Error>> {
     #[cfg(target_os = "linux")]
     if system_install_paths().is_some() && !running_as_root() {
         let raw = updater_root_helper(&["--read-updater-settings-root"])?;
@@ -458,12 +463,17 @@ fn read_updater_settings() -> Result<gitrun_updater::state::UpdaterSettings, Box
     Ok(gitrun_updater::state::current_settings_local()?)
 }
 
-fn save_updater_settings(policy: &str) -> Result<gitrun_updater::state::UpdaterSettings, Box<dyn std::error::Error>> {
+fn save_updater_settings(
+    policy: &str,
+) -> Result<gitrun_updater::state::UpdaterSettings, Box<dyn std::error::Error>> {
     #[cfg(target_os = "linux")]
     if system_install_paths().is_some() && !running_as_root() {
         let payload = serde_json::to_vec(&serde_json::json!({ "policy": policy }))?;
         let input = write_updater_privileged_payload(&payload, "updater-settings")?;
-        let raw = updater_root_helper(&["--save-updater-settings-root", input.to_string_lossy().as_ref()])?;
+        let raw = updater_root_helper(&[
+            "--save-updater-settings-root",
+            input.to_string_lossy().as_ref(),
+        ])?;
         let _ = std::fs::remove_file(input);
         let _ = raw;
         return Ok(gitrun_updater::state::UpdaterSettings {
@@ -474,7 +484,9 @@ fn save_updater_settings(policy: &str) -> Result<gitrun_updater::state::UpdaterS
     Ok(gitrun_updater::state::local_settings_save(policy)?)
 }
 
-fn read_updater_info(check: bool) -> Result<gitrun_updater::state::UpdaterInfo, Box<dyn std::error::Error>> {
+fn read_updater_info(
+    check: bool,
+) -> Result<gitrun_updater::state::UpdaterInfo, Box<dyn std::error::Error>> {
     #[cfg(target_os = "linux")]
     if system_install_paths().is_some() && !running_as_root() {
         let raw = if check {

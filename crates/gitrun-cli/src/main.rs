@@ -5289,7 +5289,7 @@ fn save_updater_settings_root_command(input_path: &str) -> Result<(), Box<dyn st
         .and_then(serde_json::Value::as_str)
         .ok_or("updater settings payload must contain a policy string")?;
     prepare_trusted_updater_state()?;
-    save_updater_settings(&policy)?;
+    save_updater_settings(policy)?;
     println!("GitRun updater release line saved.");
     Ok(())
 }

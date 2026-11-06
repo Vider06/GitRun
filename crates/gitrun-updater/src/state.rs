@@ -782,7 +782,7 @@ fn control_manager_request(
         let mut stream = UnixStream::connect(CONTROL_MANAGER_SOCKET)
             .map_err(|error| format!("connect to GitRun Control Manager: {error}"))?;
         stream
-            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .set_read_timeout(Some(std::time::Duration::from_secs(180)))
             .map_err(|error| error.to_string())?;
         stream
             .set_write_timeout(Some(std::time::Duration::from_secs(3)))

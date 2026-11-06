@@ -200,6 +200,88 @@ def check_release_package_boundaries(errors: list[str]) -> None:
             errors.append("XBPS archive must not consume the systemd-enabled package stage")
 
 
+def check_native_init_package_resources(errors: list[str]) -> None:
+    """Validate the packaged OpenRC/runit files as executable service contracts."""
+    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    resources = (ROOT / "crates/gitrun-setup/src/resources.rs").read_text(encoding="utf-8")
+    setup = (ROOT / "crates/gitrun-setup/src/lib.rs").read_text(encoding="utf-8")
+
+    expected = {
+        "packaging/gitrun-service": ("GITHUB_TOKEN|GITRUN_*", "/usr/bin/gitrun"),
+        "packaging/openrc/gitrun": ("#!/sbin/openrc-run", "command_args=\"scheduler\""),
+        "packaging/openrc/gitrun-gsr": ("#!/sbin/openrc-run", "command_args=\"gsr-watchdog\""),
+        "packaging/runit/gitrun/run": ("#!/bin/sh", "gitrun-service scheduler"),
+        "packaging/runit/gitrun/log/run": ("#!/bin/sh", "svlogd -tt /var/log/gitrun/gitrun"),
+        "packaging/runit/gitrun-gsr/run": ("#!/bin/sh", "gitrun-service gsr-watchdog"),
+        "packaging/runit/gitrun-gsr/log/run": ("#!/bin/sh", "svlogd -tt /var/log/gitrun/gitrun-gsr"),
+        "packaging/apk-pre-remove": ("rc-service", "rc-update del"),
+        "packaging/apk-post-upgrade": ("rc-service", "restart"),
+    }
+    for relative, markers in expected.items():
+        path = ROOT / relative
+        source = read_text(path)
+        if source is None:
+            errors.append(f"missing native init resource: {relative}")
+            continue
+        for marker in markers:
+            if marker not in source:
+                errors.append(f"{relative} is missing required contract marker: {marker}")
+        syntax = subprocess.run(
+            ["sh", "-n", str(path)], check=False, capture_output=True, text=True
+        )
+        if syntax.returncode:
+            errors.append(
+                f"{relative} failed shell syntax validation: {syntax.stderr.strip()}"
+            )
+
+    resource_markers = (
+        'include_str!("../../../packaging/gitrun-service")',
+        'include_str!("../../../packaging/openrc/gitrun")',
+        'include_str!("../../../packaging/openrc/gitrun-gsr")',
+        'include_str!("../../../packaging/runit/gitrun/run")',
+        'include_str!("../../../packaging/runit/gitrun/log/run")',
+        'include_str!("../../../packaging/runit/gitrun-gsr/run")',
+        'include_str!("../../../packaging/runit/gitrun-gsr/log/run")',
+    )
+    for marker in resource_markers:
+        if marker not in resources:
+            errors.append(f"setup resources are not sourced from the packaged file: {marker}")
+
+    for marker in (
+        "resources::GITRUN_SERVICE",
+        "resources::OPENRC_GITRUN",
+        "resources::OPENRC_GITRUN_GSR",
+        "resources::RUNIT_GITRUN_RUN",
+        "resources::RUNIT_GITRUN_LOG_RUN",
+        "resources::RUNIT_GITRUN_GSR_RUN",
+        "resources::RUNIT_GITRUN_GSR_LOG_RUN",
+        'Path::new("/etc/init.d/gitrun")',
+        'Path::new("/etc/sv").join(service)',
+        'Path::new("/var/service")',
+    ):
+        if marker not in setup:
+            errors.append(f"setup lifecycle is missing packaged native-init contract: {marker}")
+
+    workflow_markers = (
+        'install -m 0755 packaging/gitrun-service "$package_stage/usr/libexec/gitrun/gitrun-service"',
+        'install -m 0755 packaging/openrc/gitrun "$package_stage/etc/init.d/gitrun"',
+        'install -m 0755 packaging/openrc/gitrun-gsr "$package_stage/etc/init.d/gitrun-gsr"',
+        "preremove: packaging/apk-pre-remove",
+        "postupgrade: packaging/apk-post-upgrade",
+        'install -m 0755 packaging/runit/gitrun/run "$xbps_stage/etc/sv/gitrun/run"',
+        'install -m 0755 packaging/runit/gitrun/log/run "$xbps_stage/etc/sv/gitrun/log/run"',
+        'install -m 0755 packaging/runit/gitrun-gsr/run "$xbps_stage/etc/sv/gitrun-gsr/run"',
+        'install -m 0755 packaging/runit/gitrun-gsr/log/run "$xbps_stage/etc/sv/gitrun-gsr/log/run"',
+        'xbps_contents="$(tar -tf "$xbps_file")"',
+    )
+    for marker in workflow_markers:
+        if marker not in release:
+            errors.append(f"release packaging is missing native-init integration: {marker}")
+
+    if "init-neutral" in release:
+        errors.append("native APK/XBPS packages must not be described as init-neutral")
+
+
 def check_portable_privilege_helpers(errors: list[str]) -> None:
     cli = (ROOT / "crates/gitrun-cli/src/main.rs").read_text(encoding="utf-8")
     updater = (ROOT / "crates/gitrun-updater/src/lib.rs").read_text(encoding="utf-8")
@@ -395,6 +477,7 @@ def main() -> int:
 
     check_platform_catalog(errors)
     check_release_package_boundaries(errors)
+    check_native_init_package_resources(errors)
     check_dashboard_service_manager_contract(errors)
     check_portable_privilege_helpers(errors)
     check_setup_native_lifecycle_contract(errors)

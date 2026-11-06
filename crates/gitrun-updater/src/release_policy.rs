@@ -172,6 +172,11 @@ pub fn select_releases(
         if releases.len() < RELEASES_PER_PAGE {
             break;
         }
+        if page == MAX_RELEASE_PAGES {
+            return Err(UpdateError::InvalidManifest(
+                "GitHub release pagination exceeded the configured safety limit".into(),
+            ));
+        }
     }
 
     candidates.sort_by(|a, b| compare_versions(&b.version, &a.version).unwrap_or(Ordering::Equal));

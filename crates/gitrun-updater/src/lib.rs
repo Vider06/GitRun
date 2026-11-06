@@ -11,6 +11,9 @@ use std::{
 };
 use thiserror::Error;
 
+pub mod release_policy;
+pub use release_policy::{resolve_policy_update, select_release, PolicyUpdate, ReleaseType, SelectedRelease, UpdatePolicy};
+
 const MAX_RELEASE_ARTIFACT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 100_000;
 const MAX_ARCHIVE_ENTRY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
@@ -145,6 +148,8 @@ pub fn sync_premade_runner_dockerfile(
 pub struct ReleaseManifest {
     pub name: String,
     pub version: String,
+    /// Classification shared by the signed manifest and GitHub release metadata.
+    pub release_type: ReleaseType,
     pub git_commit: String,
     pub artifacts: Vec<ReleaseArtifact>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3282,6 +3287,7 @@ mod tests {
         ReleaseManifest {
             name: "GitRun".into(),
             version: "0.3.0".into(),
+            release_type: ReleaseType::Full,
             git_commit: "abcdef1".into(),
             artifacts: vec![ReleaseArtifact {
                 target: "x86_64-unknown-linux-gnu".into(),

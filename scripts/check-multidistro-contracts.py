@@ -277,6 +277,8 @@ def check_native_init_package_resources(errors: list[str]) -> None:
         'install -m 0755 packaging/gitrun-service "$package_stage/usr/libexec/gitrun/gitrun-service"',
         'install -m 0755 packaging/openrc/gitrun "$package_stage/etc/init.d/gitrun"',
         'install -m 0755 packaging/openrc/gitrun-gsr "$package_stage/etc/init.d/gitrun-gsr"',
+        './usr/libexec/gitrun/gitrun-service',
+        './etc/init.d/gitrun ./etc/init.d/gitrun-gsr',
         "preremove: packaging/apk-pre-remove",
         "postupgrade: packaging/apk-post-upgrade",
         ".pre-deinstall$",

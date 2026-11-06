@@ -818,7 +818,7 @@ pub fn read_settings() -> Result<UpdaterSettings, String> {
 
 pub fn save_settings(policy: &str) -> Result<UpdaterSettings, String> {
     let policy_choice = UpdatePolicyChoice::try_from(policy)?;
-    if control_manager_enabled() {
+    if control_manager_enabled() && !current_process_is_root() {
         return serde_json::from_value(control_manager_request(
             "write",
             "updater_settings_save",

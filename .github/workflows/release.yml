@@ -1118,7 +1118,7 @@ jobs:
           install -m 0755 "$binary" "$root/usr/bin/gitrun"
           install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/scripts/reinstall-latest.sh" "$root/usr/libexec/gitrun/reinstall-latest.sh"
           install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/scripts/uninstall.sh" "$root/usr/libexec/gitrun/uninstall.sh"
-          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/packaging/gitrun-prerm" "$root/DEBIAN/prerm"
+          install -m 0755 packaging/gitrun-migration-prerm "$root/DEBIAN/prerm"
           install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/packaging/gitrun-postinst" "$root/DEBIAN/postinst"
           sh -n "$root/DEBIAN/prerm"
           sh -n "$root/DEBIAN/postinst"
@@ -1138,6 +1138,26 @@ jobs:
           dpkg-deb --build --root-owner-group "$root" "$out/$artifact" >/dev/null
           test "$(dpkg-deb -f "$out/$artifact" Package)" = gitrun
           test "$(dpkg-deb -f "$out/$artifact" Version)" = "$VERSION_NUMBER"
+          control_inspect="$RUNNER_TEMP/migration-control-inspect"
+          dpkg-deb -e "$out/$artifact" "$control_inspect"
+          sh -n "$control_inspect/prerm"
+          grep -Fq 'in-favour' "$control_inspect/prerm"
+          grep -Fq 'gitrun-server' "$control_inspect/prerm"
+          mock_bin="$RUNNER_TEMP/migration-prerm-mock"
+          mock_log="$RUNNER_TEMP/migration-prerm-systemctl.log"
+          mkdir -p "$mock_bin"
+          cat > "$mock_bin/systemctl" <<'MOCK'
+          #!/bin/sh
+          printf '%s\n' "$*" >> "$GITRUN_MIGRATION_SYSTEMCTL_LOG"
+          MOCK
+          chmod 0755 "$mock_bin/systemctl"
+          : > "$mock_log"
+          PATH="$mock_bin:$PATH" GITRUN_MIGRATION_SYSTEMCTL_LOG="$mock_log" \
+            "$control_inspect/prerm" remove in-favour gitrun-server "$VERSION_NUMBER"
+          test ! -s "$mock_log"
+          PATH="$mock_bin:$PATH" GITRUN_MIGRATION_SYSTEMCTL_LOG="$mock_log" \
+            "$control_inspect/prerm" remove
+          grep -Fq 'disable --now gitrun-gsr.service gitrun.service' "$mock_log"
           dpkg-deb -x "$out/$artifact" "$RUNNER_TEMP/legacy-package-inspect"
           test -x "$RUNNER_TEMP/legacy-package-inspect/usr/bin/gitrun"
           test -x "$RUNNER_TEMP/legacy-package-inspect/usr/libexec/gitrun/reinstall-latest.sh"

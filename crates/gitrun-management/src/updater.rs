@@ -325,7 +325,8 @@ fn lock_status(directory: &Path) -> UpdateLockStatus {
     let pid_path = lock.join("pid");
     let pid = match std::fs::symlink_metadata(&pid_path) {
         Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
-            std::fs::read_to_string(&pid_path).ok()
+            std::fs::read_to_string(&pid_path)
+                .ok()
                 .and_then(|value| value.trim().parse::<u32>().ok())
         }
         _ => None,
@@ -380,7 +381,10 @@ fn package_type() -> String {
     if Path::new("/var/lib/apk/db/installed").is_file() {
         if std::fs::read_to_string("/var/lib/apk/db/installed")
             .ok()
-            .is_some_and(|raw| raw.lines().any(|line| matches!(line, "P:gitrun-server" | "P:gitrun")))
+            .is_some_and(|raw| {
+                raw.lines()
+                    .any(|line| matches!(line, "P:gitrun-server" | "P:gitrun"))
+            })
         {
             return "apk".into();
         }
@@ -389,9 +393,13 @@ fn package_type() -> String {
         if std::fs::read_dir("/var/lib/pacman/local")
             .ok()
             .is_some_and(|entries| {
-                entries
-                    .filter_map(Result::ok)
-                    .any(|entry| entry.file_name().to_string_lossy().starts_with("gitrun-server-") || entry.file_name().to_string_lossy().starts_with("gitrun-"))
+                entries.filter_map(Result::ok).any(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("gitrun-server-")
+                        || entry.file_name().to_string_lossy().starts_with("gitrun-")
+                })
             })
         {
             return "pkg.tar.zst".into();
@@ -401,9 +409,13 @@ fn package_type() -> String {
         if std::fs::read_dir("/var/db/xbps")
             .ok()
             .is_some_and(|entries| {
-                entries
-                    .filter_map(Result::ok)
-                    .any(|entry| entry.file_name().to_string_lossy().starts_with("gitrun-server-") || entry.file_name().to_string_lossy().starts_with("gitrun-"))
+                entries.filter_map(Result::ok).any(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("gitrun-server-")
+                        || entry.file_name().to_string_lossy().starts_with("gitrun-")
+                })
             })
         {
             return "xbps".into();

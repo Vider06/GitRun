@@ -2056,6 +2056,33 @@ jobs:
               ["Architecture", "ABI", "Format", "Artifact", "SHA-256"],
               desktop_assets,
           )
+          if migration == "true":
+              if version != "v1.9.0":
+                  raise SystemExit("Migration Release allowlist violation: only v1.9.0 may publish the legacy package")
+              if len(migration_assets) != 1:
+                  raise SystemExit("Migration Release must contain exactly one legacy Debian artifact")
+              lines += [
+                  "## Migration Release",
+                  "",
+                  "> **DO NOT USE FOR FRESH INSTALL!**",
+                  "",
+                  "This one-time compatibility artifact supports only existing GitRun **1.8.23** installations on **x86_64 GNU/Linux with Debian or Ubuntu (APT)**. "
+                  "It preserves the legacy Debian package identity (gitrun), filename and filesystem layout required by the 1.8.23 signed-manifest updater. "
+                  "Its /usr/bin/gitrun payload is the new 1.9.0 Server binary. Other architectures and package managers are outside this migration artifact's support scope.",
+                  "",
+                  "Run gitrun reinstall on the existing 1.8.23 installation. The first transaction installs this transitional package and deliberately retains the legacy gitrun registration. "
+                  "After it completes successfully, run gitrun reinstall a second time; the new 1.9.0 updater then selects the signed GitRun-Server DEB and replaces the legacy package registration. "
+                  "Both transactions are required. Do not use this artifact for a fresh installation; fresh installs must use the GitRun-Server packages above.",
+                  "",
+                  "### Legacy migration artifact",
+                  "",
+              ]
+              lines += table(
+                  ["Architecture", "Distribution", "Compatibility contract", "Artifact", "SHA-256"],
+                  migration_assets,
+              )
+
+
           lines += [
               "## Release metadata and verification",
               "",
@@ -2078,33 +2105,6 @@ jobs:
           ]
           generated = Path(generated_path).read_text(encoding="utf-8").strip()
           lines += [generated if generated else "_No generated GitHub changelog was available for this tag._", ""]
-          if migration == "true":
-              if version != "v1.9.0":
-                  raise SystemExit("Migration Release allowlist violation: only v1.9.0 may publish the legacy package")
-              if len(migration_assets) != 1:
-                  raise SystemExit("Migration Release must contain exactly one legacy Debian artifact")
-              lines += [
-                  "## Migration Release",
-                  "",
-                  "> **DO NOT USE FOR FRESH INSTALL!**",
-                  "",
-                  "This is a one-time compatibility package for existing GitRun **1.8.23** installations migrating to **1.9.0**. "
-                  "It preserves the historical Debian package identity (gitrun), filename and filesystem layout so the "
-                  "1.8.23 gitrun reinstall flow can select, download and verify it from the legacy signed-manifest target. "
-                  "Its /usr/bin/gitrun payload is the new 1.9.0 Server binary.",
-                  "",
-                  "From the existing 1.8.23 installation, run gitrun reinstall; its privileged helper will request administrator authorization when needed. "
-                  "This first transaction deliberately retains the legacy Debian package identity. After it completes, a subsequent gitrun reinstall selects GitRun-Server and replaces that legacy package registration. "
-                  "Do not use this package for a fresh installation; fresh installs must use the GitRun-Server packages above.",
-                  "",
-                  "### Legacy migration artifact",
-                  "",
-              ]
-              lines += table(
-                  ["Architecture", "Distribution", "Compatibility contract", "Artifact", "SHA-256"],
-                  migration_assets,
-              )
-
           Path(output_path).write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
           PY
           echo "NOTES_FILE=$notes" >> "$GITHUB_ENV"

@@ -986,6 +986,58 @@ mod tests {
         assert!(UpdatePolicyChoice::try_from("preview").is_err());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn updater_state_flock_serializes_independent_process_descriptors() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let path = std::env::temp_dir().join(format!(
+            "gitrun-updater-lock-test-{}-{}.lock",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let first = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap();
+        let second = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+
+        // SAFETY: both descriptors refer to the same live lock-file inode.
+        assert_eq!(
+            unsafe { libc::flock(first.as_raw_fd(), libc::LOCK_EX) },
+            0
+        );
+        // SAFETY: the second descriptor is valid and LOCK_NB does not block.
+        let contended = unsafe {
+            libc::flock(second.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB)
+        };
+        assert_eq!(contended, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+
+        drop(first);
+        // SAFETY: the second descriptor remains valid after the first closes.
+        assert_eq!(
+            unsafe { libc::flock(second.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+            0
+        );
+        drop(second);
+        std::fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn platform_abi_is_never_guessed_from_architecture() {
         assert_eq!(package_abi("x86_64-unknown-linux-gnu"), "gnu");

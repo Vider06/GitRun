@@ -2255,6 +2255,7 @@ jobs:
                   "Run gitrun reinstall on the existing 1.8.23 installation. The first transaction installs this transitional package and deliberately retains the legacy gitrun registration. "
                   "After it completes successfully, run gitrun reinstall a second time; the new 1.9.0 updater then selects the signed GitRun-Server DEB and replaces the legacy package registration. "
                   "The replacement preserves existing systemd service state so the new Server package can reload units and restart services that were active. "
+                  "The replacement preserves existing systemd service state so the new Server package can reload units and restart services that were active. "
                   "Both transactions are required. Do not use this artifact for a fresh installation; fresh installs must use the GitRun-Server packages above.",
                   "",
                   "### Legacy migration artifact",
@@ -3763,7 +3764,7 @@ jobs:
               "",
               "- DEB, RPM and Arch Server packages carry systemd unit files. The first `gitrun setup` installs/configures the scheduler, GSR watchdog and control-manager units, then enables and starts the applicable services.",
               "- Alpine APK packages include the OpenRC scheduler and GSR service definitions. Package removal stops and unregisters them; package upgrades restart only services that were already active. Run `gitrun setup` to configure and enable them.",
-              "- Void XBPS packages include both runit service trees and the shared service launcher. `gitrun setup` creates the `/var/service` supervision links and starts them. Before removing the package, run `gitrun uninstall` so those runtime-created links and services are stopped and cleaned up.",
+              "- Void XBPS packages include both runit service trees, the shared service launcher and native lifecycle hooks. `gitrun setup` creates the `/var/service` links and starts the services; package upgrades restart only services that were already running, and package removal stops services and removes only the setup-created links. Use `gitrun uninstall` when you also want the explicit destructive cleanup of GitRun state and configuration.",
               "- Service integration is performed by the privileged setup flow, not by package installation alone. Containers or hosts without a supported active init system cannot complete service setup.",
               "",
               "## GitRun-Desktop downloads",

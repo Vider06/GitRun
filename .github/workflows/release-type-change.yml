@@ -91,7 +91,7 @@ jobs:
           fi
 
           jq --arg release_type "$RELEASE_TYPE" '.release_type = $release_type | del(.signature, .signature_key_id)' "$old_manifest" > "$unsigned"
-          jq -S -c '.' "$unsigned" | tr -d '\n' > "$payload"
+          jq -S -c 'walk(if type == "object" then with_entries(select(.value != null)) else . end) | if .dependencies == [] then del(.dependencies) else . end' "$unsigned" | tr -d '\n' > "$payload"
           openssl pkeyutl -sign -rawin -inkey "$key" -keyform DER -in "$payload" -out "$signature_file"
           openssl pkeyutl -verify -rawin -pubin -inkey "$public" -keyform DER -in "$payload" -sigfile "$signature_file"
           signature="$(od -An -v -tx1 "$signature_file" | tr -d '[:space:]')"
@@ -100,7 +100,7 @@ jobs:
             '. + {signature:$signature,signature_key_id:$key_id}' "$unsigned" > "$signed"
 
           # Verify the final signed JSON payload before touching the remote release.
-          jq -S -c '. | del(.signature, .signature_key_id)' "$signed" | tr -d '\n' > "$payload"
+          jq -S -c 'del(.signature, .signature_key_id) | walk(if type == "object" then with_entries(select(.value != null)) else . end) | if .dependencies == [] then del(.dependencies) else . end' "$signed" | tr -d '\n' > "$payload"
           openssl pkeyutl -verify -rawin -pubin -inkey "$public" -keyform DER -in "$payload" -sigfile "$signature_file"
 
           new_body_file="$work/release-body.new"

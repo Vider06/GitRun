@@ -178,8 +178,14 @@ pub fn select_releases(
     Ok(candidates)
 }
 
-pub fn select_release(repository: &str, installed_version: &str, policy: UpdatePolicy) -> Result<Option<SelectedRelease>, UpdateError> {
-    Ok(select_releases(repository, installed_version, policy)?.into_iter().next())
+pub fn select_release(
+    repository: &str,
+    installed_version: &str,
+    policy: UpdatePolicy,
+) -> Result<Option<SelectedRelease>, UpdateError> {
+    Ok(select_releases(repository, installed_version, policy)?
+        .into_iter()
+        .next())
 }
 
 /// Resolve and cryptographically validate the manifest belonging to the

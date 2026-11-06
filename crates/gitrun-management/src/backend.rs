@@ -4223,22 +4223,75 @@ fn run_updater_payload_as_root(command_name: &str, payload: &[u8]) -> Result<(),
 }
 
 /// Read the shared updater policy through the updater-owned state API.
+/// Protected non-systemd installations use the fixed-purpose CLI helper only
+/// as a privilege transport; policy parsing and persistence remain in updater.
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_updater_settings() -> Result<UpdaterSettings, String> {
-    updater::get_updater_settings()
+    match updater::get_updater_settings() {
+        Ok(settings) => Ok(settings),
+        Err(error)
+            if cfg!(target_os = "linux")
+                && !current_process_is_root()
+                && trusted_system_cli_path().is_some()
+                && Path::new("/etc/gitrun/gitrun.env").is_file() =>
+        {
+            let raw = run_privileged_cli_helper("--read-updater-settings-root", &[])
+                .map_err(|helper| format!("{error}; privileged fallback failed: {helper}"))?;
+            serde_json::from_str(raw.trim())
+                .map_err(|decode| format!("decode privileged updater settings: {decode}"))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Persist the one updater policy consumed by CLI, TUI and GUI.
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn save_updater_settings(policy: String) -> Result<UpdaterSettings, String> {
-    updater::save_updater_settings(&policy)
+    match updater::save_updater_settings(&policy) {
+        Ok(settings) => Ok(settings),
+        Err(error)
+            if cfg!(target_os = "linux")
+                && !current_process_is_root()
+                && trusted_system_cli_path().is_some()
+                && Path::new("/etc/gitrun/gitrun.env").is_file() =>
+        {
+            let payload = serde_json::to_vec(&serde_json::json!({ "policy": policy }))
+                .map_err(|encode| encode.to_string())?;
+            run_updater_payload_as_root("--save-updater-settings-root", &payload)
+                .map_err(|helper| format!("{error}; privileged fallback failed: {helper}"))?;
+            Ok(UpdaterSettings {
+                schema_version: 1,
+                policy: UpdatePolicyChoice::try_from(policy.as_str())?,
+            })
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Read updater diagnostics. The check flag is read-only and does not acquire
 /// the update lifecycle lock.
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_updater_info(check: bool) -> Result<UpdaterInfo, String> {
-    updater::get_updater_info(check)
+    match updater::get_updater_info(check) {
+        Ok(info) => Ok(info),
+        Err(error)
+            if cfg!(target_os = "linux")
+                && !current_process_is_root()
+                && trusted_system_cli_path().is_some()
+                && Path::new("/etc/gitrun/gitrun.env").is_file() =>
+        {
+            let args = if check {
+                vec!["--check".to_owned()]
+            } else {
+                Vec::new()
+            };
+            let raw = run_privileged_cli_helper("--read-updater-info-root", &args)
+                .map_err(|helper| format!("{error}; privileged fallback failed: {helper}"))?;
+            serde_json::from_str(raw.trim())
+                .map_err(|decode| format!("decode privileged updater diagnostics: {decode}"))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Persist the result of a CLI update transaction in the shared bounded history.
@@ -4248,6 +4301,22 @@ pub fn record_cli_update_operation(
     release_type: Option<&str>,
     exit_code: i32,
 ) {
+    if cfg!(target_os = "linux")
+        && !current_process_is_root()
+        && !control_manager_enabled()
+        && trusted_system_cli_path().is_some()
+        && Path::new("/etc/gitrun/gitrun.env").is_file()
+    {
+        if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+            "from_version": from_version,
+            "to_version": to_version,
+            "release_type": release_type,
+            "exit_code": exit_code,
+        })) {
+            let _ = run_updater_payload_as_root("--record-updater-operation-root", &payload);
+        }
+        return;
+    }
     updater::record_cli_operation(from_version, to_version, release_type, exit_code);
 }
 

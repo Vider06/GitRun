@@ -11,11 +11,63 @@ use std::time::{SystemTime, UNIX_EPOCH};
 static UPDATER_STATE_WRITE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
     std::sync::OnceLock::new();
 
-fn updater_state_write_guard() -> Result<std::sync::MutexGuard<'static, ()>, String> {
-    UPDATER_STATE_WRITE_LOCK
+/// Holds both the in-process mutex and the cross-process advisory lock.
+/// The lock file lives beside the state files and is never replaced.
+struct UpdaterStateWriteGuard {
+    _thread: std::sync::MutexGuard<'static, ()>,
+    #[cfg(unix)]
+    _process: std::fs::File,
+}
+
+fn updater_state_write_guard() -> Result<UpdaterStateWriteGuard, String> {
+    let thread = UPDATER_STATE_WRITE_LOCK
         .get_or_init(|| std::sync::Mutex::new(()))
         .lock()
-        .map_err(|_| "updater state write lock is poisoned; refusing to save".to_owned())
+        .map_err(|_| "updater state write lock is poisoned; refusing to save".to_owned())?;
+
+    // A process-local mutex cannot coordinate the CLI, Control Manager and
+    // privileged helper, which may all write the same history file. Use flock
+    // on a stable inode so every process serializes the complete read/modify/
+    // atomic-replace transaction.
+    #[cfg(unix)]
+    let process = {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        let directory = state_dir()?;
+        safe_state_dir(&directory, true)?;
+        let lock_path = directory.join(".updater-state.lock");
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create(true).mode(0o600);
+        options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+        let file = options
+            .open(&lock_path)
+            .map_err(|error| format!("open updater process lock: {error}"))?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| format!("inspect updater process lock: {error}"))?;
+        if !metadata.is_file() || metadata.uid() != unsafe { libc::geteuid() } {
+            return Err("refusing unsafe updater process lock file".into());
+        }
+        loop {
+            // SAFETY: file owns a valid descriptor for this call; flock does
+            // not retain the descriptor pointer.
+            let result = unsafe {
+                libc::flock(std::os::fd::AsRawFd::as_raw_fd(&file), libc::LOCK_EX)
+            };
+            if result == 0 {
+                break file;
+            }
+            let error = std::io::Error::last_os_error();
+            if error.kind() != std::io::ErrorKind::Interrupted {
+                return Err(format!("acquire updater process lock: {error}"));
+            }
+        }
+    };
+
+    Ok(UpdaterStateWriteGuard {
+        _thread: thread,
+        #[cfg(unix)]
+        _process: process,
+    })
 }
 
 const SETTINGS_FILE: &str = "updater-settings.json";

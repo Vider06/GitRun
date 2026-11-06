@@ -610,7 +610,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("gitrun-gtuu-timeout-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let first = GtuuLock::acquire(&dir).expect("first lock should succeed");
+        let started = Instant::now();
         let second = GtuuLock::acquire_wait(&dir, Duration::from_millis(20));
+        assert!(
+            started.elapsed() >= Duration::from_millis(15),
+            "lock acquisition should wait for the configured timeout"
+        );
         assert!(matches!(second, Err(GtuuError::AlreadyRunning)));
         drop(first);
         let _ = fs::remove_dir_all(&dir);

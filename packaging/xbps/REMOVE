@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+# A real removal stops GitRun and removes only the supervision links created by
+# setup. During an upgrade, keep the live services and links in place.
+case "${ACTION:-}" in
+    pre)
+        if [ "${UPDATE:-no}" != "yes" ]; then
+            for service in gitrun-gsr gitrun; do
+                path="/var/service/$service"
+                if [ -L "$path" ]; then
+                    target="$(readlink "$path" 2>/dev/null || true)"
+                    if [ "$target" = "/etc/sv/$service" ]; then
+                        if command -v sv >/dev/null 2>&1; then
+                            sv down "$path" >/dev/null 2>&1 || true
+                        fi
+                        rm -f "$path"
+                    fi
+                fi
+            done
+        fi
+        ;;
+esac
+
+exit 0

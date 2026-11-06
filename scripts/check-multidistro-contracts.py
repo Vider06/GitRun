@@ -220,6 +220,15 @@ def check_native_init_package_resources(errors: list[str]) -> None:
     for relative, markers in expected.items():
         path = ROOT / relative
         source = read_text(path)
+        mode = subprocess.run(
+            ["git", "ls-files", "--stage", "--", relative],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if mode.returncode or not mode.stdout.startswith("100755 "):
+            errors.append(f"{relative} must be tracked with executable mode 100755")
         if source is None:
             errors.append(f"missing native init resource: {relative}")
             continue

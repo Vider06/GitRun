@@ -5102,11 +5102,20 @@ fn read_gsr_events_root_command(_limit: usize) -> Result<(), Box<dyn std::error:
 
 #[cfg(target_os = "linux")]
 #[cfg(target_os = "linux")]
+fn prepare_trusted_updater_state() -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() { return Err("protected updater state requires administrator privileges".into()); }
+    initialize_system_update_config_path(true);
+    let config = trusted_root_config_for_state_access()?;
+    gitrun_setup::validate_system_state_directory(Path::new(&config.state_dir))?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 fn read_updater_settings_root_command() -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
         return Err("reading protected updater settings requires administrator privileges".into());
     }
-    initialize_system_update_config_path(true);
+    prepare_trusted_updater_state()?;
     let settings = gitrun_management::get_updater_settings()?;
     println!("{}", serde_json::to_string(&settings)?);
     Ok(())
@@ -5129,7 +5138,7 @@ fn save_updater_settings_root_command(input_path: &str) -> Result<(), Box<dyn st
         .get("policy")
         .and_then(serde_json::Value::as_str)
         .ok_or("updater settings payload must contain a policy string")?;
-    initialize_system_update_config_path(true);
+    prepare_trusted_updater_state()?;
     gitrun_management::save_updater_settings(policy.to_owned())?;
     println!("GitRun updater release line saved.");
     Ok(())

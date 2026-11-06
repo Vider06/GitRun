@@ -439,7 +439,7 @@ fn dependency_snapshot() -> Vec<(String, Option<String>)> {
 }
 
 fn configured_update_policy() -> Result<UpdatePolicy, Box<dyn std::error::Error>> {
-    let settings = gitrun_management::get_updater_settings().map_err(|error| {
+    let settings = gitrun_updater::state::current_settings_local().map_err(|error| {
         std::io::Error::other(format!("unable to read shared updater policy: {error}"))
     })?;
     Ok(match settings.policy.as_str() {
@@ -3997,7 +3997,7 @@ fn run_update_info(perform_check: bool) -> i32 {
     if perform_check {
         initialize_update_signing_environment(true);
     }
-    match gitrun_management::get_updater_info(perform_check) {
+    match gitrun_updater::state::info_local(perform_check) {
         Ok(info) => {
             println!("GitRun Updater Information");
             println!("Installation");
@@ -4133,14 +4133,14 @@ fn run_update(
     if system_install_paths().is_some() && !running_as_root() {
         return run_update_inner(manifest_url, only_containers, force, presenter);
     }
-    let before = gitrun_management::get_updater_info(false)
+    let before = gitrun_updater::state::info_local(false)
         .map(|info| info.version)
         .unwrap_or_else(|_| current_version());
     let exit_code = run_update_inner(manifest_url, only_containers, force, presenter);
     let after = gitrun_management::get_updater_info(false)
         .map(|info| info.version)
         .unwrap_or_else(|_| current_version());
-    gitrun_management::record_cli_update_operation(
+    gitrun_updater::state::record_cli_operation(
         &before,
         (after != before).then_some(after.as_str()),
         None,
@@ -5167,7 +5167,7 @@ fn save_updater_settings_root_command(input_path: &str) -> Result<(), Box<dyn st
         .and_then(serde_json::Value::as_str)
         .ok_or("updater settings payload must contain a policy string")?;
     prepare_trusted_updater_state()?;
-    gitrun_management::save_updater_settings(policy.to_owned())?;
+    gitrun_updater::state::local_settings_save(&policy.to_owned())?;
     println!("GitRun updater release line saved.");
     Ok(())
 }
@@ -5183,7 +5183,7 @@ fn read_updater_info_root_command(check: bool) -> Result<(), Box<dyn std::error:
     if check {
         initialize_update_signing_environment(true);
     }
-    let info = gitrun_management::get_updater_info(check)?;
+    let info = gitrun_updater::state::info_local(check)?;
     println!("{}", serde_json::to_string(&info)?);
     Ok(())
 }
@@ -5219,7 +5219,7 @@ fn record_updater_operation_root_command(
         .and_then(|value| i32::try_from(value).ok())
         .ok_or("updater history payload has invalid exit_code")?;
     initialize_system_update_config_path(true);
-    gitrun_management::record_cli_update_operation(
+    gitrun_updater::state::record_cli_operation(
         from_version,
         to_version,
         release_type,

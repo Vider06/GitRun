@@ -2309,6 +2309,11 @@ jobs:
             title="GitRun $VERSION"
           fi
           if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            existing_release="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$VERSION")"
+            if [ "$(printf '%s' "$existing_release" | jq -r '.prerelease')" != true ] || ! printf '%s' "$existing_release" | jq -r '.body // ""' | grep -Fq '<!-- GITRUN_RELEASE_TYPE: pre -->'; then
+              echo "Refusing to overwrite a release that has already been promoted; use GitRun Release Type Change only for classification changes." >&2
+              exit 1
+            fi
             gh release edit "$VERSION" --repo "$GITHUB_REPOSITORY" --title "$title" --notes-file "$NOTES_FILE" --prerelease
             gh release upload "$VERSION" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else

@@ -2256,6 +2256,7 @@ jobs:
                   "After it completes successfully, run gitrun reinstall a second time; the new 1.9.0 updater then selects the signed GitRun-Server DEB and replaces the legacy package registration. "
                   "The replacement preserves existing systemd service state so the new Server package can reload units and restart services that were active. "
                   "The replacement preserves existing systemd service state so the new Server package can reload units and restart services that were active. "
+                  "The replacement preserves existing systemd service state so the new Server package can reload units and restart services that were active. "
                   "Both transactions are required. Do not use this artifact for a fresh installation; fresh installs must use the GitRun-Server packages above.",
                   "",
                   "### Legacy migration artifact",
@@ -3792,6 +3793,7 @@ jobs:
                   "",
                   "Run gitrun reinstall on the existing 1.8.23 installation. The first transaction installs this transitional package and deliberately retains the legacy gitrun registration. "
                   "After it completes successfully, run gitrun reinstall a second time; the new 1.9.0 updater then selects the signed GitRun-Server DEB and replaces the legacy package registration. "
+                  "The replacement preserves existing systemd service state so the new Server package can reload units and restart services that were active. "
                   "Both transactions are required. Do not use this artifact for a fresh installation; fresh installs must use the GitRun-Server packages above.",
                   "",
                   "### Legacy migration artifact",
@@ -5334,6 +5336,7 @@ jobs:
                   "",
                   "Run gitrun reinstall on the existing 1.8.23 installation. The first transaction installs this transitional package and deliberately retains the legacy gitrun registration. "
                   "After it completes successfully, run gitrun reinstall a second time; the new 1.9.0 updater then selects the signed GitRun-Server DEB and replaces the legacy package registration. "
+                  "The replacement preserves existing systemd service state so the new Server package can reload units and restart services that were active. "
                   "Both transactions are required. Do not use this artifact for a fresh installation; fresh installs must use the GitRun-Server packages above.",
                   "",
                   "### Legacy migration artifact",
@@ -6890,6 +6893,7 @@ jobs:
                   "",
                   "Run gitrun reinstall on the existing 1.8.23 installation. The first transaction installs this transitional package and deliberately retains the legacy gitrun registration. "
                   "After it completes successfully, run gitrun reinstall a second time; the new 1.9.0 updater then selects the signed GitRun-Server DEB and replaces the legacy package registration. "
+                  "The replacement preserves existing systemd service state so the new Server package can reload units and restart services that were active. "
                   "Both transactions are required. Do not use this artifact for a fresh installation; fresh installs must use the GitRun-Server packages above.",
                   "",
                   "### Legacy migration artifact",
@@ -8426,6 +8430,7 @@ jobs:
                   "",
                   "Run gitrun reinstall on the existing 1.8.23 installation. The first transaction installs this transitional package and deliberately retains the legacy gitrun registration. "
                   "After it completes successfully, run gitrun reinstall a second time; the new 1.9.0 updater then selects the signed GitRun-Server DEB and replaces the legacy package registration. "
+                  "The replacement preserves existing systemd service state so the new Server package can reload units and restart services that were active. "
                   "Both transactions are required. Do not use this artifact for a fresh installation; fresh installs must use the GitRun-Server packages above.",
                   "",
                   "### Legacy migration artifact",
@@ -9968,6 +9973,7 @@ jobs:
                   "",
                   "Run gitrun reinstall on the existing 1.8.23 installation. The first transaction installs this transitional package and deliberately retains the legacy gitrun registration. "
                   "After it completes successfully, run gitrun reinstall a second time; the new 1.9.0 updater then selects the signed GitRun-Server DEB and replaces the legacy package registration. "
+                  "The replacement preserves existing systemd service state so the new Server package can reload units and restart services that were active. "
                   "Both transactions are required. Do not use this artifact for a fresh installation; fresh installs must use the GitRun-Server packages above.",
                   "",
                   "### Legacy migration artifact",

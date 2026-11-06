@@ -2,11 +2,14 @@
 
 Current source target: GitRun <!-- gitrun-version:start -->1.9.1<!-- gitrun-version:end --> (`version.txt`). Current-source markers are synchronized by `scripts/sync-markdown-version.py`; entries below record historical source changes and do not by themselves prove that signed release artifacts were published.
 
-## GitRun 1.9.1 — wait for active runner reconciliation during system updates
+## GitRun 1.9.1 — serialized system updates and native Linux service integration
 
 - **Source/product target:** `1.9.1`, recorded in `version.txt`. This entry describes source changes and does not assert that a signed release artifact has been published.
 - Make system updates wait for an active scheduler lifecycle critical section to finish instead of immediately failing with `another GTUU run is already active`. Keep scheduler reconciliation nonblocking, preserve the shared exclusive lock, and bound the updater wait to five minutes.
 - Add regression coverage for successful lock acquisition after release and timeout while the lock remains held.
+- Add OpenRC scheduler and GSR service definitions for Alpine, plus runit service and logging trees for Void. Setup consumes the shared packaged resources, and package hooks restart only previously active services while preserving operator configuration and state on removal.
+- Keep APK packages OpenRC-specific and XBPS packages runit-specific; verify package contents, shell syntax, executable modes and native lifecycle metadata.
+- Consolidate GNU and musl Desktop builds and packages into one four-target matrix per lifecycle stage. Put release installation/update instructions first and align the README, platform-support guide and release references with the package matrix.
 - Bump `gitrun-cli` from `0.13.25` to `0.13.26` and `gitrun-scheduler` from `0.11.16` to `0.11.17`; keep `Cargo.lock`, `version.txt` and current-source Markdown markers aligned.
 
 ## GitRun 1.9.0 — Linux platform foundation, shared management backend and release split

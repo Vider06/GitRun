@@ -142,12 +142,20 @@ fn validate_privileged_state_path(directory: &Path) -> Result<(), String> {
         match std::fs::symlink_metadata(&prefix) {
             Ok(metadata) => {
                 if missing_component || metadata.file_type().is_symlink() || !metadata.is_dir() {
-                    return Err(format!("unsafe updater state path component: {}", prefix.display()));
+                    return Err(format!(
+                        "unsafe updater state path component: {}",
+                        prefix.display()
+                    ));
                 }
                 nearest_existing = prefix.clone();
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => missing_component = true,
-            Err(error) => return Err(format!("inspect updater state path {}: {error}", prefix.display())),
+            Err(error) => {
+                return Err(format!(
+                    "inspect updater state path {}: {error}",
+                    prefix.display()
+                ))
+            }
         }
     }
     gitrun_setup::validate_system_state_directory(&nearest_existing)

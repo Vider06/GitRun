@@ -1,6 +1,6 @@
 [package]
 name = "gitrun-updater"
-version = "0.8.9"
+version = "0.9.0"
 edition = "2021"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -9,6 +9,7 @@ description = "GitRun release update, dependency and rollback manager"
 [dependencies]
 gitrun-core = { path = "../gitrun-core" }
 gitrun-platform = { path = "../gitrun-platform" }
+libc = "0.2"
 flate2 = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 ring = "0.17"

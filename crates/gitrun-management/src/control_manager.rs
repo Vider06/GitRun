@@ -42,6 +42,8 @@ fn action_is_allowed(operation: &str, action: &str) -> bool {
                     | "repo_api_policies"
                     | "dock_requirements"
                     | "updates"
+                    | "updater_settings"
+                    | "updater_info"
             ) || (cfg!(test) && action == "ipc_ping")
         }
         "write" => {
@@ -62,6 +64,8 @@ fn action_is_allowed(operation: &str, action: &str) -> bool {
                     | "gitrun_settings_save"
                     | "config_save"
                     | "dashboard_settings_save"
+                    | "updater_settings_save"
+                    | "updater_operation_record"
                     | "service_control"
                     | "maintenance_task"
                     | "json_recovery"

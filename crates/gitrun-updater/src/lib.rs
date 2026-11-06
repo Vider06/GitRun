@@ -11,6 +11,13 @@ use std::{
 };
 use thiserror::Error;
 
+pub mod release_policy;
+pub mod state;
+pub use release_policy::{
+    resolve_policy_update, resolve_policy_update_for_target, select_release, select_releases,
+    PolicyUpdate, ReleaseType, SelectedRelease, UpdatePolicy,
+};
+
 const MAX_RELEASE_ARTIFACT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 100_000;
 const MAX_ARCHIVE_ENTRY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
@@ -145,6 +152,8 @@ pub fn sync_premade_runner_dockerfile(
 pub struct ReleaseManifest {
     pub name: String,
     pub version: String,
+    /// Classification shared by the signed manifest and GitHub release metadata.
+    pub release_type: ReleaseType,
     pub git_commit: String,
     pub artifacts: Vec<ReleaseArtifact>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3282,6 +3291,7 @@ mod tests {
         ReleaseManifest {
             name: "GitRun".into(),
             version: "0.3.0".into(),
+            release_type: ReleaseType::Full,
             git_commit: "abcdef1".into(),
             artifacts: vec![ReleaseArtifact {
                 target: "x86_64-unknown-linux-gnu".into(),
@@ -3485,6 +3495,7 @@ mod tests {
         let raw = r#"{
             "name": "GitRun",
             "version": "0.3.0",
+            "release_type": "full",
             "git_commit": "abcdef1",
             "repository": "Vider06/GitRun",
             "artifacts": [
@@ -3507,7 +3518,7 @@ mod tests {
 
         assert_eq!(
             payload,
-            r#"{"artifacts":[{"file":"GitRun-v0.3.0-x86_64-unknown-linux-gnu.tar.gz","sha256":"fixture-sha256","target":"x86_64-unknown-linux-gnu"}],"dependencies":[{"minimum_version":"2.40.0","name":"Git"}],"git_commit":"abcdef1","name":"GitRun","repository":"Vider06/GitRun","version":"0.3.0"}"#
+            r#"{"artifacts":[{"file":"GitRun-v0.3.0-x86_64-unknown-linux-gnu.tar.gz","sha256":"fixture-sha256","target":"x86_64-unknown-linux-gnu"}],"dependencies":[{"minimum_version":"2.40.0","name":"Git"}],"git_commit":"abcdef1","name":"GitRun","release_type":"full","repository":"Vider06/GitRun","version":"0.3.0"}"#
         );
     }
 

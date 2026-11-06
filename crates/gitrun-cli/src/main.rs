@@ -4,9 +4,10 @@ use gitrun_setup::{bootstrap_linux_with_auth_and_profile, prepare_directories, B
 use gitrun_smart_scheduler::KittySettings;
 use gitrun_updater::{
     apply_installed_update, apply_update, build_plan, dependency_status, download_and_verify,
-    fetch_manifest, latest_manifest, pin_runner_image, release_manifest_download_url, rollback,
-    rollback_installed_update_with_config, update_incompatible_dependencies, update_runner_image,
-    BackupRecord, InstalledArtifact, InstalledBackupRecord, UpdateError, UpdatePaths,
+    fetch_manifest, latest_manifest, pin_runner_image, release_manifest_download_url,
+    resolve_policy_update_for_target, rollback, rollback_installed_update_with_config,
+    update_incompatible_dependencies, update_runner_image, BackupRecord, InstalledArtifact,
+    InstalledBackupRecord, ReleaseType, UpdateError, UpdatePaths, UpdatePolicy,
 };
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -437,19 +438,183 @@ fn dependency_snapshot() -> Vec<(String, Option<String>)> {
     .collect()
 }
 
+fn write_updater_privileged_payload(
+    payload: &[u8],
+    label: &str,
+) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "gitrun-{label}-{}-{nonce}.json",
+        std::process::id()
+    ));
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)?;
+        file.write_all(payload)?;
+        file.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    std::fs::write(&path, payload)?;
+    Ok(path)
+}
+
+fn updater_root_helper(args: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
+    let executable = std::env::current_exe()?;
+    let mut command = trusted_privilege_command()?;
+    command.arg(executable).arg("--no-cat").args(args);
+    let output = command.output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "privileged updater helper failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into());
+    }
+    String::from_utf8(output.stdout).map_err(|error| error.into())
+}
+
+fn read_updater_settings(
+) -> Result<gitrun_updater::state::UpdaterSettings, Box<dyn std::error::Error>> {
+    match gitrun_updater::state::read_settings() {
+        Ok(settings) => Ok(settings),
+        Err(error)
+            if cfg!(target_os = "linux")
+                && system_install_paths().is_some()
+                && !running_as_root() =>
+        {
+            let raw =
+                updater_root_helper(&["--read-updater-settings-root"]).map_err(|helper_error| {
+                    std::io::Error::other(format!(
+                        "{error}; privileged fallback failed: {helper_error}"
+                    ))
+                })?;
+            Ok(serde_json::from_str(raw.trim())?)
+        }
+        Err(error) => Err(std::io::Error::other(error).into()),
+    }
+}
+
+fn save_updater_settings(
+    policy: &str,
+) -> Result<gitrun_updater::state::UpdaterSettings, Box<dyn std::error::Error>> {
+    match gitrun_updater::state::save_settings(policy) {
+        Ok(settings) => Ok(settings),
+        Err(error)
+            if cfg!(target_os = "linux")
+                && system_install_paths().is_some()
+                && !running_as_root() =>
+        {
+            let payload = serde_json::to_vec(&serde_json::json!({ "policy": policy }))?;
+            let input = write_updater_privileged_payload(&payload, "updater-settings")?;
+            let result = updater_root_helper(&[
+                "--save-updater-settings-root",
+                input.to_string_lossy().as_ref(),
+            ]);
+            let _ = std::fs::remove_file(input);
+            result.map_err(|helper_error| {
+                std::io::Error::other(format!(
+                    "{error}; privileged fallback failed: {helper_error}"
+                ))
+            })?;
+            Ok(gitrun_updater::state::UpdaterSettings {
+                schema_version: 1,
+                policy: gitrun_updater::state::UpdatePolicyChoice::try_from(policy)
+                    .map_err(std::io::Error::other)?,
+            })
+        }
+        Err(error) => Err(std::io::Error::other(error).into()),
+    }
+}
+
+fn read_updater_info(
+    check: bool,
+) -> Result<gitrun_updater::state::UpdaterInfo, Box<dyn std::error::Error>> {
+    match gitrun_updater::state::info(check) {
+        Ok(info) => Ok(info),
+        Err(error)
+            if cfg!(target_os = "linux")
+                && system_install_paths().is_some()
+                && !running_as_root() =>
+        {
+            let raw = if check {
+                updater_root_helper(&["--read-updater-info-root", "--check"])
+            } else {
+                updater_root_helper(&["--read-updater-info-root"])
+            }
+            .map_err(|helper_error| {
+                format!("{error}; privileged fallback failed: {helper_error}")
+            })?;
+            Ok(serde_json::from_str(raw.trim())?)
+        }
+        Err(error) => Err(std::io::Error::other(error).into()),
+    }
+}
+
+fn configured_update_policy() -> Result<UpdatePolicy, Box<dyn std::error::Error>> {
+    let settings = read_updater_settings().map_err(|error| {
+        std::io::Error::other(format!("unable to read shared updater policy: {error}"))
+    })?;
+    Ok(match settings.policy.as_str() {
+        "security_only" => UpdatePolicy::SecurityOnly,
+        "security_full" => UpdatePolicy::SecurityFull,
+        "security_full_pre" => UpdatePolicy::SecurityFullPre,
+        value => return Err(format!("unsupported persisted updater policy: {value}").into()),
+    })
+}
+
+fn resolve_selected_manifest(
+    repository: &str,
+    current: &str,
+    target: &str,
+    manifest_url: Option<&str>,
+) -> Result<Option<(gitrun_updater::ReleaseManifest, ReleaseType)>, Box<dyn std::error::Error>> {
+    let policy = configured_update_policy()?;
+    if let Some(url) = manifest_url {
+        let manifest = fetch_manifest(url)?;
+        if !policy.accepts_release_type(manifest.release_type) {
+            return Err(format!(
+                "release type {} is excluded by the active {} policy",
+                manifest.release_type.as_str(),
+                policy.as_str()
+            )
+            .into());
+        }
+        return Ok(Some((manifest.clone(), manifest.release_type)));
+    }
+    Ok(
+        resolve_policy_update_for_target(repository, current, policy, target)?
+            .map(|resolved| (resolved.manifest, resolved.release.release_type)),
+    )
+}
+
 fn update_check_command(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let repository = std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
     let manifest_url = args.get(2).filter(|value| !value.starts_with("--"));
-    let manifest = match manifest_url {
-        Some(url) => fetch_manifest(url)?,
-        None => latest_manifest(&repository)?,
-    };
-
     let current = current_version();
     let target = target_triple()?;
     println!("GitRun update check");
     println!("Current version: {current}");
-    println!("Latest signed release manifest: {}", manifest.version);
+    let Some((manifest, release_type)) = resolve_selected_manifest(
+        &repository,
+        &current,
+        &target,
+        manifest_url.map(String::as_str),
+    )?
+    else {
+        println!("No newer release matches the active updater policy.");
+        return Ok(());
+    };
+    println!(
+        "Selected signed release: {} ({})",
+        manifest.version,
+        release_type.as_str()
+    );
 
     match build_plan(&manifest, &current, &target, &dependency_snapshot()) {
         Ok(plan) => {
@@ -541,13 +706,14 @@ fn update_command(
         .get(1)
         .filter(|value| !value.starts_with("--"))
         .map(String::as_str);
-    let manifest = if let Some(url) = manifest_url {
-        fetch_manifest(url)?
-    } else {
-        latest_manifest(&repository)?
-    };
     let current = current_version();
     let target = target_triple()?;
+    let Some((manifest, release_type)) =
+        resolve_selected_manifest(&repository, &current, &target, manifest_url)?
+    else {
+        println!("GitRun update: no newer release matches the active updater policy.");
+        return Ok(());
+    };
     let plan = build_plan(&manifest, &current, &target, &dependency_snapshot())?;
     presenter.transition(presenter::ValidationState::Loading);
 
@@ -557,6 +723,7 @@ fn update_command(
     );
     println!("target: {}", plan.target);
     println!("artifact: {}", plan.artifact);
+    println!("release type: {}", release_type.as_str());
     for dependency in &plan.dependencies {
         println!(
             "{}: {} ({})",
@@ -575,14 +742,17 @@ fn update_command(
         );
     }
 
-    // Use the same lock as scheduled GTUU before changing dependencies or the
-    // installed executable. If a scheduled update is already running, this
-    // fails before the system update performs any mutations.
+    // Serialize the update with runner reconciliation before changing host
+    // dependencies or the installed executable. A scheduler reconciliation
+    // holds this lock only for its lifecycle critical section; wait for that
+    // section to finish instead of failing the entire user-requested update.
     let mut gtuu_lock = if system_install.is_some() {
         let config = load_config()?;
-        Some(gitrun_scheduler::gtuu::GtuuLock::acquire(Path::new(
-            &config.state_dir,
-        ))?)
+        println!("GitRun update: waiting for active runner reconciliation to finish");
+        Some(gitrun_scheduler::gtuu::GtuuLock::acquire_wait(
+            Path::new(&config.state_dir),
+            std::time::Duration::from_secs(300),
+        )?)
     } else {
         None
     };
@@ -639,10 +809,9 @@ fn update_command(
             .and_then(|value| value.parse::<u32>().ok())
             .filter(|uid| *uid != 0);
 
-        // The exclusive GTUU lock has been held since before the update
-        // transaction began. Stop the scheduler while holding it, even when
-        // no image refresh is needed, so a newly scheduled run cannot race the
-        // executable replacement or the subsequent systemd reconciliation.
+        // Stop the scheduler while holding the lifecycle lock, even when no
+        // image refresh is needed, so a new reconcile cycle cannot race the
+        // executable replacement or subsequent systemd reconciliation.
         println!("GitRun update: stopping scheduler before completing the system update");
         if let Err(error) = stop_scheduler_service_for_update() {
             let rollback_error = rollback_installed_update_with_config(
@@ -1776,14 +1945,19 @@ fn main() {
         Command::Uninstall => run_privileged_cli_action("--uninstall-root", &mut presenter),
         Command::Reinstall => run_privileged_cli_action("--reinstall-latest-root", &mut presenter),
         Command::Update {
+            info: true, check, ..
+        } => run_update_info(check),
+        Command::Update {
             manifest_url,
             check: true,
+            info: false,
             ..
         } => run_update_check(manifest_url.as_deref()),
         Command::Update {
             manifest_url,
             only_containers,
             check: false,
+            info: false,
             force,
         } => run_update(
             manifest_url.as_deref(),
@@ -1968,6 +2142,38 @@ fn main() {
                 }
             }
         }
+        Command::ReadUpdaterSettingsRoot => match read_updater_settings_root_command() {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("GitRun updater settings read: FAIL — {error}");
+                1
+            }
+        },
+        Command::SaveUpdaterSettingsRoot { input_path } => {
+            match save_updater_settings_root_command(&input_path) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("GitRun updater settings save: FAIL — {error}");
+                    1
+                }
+            }
+        }
+        Command::ReadUpdaterInfoRoot { check } => match read_updater_info_root_command(check) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("GitRun updater diagnostics read: FAIL — {error}");
+                1
+            }
+        },
+        Command::RecordUpdaterOperationRoot { input_path } => {
+            match record_updater_operation_root_command(&input_path) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("GitRun updater operation record: FAIL — {error}");
+                    1
+                }
+            }
+        }
         Command::Rollback { backup_path } => run_rollback(&backup_path, &mut presenter),
         Command::CheckCompatibility { workflow } => {
             run_check_compatibility(workflow.as_deref(), &mut presenter)
@@ -2029,6 +2235,10 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
         | Command::SaveKittySettingsRoot { .. }
         | Command::ReadKittyDashboardRoot
         | Command::ReadGitRunSettingsRoot
+        | Command::ReadUpdaterSettingsRoot
+        | Command::SaveUpdaterSettingsRoot { .. }
+        | Command::ReadUpdaterInfoRoot { .. }
+        | Command::RecordUpdaterOperationRoot { .. }
         | Command::JsonRecoveryRoot { .. }
         | Command::FixUpdateRoot => ValidationState::Recovering,
         Command::RecoveryGtuu | Command::RepairService | Command::Rollback { .. } => {
@@ -2123,6 +2333,9 @@ enum Command {
     Doctor,
     /// Check for and apply GitRun updates.
     Update {
+        /// Print complete local updater diagnostics. Combine with --check for a read-only release check.
+        #[arg(long, conflicts_with_all = ["only_containers", "force", "manifest_url"])]
+        info: bool,
         /// Check the current release and runner image without downloading or applying anything.
         #[arg(long, conflicts_with = "only_containers")]
         check: bool,
@@ -2246,6 +2459,21 @@ enum Command {
         /// Private JSON file containing a KittySettings object.
         input_path: String,
     },
+    /// Internal privileged read of the shared updater release-line preference.
+    #[command(name = "--read-updater-settings-root", hide = true)]
+    ReadUpdaterSettingsRoot,
+    /// Internal privileged write of the shared updater release-line preference.
+    #[command(name = "--save-updater-settings-root", hide = true)]
+    SaveUpdaterSettingsRoot { input_path: String },
+    /// Internal privileged read of updater diagnostics.
+    #[command(name = "--read-updater-info-root", hide = true)]
+    ReadUpdaterInfoRoot {
+        #[arg(long)]
+        check: bool,
+    },
+    /// Internal privileged write of one bounded updater operation record.
+    #[command(name = "--record-updater-operation-root", hide = true)]
+    RecordUpdaterOperationRoot { input_path: String },
 
     /// Internal privileged reinstall entry point.
     #[command(name = "--reinstall-root", hide = true)]
@@ -3822,14 +4050,7 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
     }
     println!("GitRun fix-update: control service PASS");
 
-    println!("GitRun fix-update: checking the latest official signed release");
-    let manifest = match latest_manifest("Vider06/GitRun") {
-        Ok(manifest) => manifest,
-        Err(error) => {
-            eprintln!("GitRun fix-update: unable to read the latest signed release: {error}");
-            return 1;
-        }
-    };
+    println!("GitRun fix-update: checking the selected official signed release");
     let current = current_version();
     let target = match target_triple() {
         Ok(target) => target,
@@ -3838,7 +4059,29 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
             return 1;
         }
     };
+    let selected = match resolve_selected_manifest("Vider06/GitRun", &current, &target, None) {
+        Ok(selected) => selected,
+        Err(error) => {
+            eprintln!("GitRun fix-update: release selection failed: {error}");
+            return 1;
+        }
+    };
+    let Some((manifest, release_type)) = selected else {
+        println!("GitRun fix-update: no newer release matches the active updater policy.");
+        return if let Err(error) = verify_post_update_doctor(&installed_binary) {
+            eprintln!("GitRun fix-update: final doctor verification failed: {error}");
+            1
+        } else {
+            println!("GitRun fix-update: PASS (systemd integration and doctor verified)");
+            0
+        };
+    };
 
+    println!(
+        "GitRun fix-update: selected {} release {}",
+        release_type.as_str(),
+        manifest.version
+    );
     match build_plan(&manifest, &current, &target, &dependency_snapshot()) {
         Ok(plan) => {
             println!(
@@ -3870,12 +4113,122 @@ fn run_fix_update(presenter: &mut presenter::CatPresenter) -> i32 {
     0
 }
 
+fn run_update_info(perform_check: bool) -> i32 {
+    let system_install = system_install_paths().is_some();
+    initialize_system_update_config_path(system_install);
+    if perform_check {
+        initialize_update_signing_environment(true);
+    }
+    match read_updater_info(perform_check) {
+        Ok(info) => {
+            println!("GitRun Updater Information");
+            println!("Installation");
+            println!("  Version:          {}", info.version);
+            println!("  Package:          {}", info.package);
+            println!("  Architecture:     {}", info.architecture);
+            println!("  ABI:              {}", info.abi);
+            println!("  Target:           {}", info.target);
+            println!("Update policy");
+            println!("  Selected:         {}", info.policy);
+            println!("  Description:      {}", info.policy_description);
+            println!("Update lock");
+            println!("  Status:           {}", info.lock.status);
+            println!(
+                "  Owner PID:        {}",
+                info.lock
+                    .owner_pid
+                    .map(|pid| pid.to_string())
+                    .unwrap_or_else(|| "None".into())
+            );
+            println!("  Detail:           {}", info.lock.detail);
+            println!("Required services");
+            for service in &info.services {
+                println!(
+                    "  {}: installed={}, active={}",
+                    service.name, service.installed, service.active
+                );
+            }
+            println!("Recent operations");
+            if info.recent_operations.is_empty() {
+                println!("  None recorded");
+            } else {
+                for operation in &info.recent_operations {
+                    println!(
+                        "  {}: {} -> {} ({})",
+                        operation.timestamp,
+                        operation.from_version,
+                        operation.to_version.as_deref().unwrap_or("unchanged"),
+                        operation.result
+                    );
+                    if let Some(error) = operation.error.as_deref() {
+                        println!("    Error: {error}");
+                    }
+                }
+            }
+            println!("Recent updater errors");
+            if info.recent_errors.is_empty() {
+                println!("  None recorded");
+            } else {
+                for operation in &info.recent_errors {
+                    println!(
+                        "  {}: {} — {}",
+                        operation.timestamp,
+                        operation.from_version,
+                        operation
+                            .error
+                            .as_deref()
+                            .unwrap_or("unspecified updater error")
+                    );
+                }
+            }
+            let mut exit_code = 0;
+            if let Some(check_result) = info.check {
+                println!("Release check");
+                println!(
+                    "  Status:           {}",
+                    if check_result.checked {
+                        "Completed"
+                    } else {
+                        "Failed"
+                    }
+                );
+                println!("  Available:        {}", check_result.available);
+                println!(
+                    "  Selected version: {}",
+                    check_result.selected_version.as_deref().unwrap_or("None")
+                );
+                println!(
+                    "  Release type:     {}",
+                    check_result.release_type.as_deref().unwrap_or("None")
+                );
+                println!(
+                    "  Artifact:         {}",
+                    check_result.artifact.as_deref().unwrap_or("None")
+                );
+                println!("  Detail:           {}", check_result.detail);
+                if let Some(error) = check_result.error.as_deref() {
+                    println!("  Error:            {error}");
+                }
+                if !check_result.checked {
+                    exit_code = 1;
+                }
+            }
+            println!("No update was installed or modified by this diagnostic command.");
+            exit_code
+        }
+        Err(error) => {
+            eprintln!("GitRun updater diagnostics: FAIL — {error}");
+            1
+        }
+    }
+}
+
 fn run_update_check(manifest_url: Option<&str>) -> i32 {
     // Keep the read-only path separate from the update transaction dispatcher:
     // this function never reaches dependency changes, file installation or
     // service restarts.
     let system_install = system_install_paths().is_some();
-    initialize_update_signing_environment(system_install);
+    initialize_update_signing_environment(true);
     initialize_system_update_config_path(system_install);
     let args: Vec<String> = match manifest_url {
         Some(url) => vec!["update".to_owned(), "--check".to_owned(), url.to_owned()],
@@ -3896,14 +4249,43 @@ fn run_update(
     force: bool,
     presenter: &mut presenter::CatPresenter,
 ) -> i32 {
+    // A non-root system invocation delegates the transaction to the elevated
+    // child. That child records the operation as root; do not trigger a second
+    // authorization prompt merely to write the same history entry.
+    if system_install_paths().is_some() && !running_as_root() {
+        return run_update_inner(manifest_url, only_containers, force, presenter);
+    }
+    let before = gitrun_updater::state::info_local(false)
+        .map(|info| info.version)
+        .unwrap_or_else(|_| current_version());
+    let exit_code = run_update_inner(manifest_url, only_containers, force, presenter);
+    let after = gitrun_updater::state::info_local(false)
+        .map(|info| info.version)
+        .unwrap_or_else(|_| current_version());
+    gitrun_updater::state::record_cli_operation(
+        &before,
+        (after != before).then_some(after.as_str()),
+        None,
+        exit_code,
+    );
+    exit_code
+}
+
+fn run_update_inner(
+    manifest_url: Option<&str>,
+    only_containers: bool,
+    force: bool,
+    presenter: &mut presenter::CatPresenter,
+) -> i32 {
     // Installed-system invocations must never inherit caller-selected update
     // keys, signature policy, or config paths. Direct-root and --only-containers
     // paths bypass the privilege helper's normal signing-key hand-off, so initialize the fixed
     // trust anchors and service config before branching.
     let system_install = system_install_paths().is_some();
-    if system_install || only_containers {
-        initialize_update_signing_environment(system_install);
-    }
+    // Signed release manifests are mandatory for both system and developer
+    // installs. System installs overwrite caller-provided trust settings; local
+    // installs use the same built-in trust anchor for official releases.
+    initialize_update_signing_environment(true);
     initialize_system_update_config_path(system_install);
 
     if only_containers {
@@ -3967,17 +4349,6 @@ fn run_update(
         );
         let repository =
             std::env::var("GITRUN_REPOSITORY").unwrap_or_else(|_| "Vider06/GitRun".into());
-        let manifest = match manifest_url {
-            Some(url) => fetch_manifest(url),
-            None => latest_manifest(&repository),
-        };
-        let manifest = match manifest {
-            Ok(manifest) => manifest,
-            Err(error) => {
-                eprintln!("GitRun update: FAIL — release preflight failed: {error}");
-                return 1;
-            }
-        };
         let current = current_version();
         let target = match target_triple() {
             Ok(target) => target,
@@ -3986,6 +4357,23 @@ fn run_update(
                 return 1;
             }
         };
+        let selected = resolve_selected_manifest(&repository, &current, &target, manifest_url);
+        let (manifest, release_type) = match selected {
+            Ok(Some(selected)) => selected,
+            Ok(None) => {
+                println!("GitRun update: no newer release matches the active updater policy; no administrator access needed");
+                return 0;
+            }
+            Err(error) => {
+                eprintln!("GitRun update: FAIL — release preflight failed: {error}");
+                return 1;
+            }
+        };
+        println!(
+            "GitRun update: selected {} release {}",
+            release_type.as_str(),
+            manifest.version
+        );
         if let Err(error) = build_plan(&manifest, &current, &target, &dependency_snapshot()) {
             match error {
                 UpdateError::NotNewer => {
@@ -4852,6 +5240,131 @@ fn read_gsr_events_root_command(_limit: usize) -> Result<(), Box<dyn std::error:
 }
 
 #[cfg(target_os = "linux")]
+fn trusted_root_config_for_updater_state() -> Result<Config, Box<dyn std::error::Error>> {
+    let path = trusted_system_config_path()
+        .ok_or("trusted system GitRun configuration is missing or unsafe")?;
+    let config = Config::from_env_file(path)?;
+    config.validate()?;
+    Ok(config)
+}
+
+#[cfg(target_os = "linux")]
+fn prepare_trusted_updater_state() -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("protected updater state requires administrator privileges".into());
+    }
+    initialize_system_update_config_path(true);
+    let _config = trusted_root_config_for_updater_state()?;
+    // gitrun-updater validates the trusted state-directory ancestry before
+    // reading or writing updater-owned state.
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn read_updater_settings_root_command() -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("reading protected updater settings requires administrator privileges".into());
+    }
+    prepare_trusted_updater_state()?;
+    let settings = read_updater_settings()?;
+    println!("{}", serde_json::to_string(&settings)?);
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn save_updater_settings_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("saving protected updater settings requires administrator privileges".into());
+    }
+    let requester_uid = std::env::var("PKEXEC_UID")
+        .or_else(|_| std::env::var("SUDO_UID"))
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or("updater settings helper requires a verified requesting user UID")?;
+    let bytes =
+        read_privileged_user_payload(Path::new(input_path), requester_uid, "updater-settings")?;
+    let request: serde_json::Value = serde_json::from_slice(&bytes)?;
+    let policy = request
+        .get("policy")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("updater settings payload must contain a policy string")?;
+    prepare_trusted_updater_state()?;
+    save_updater_settings(policy)?;
+    println!("GitRun updater release line saved.");
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn read_updater_info_root_command(check: bool) -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err(
+            "reading protected updater diagnostics requires administrator privileges".into(),
+        );
+    }
+    prepare_trusted_updater_state()?;
+    if check {
+        initialize_update_signing_environment(true);
+    }
+    let info = read_updater_info(check)?;
+    println!("{}", serde_json::to_string(&info)?);
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn record_updater_operation_root_command(
+    input_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !running_as_root() {
+        return Err("recording protected updater history requires administrator privileges".into());
+    }
+    let requester_uid = std::env::var("PKEXEC_UID")
+        .or_else(|_| std::env::var("SUDO_UID"))
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or("updater history helper requires a verified requesting user UID")?;
+    let bytes =
+        read_privileged_user_payload(Path::new(input_path), requester_uid, "updater-history")?;
+    let request: serde_json::Value = serde_json::from_slice(&bytes)?;
+    let from_version = request
+        .get("from_version")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("updater history payload is missing from_version")?;
+    let to_version = request
+        .get("to_version")
+        .and_then(serde_json::Value::as_str);
+    let release_type = request
+        .get("release_type")
+        .and_then(serde_json::Value::as_str);
+    let exit_code = request
+        .get("exit_code")
+        .and_then(serde_json::Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .ok_or("updater history payload has invalid exit_code")?;
+    initialize_system_update_config_path(true);
+    gitrun_updater::state::record_cli_operation(from_version, to_version, release_type, exit_code);
+    println!("GitRun updater operation recorded.");
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_updater_settings_root_command() -> Result<(), Box<dyn std::error::Error>> {
+    Err("protected updater settings are Linux-only".into())
+}
+#[cfg(not(target_os = "linux"))]
+fn save_updater_settings_root_command(_input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    Err("protected updater settings are Linux-only".into())
+}
+#[cfg(not(target_os = "linux"))]
+fn read_updater_info_root_command(_check: bool) -> Result<(), Box<dyn std::error::Error>> {
+    Err("protected updater diagnostics are Linux-only".into())
+}
+#[cfg(not(target_os = "linux"))]
+fn record_updater_operation_root_command(
+    _input_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    Err("protected updater history is Linux-only".into())
+}
+
 fn save_config_root_command(input_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     if !running_as_root() {
         return Err("saving system settings requires administrator privileges".into());
@@ -5913,6 +6426,7 @@ mod debian_reinstall_artifact_tests {
         gitrun_updater::ReleaseManifest {
             name: "GitRun".into(),
             version: "v1.9.0".into(),
+            release_type: ReleaseType::Full,
             git_commit: "test-commit-id".into(),
             artifacts,
             signature: None,

@@ -1,5 +1,6 @@
 //! GitRun shared management backend.
-//! This crate owns management policy, operations, persistence and the Control Manager.
+//! This crate owns management operations and the Control Manager. Updater policy,
+//! updater state and update history are owned by gitrun-updater.
 //! Tauri is an optional desktop adapter; server and CLI builds do not enable it.
 //! The dashboard enables the optional `desktop` feature and registers these
 //! functions as Tauri commands. Headless consumers call the same validated
@@ -27,9 +28,15 @@ use tauri::{AppHandle, Emitter, Manager};
 
 #[path = "control_manager.rs"]
 mod control_manager;
+#[path = "updater.rs"]
+mod updater;
 pub use control_manager::{
     enabled as control_manager_enabled, request as control_manager_request,
     serve as run_control_manager,
+};
+pub use updater::{
+    UpdateCheckInfo, UpdateLockStatus, UpdateOperation, UpdatePolicyChoice, UpdateServiceStatus,
+    UpdaterInfo, UpdaterSettings,
 };
 
 /// Serializes management-side writes to the shared config/settings files.
@@ -4172,6 +4179,147 @@ fn management_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value, 
         .map_err(|error| format!("could not encode management response: {error}"))
 }
 
+#[cfg(target_os = "linux")]
+fn run_updater_payload_as_root(command_name: &str, payload: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let cli = trusted_system_cli_path().ok_or(
+        "A trusted system-installed GitRun CLI was not found; updater state cannot be changed safely.",
+    )?;
+    if payload.len() > 64 * 1024 {
+        return Err("updater state request exceeds the 64 KiB safety limit".into());
+    }
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "gitrun-updater-request-{}-{nonce}.json",
+        std::process::id()
+    ));
+    let result = (|| -> Result<(), String> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|error| error.to_string())?;
+        file.write_all(payload).map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+        let status = authorized_cli_command(&cli)?
+            .arg(command_name)
+            .arg(&path)
+            .status()
+            .map_err(|error| format!("unable to request updater authorization: {error}"))?;
+        if !status.success() {
+            return Err(format!(
+                "administrator-authorized updater operation failed with status {status}"
+            ));
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+/// Read the shared updater policy through the updater-owned state API.
+/// Protected non-systemd installations use the fixed-purpose CLI helper only
+/// as a privilege transport; policy parsing and persistence remain in updater.
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn get_updater_settings() -> Result<UpdaterSettings, String> {
+    match updater::get_updater_settings() {
+        Ok(settings) => Ok(settings),
+        Err(error)
+            if cfg!(target_os = "linux")
+                && !current_process_is_root()
+                && trusted_system_cli_path().is_some()
+                && Path::new("/etc/gitrun/gitrun.env").is_file() =>
+        {
+            let raw = run_privileged_cli_helper("--read-updater-settings-root", &[])
+                .map_err(|helper| format!("{error}; privileged fallback failed: {helper}"))?;
+            serde_json::from_str(raw.trim())
+                .map_err(|decode| format!("decode privileged updater settings: {decode}"))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Persist the one updater policy consumed by CLI, TUI and GUI.
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn save_updater_settings(policy: String) -> Result<UpdaterSettings, String> {
+    match updater::save_updater_settings(&policy) {
+        Ok(settings) => Ok(settings),
+        Err(error)
+            if cfg!(target_os = "linux")
+                && !current_process_is_root()
+                && trusted_system_cli_path().is_some()
+                && Path::new("/etc/gitrun/gitrun.env").is_file() =>
+        {
+            let payload = serde_json::to_vec(&serde_json::json!({ "policy": policy }))
+                .map_err(|encode| encode.to_string())?;
+            run_updater_payload_as_root("--save-updater-settings-root", &payload)
+                .map_err(|helper| format!("{error}; privileged fallback failed: {helper}"))?;
+            Ok(UpdaterSettings {
+                schema_version: 1,
+                policy: UpdatePolicyChoice::try_from(policy.as_str())?,
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Read updater diagnostics. The check flag is read-only and does not acquire
+/// the update lifecycle lock.
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn get_updater_info(check: bool) -> Result<UpdaterInfo, String> {
+    match updater::get_updater_info(check) {
+        Ok(info) => Ok(info),
+        Err(error)
+            if cfg!(target_os = "linux")
+                && !current_process_is_root()
+                && trusted_system_cli_path().is_some()
+                && Path::new("/etc/gitrun/gitrun.env").is_file() =>
+        {
+            let args = if check {
+                vec!["--check".to_owned()]
+            } else {
+                Vec::new()
+            };
+            let raw = run_privileged_cli_helper("--read-updater-info-root", &args)
+                .map_err(|helper| format!("{error}; privileged fallback failed: {helper}"))?;
+            serde_json::from_str(raw.trim())
+                .map_err(|decode| format!("decode privileged updater diagnostics: {decode}"))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Persist the result of a CLI update transaction in the shared bounded history.
+pub fn record_cli_update_operation(
+    from_version: &str,
+    to_version: Option<&str>,
+    release_type: Option<&str>,
+    exit_code: i32,
+) {
+    if cfg!(target_os = "linux")
+        && !current_process_is_root()
+        && !control_manager_enabled()
+        && trusted_system_cli_path().is_some()
+        && Path::new("/etc/gitrun/gitrun.env").is_file()
+    {
+        if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+            "from_version": from_version,
+            "to_version": to_version,
+            "release_type": release_type,
+            "exit_code": exit_code,
+        })) {
+            let _ = run_updater_payload_as_root("--record-updater-operation-root", &payload);
+        }
+        return;
+    }
+    updater::record_cli_operation(from_version, to_version, release_type, exit_code);
+}
+
 /// Read live dashboard data from its existing command handlers. Args use
 /// snake_case field names and JSON so callers do not need private response DTOs.
 pub fn management_read(action: &str, args: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -4234,6 +4382,14 @@ pub fn management_read(action: &str, args: serde_json::Value) -> Result<serde_js
             management_value(get_dock_requirements(management_arg(&args, "repo")?)?)
         }
         "updates" => management_value(check_gitrun_updates()),
+        "updater_settings" => management_value(get_updater_settings()?),
+        "updater_info" => {
+            let check = args
+                .get("check")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            management_value(get_updater_info(check)?)
+        }
         other => Err(format!("unsupported management read action: {other}")),
     }
 }
@@ -4322,6 +4478,20 @@ pub fn management_write(
             )?;
             Ok(serde_json::json!({ "ok": true }))
         }
+        "updater_settings_save" => {
+            management_value(save_updater_settings(management_arg::<String>(
+                &args, "policy",
+            )?)?)
+        }
+        "updater_operation_record" => {
+            updater::record_cli_operation(
+                &management_arg::<String>(&args, "from_version")?,
+                management_arg::<Option<String>>(&args, "to_version")?.as_deref(),
+                management_arg::<Option<String>>(&args, "release_type")?.as_deref(),
+                management_arg::<i32>(&args, "exit_code")?,
+            );
+            Ok(serde_json::json!({ "recorded": true }))
+        }
         "config_save" => {
             save_config(management_arg(&args, "updated")?)?;
             Ok(serde_json::json!({ "ok": true }))
@@ -4403,6 +4573,9 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         save_gitrun_settings,
         get_repo_api_policies,
         get_dock_requirements,
+        get_updater_settings,
+        save_updater_settings,
+        get_updater_info,
     ]
 }
 

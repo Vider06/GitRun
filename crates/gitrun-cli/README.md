@@ -11,6 +11,8 @@ gitrun connect OWNER/REPOSITORY
 gitrun config
 gitrun doctor
 gitrun platform
+gitrun update --info
+gitrun update --info --check
 gitrun update --check
 gitrun update --force
 gitrun manage
@@ -26,6 +28,19 @@ gitrun platform
 ```
 
 Prints the detected Linux distribution, architecture, libc ABI, recognized package manager and active init system. GNU and musl target identities are kept separate, and an unknown ABI or unsupported architecture is not guessed. This is a host-detection report, not a promise that a native GitRun package, service integration or runner image is available for that distribution. Android, Termux and Android-based proot environments are explicitly unsupported and are rejected before GitRun entry-point dispatch.
+
+## Release policy and updater diagnostics
+
+The updater uses one release-line preference shared by the desktop GUI and `gitrun manage`. Choose Security only, Security + Full (the default), or Security + Full + Pre. Pre-releases are excluded unless explicitly enabled.
+
+```text
+gitrun update --info
+gitrun update --info --check
+```
+
+`--info` is a local diagnostic: it reports the installed version and package, architecture and ABI, active release policy, update lock, required service status, recent operations and recent errors without contacting GitHub. Adding `--check` performs a read-only, policy-aware check of signed release metadata and host artifact compatibility. Neither mode acquires the update lock or installs an update. The ordinary mascot remains enabled unless `--no-cat` is supplied.
+
+See the [Updater Release Policy](../../docs/UPDATER_RELEASE_POLICY.md) for release classifications, promotion workflow and selection safeguards.
 
 ## Update safeguards
 

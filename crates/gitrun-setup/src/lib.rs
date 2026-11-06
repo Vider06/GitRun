@@ -537,13 +537,8 @@ fn cleanup_residual_paths(package_owned_files: bool) -> Result<(), SetupError> {
         "/run/systemd/system/gitrun.service",
         "/run/systemd/system/gitrun-gsr.service",
         "/run/systemd/system/gitrun-control.service",
-        "/etc/init.d/gitrun",
-        "/etc/init.d/gitrun-gsr",
-        "/etc/sv/gitrun",
-        "/etc/sv/gitrun-gsr",
         "/var/service/gitrun",
         "/var/service/gitrun-gsr",
-        "/usr/libexec/gitrun/gitrun-service",
         "/etc/systemd/system/multi-user.target.wants/gitrun.service",
         "/etc/systemd/system/multi-user.target.wants/gitrun-gsr.service",
         "/etc/systemd/system/multi-user.target.wants/gitrun-control.service",
@@ -580,6 +575,10 @@ fn cleanup_residual_paths(package_owned_files: bool) -> Result<(), SetupError> {
         for path in [
             "/usr/bin/gitrun",
             "/usr/libexec/gitrun",
+            "/etc/init.d/gitrun",
+            "/etc/init.d/gitrun-gsr",
+            "/etc/sv/gitrun",
+            "/etc/sv/gitrun-gsr",
             "/usr/share/gitrun",
             "/usr/share/doc/gitrun",
             "/usr/share/applications/gitrun.desktop",
@@ -1535,23 +1534,8 @@ fn ensure_buildx() -> Result<(), SetupError> {
     Ok(())
 }
 
-fn gitrun_service_environment_wrapper(recovery_installed: bool) -> String {
-    let executable = if recovery_installed {
-        "/usr/local/bin/gitrun-recovery"
-    } else {
-        "/usr/local/bin/gitrun"
-    };
-    format!(
-        r#"#!/bin/sh
-set -eu
-while IFS='=' read -r key value; do
-    case "$key" in
-        GITHUB_TOKEN|GITRUN_*) export "$key=$value" ;;
-    esac
-done < /etc/gitrun/gitrun.env
-exec "{executable}" "$@"
-"#
-    )
+fn gitrun_service_environment_wrapper(_recovery_installed: bool) -> String {
+    resources::GITRUN_SERVICE.to_owned()
 }
 
 fn ensure_runit_service_link(service: &str) -> Result<(), SetupError> {
@@ -1627,34 +1611,12 @@ fn install_gitrun_service_definitions(recovery_installed: bool) -> Result<(), Se
             )?;
             write_resource(
                 Path::new("/etc/init.d/gitrun"),
-                r#"#!/sbin/openrc-run
-name="GitRun scheduler"
-command="/usr/libexec/gitrun/gitrun-service"
-command_args="scheduler"
-command_background=true
-pidfile="/run/gitrun.pid"
-output_log="/var/log/gitrun/scheduler.log"
-error_log="/var/log/gitrun/scheduler.log"
-depend() {
-    need net docker
-}
-"#,
+                resources::OPENRC_GITRUN,
                 0o755,
             )?;
             write_resource(
                 Path::new("/etc/init.d/gitrun-gsr"),
-                r#"#!/sbin/openrc-run
-name="GitRun GSR watchdog"
-command="/usr/libexec/gitrun/gitrun-service"
-command_args="gsr-watchdog"
-command_background=true
-pidfile="/run/gitrun-gsr.pid"
-output_log="/var/log/gitrun/gsr.log"
-error_log="/var/log/gitrun/gsr.log"
-depend() {
-    need gitrun
-}
-"#,
+                resources::OPENRC_GITRUN_GSR,
                 0o755,
             )?;
         }
@@ -1665,21 +1627,21 @@ depend() {
                 &wrapper,
                 0o755,
             )?;
-            for (service, command) in [("gitrun", "scheduler"), ("gitrun-gsr", "gsr-watchdog")] {
+            for (service, run, log_run) in [
+                (
+                    "gitrun",
+                    resources::RUNIT_GITRUN_RUN,
+                    resources::RUNIT_GITRUN_LOG_RUN,
+                ),
+                (
+                    "gitrun-gsr",
+                    resources::RUNIT_GITRUN_GSR_RUN,
+                    resources::RUNIT_GITRUN_GSR_LOG_RUN,
+                ),
+            ] {
                 let root = Path::new("/etc/sv").join(service);
-                write_resource(
-                    &root.join("run"),
-                    &format!("#!/bin/sh\nexec /usr/libexec/gitrun/gitrun-service {command}\n"),
-                    0o755,
-                )?;
-                let log_root = Path::new("/var/log/gitrun").join(service);
-                fs::create_dir_all(&log_root)?;
-                write_resource(
-                    &root.join("log/run"),
-                    &format!("#!/bin/sh\nexec svlogd -tt {}\n", log_root.display()),
-                    0o755,
-                )?;
-                ensure_runit_service_link(service)?;
+                write_resource(&root.join("run"), run, 0o755)?;
+                write_resource(&root.join("log/run"), log_run, 0o755)?;
             }
         }
     }
@@ -1718,6 +1680,9 @@ fn start_gitrun_services() -> Result<(), SetupError> {
         }
         gitrun_platform::ServiceManager::Runit => {
             for service in ["gitrun", "gitrun-gsr"] {
+                // Creating the /var/service link enables runit immediately, so
+                // defer it until configuration and service resources are ready.
+                ensure_runit_service_link(service)?;
                 let path = format!("/var/service/{service}");
                 run_command(Command::new(&program).args(["up", &path]))?;
                 run_command(Command::new(&program).args(["status", &path]))?;
@@ -3220,10 +3185,11 @@ mod tests {
     use gitrun_platform::PackageManager;
 
     #[test]
-    fn non_systemd_service_wrapper_loads_environment_without_shell_evaluation() {
+    fn non_systemd_service_wrapper_loads_environment_and_dispatches_to_gitrun_cli() {
         let wrapper = gitrun_service_environment_wrapper(true);
         assert!(wrapper.contains("export \"$key=$value\""));
-        assert!(wrapper.contains("exec \"/usr/local/bin/gitrun-recovery\" \"$@\""));
+        assert!(wrapper.contains("exec \"$executable\" \"$@\""));
+        assert!(!wrapper.contains("gitrun-recovery"));
         assert!(!wrapper.contains(". /etc/gitrun/gitrun.env"));
         assert!(!wrapper.contains("eval "));
     }

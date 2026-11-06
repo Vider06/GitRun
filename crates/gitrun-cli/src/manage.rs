@@ -332,6 +332,10 @@ const RECOVERY_ACTIONS: &[Action] = &[
         title: "Restore Main Library",
         hint: "Restore only the official reference library from the signed release.",
     },
+    Action {
+        title: "Updater diagnostics",
+        hint: "Show the selected release line, lifecycle lock, update services and recent operations; check releases without installing.",
+    },
 ];
 const SETTINGS_ACTIONS: &[Action] = &[
     Action {
@@ -373,6 +377,10 @@ const SETTINGS_ACTIONS: &[Action] = &[
     Action {
         title: "Edit Logic Containers rules (JSON)",
         hint: "Edit existing typed rule values; the list structure stays locked and the shared loader validates it.",
+    },
+    Action {
+        title: "Select updater release line",
+        hint: "Choose which signed Security, Full and Pre-release updates GitRun may install.",
     },
 ];
 const APP_ACTIONS: &[Action] = &[
@@ -2196,7 +2204,7 @@ fn execute_action(terminal: &mut ManagementTerminal, state: &mut State) -> Resul
         (7, 1) => app_read("service_logs", json!({ "source":"scheduler", "limit":200 })).map(|v| ("Scheduler journal".into(),v)),
         (7, 2) => app_read("service_logs", json!({ "source":"gsr", "limit":200 })).map(|v| ("GSR journal".into(),v)),
         (7, 3) => app_read("service_logs", json!({ "source":"all", "limit":200 })).map(|v| ("Combined service journal".into(),v)),
-        (8, 1) => app_read("updates", json!({})).map(|v| ("Update check".into(),v)),
+        (8, 1) => app_read("updater_info", json!({ "check": true })).map(|v| ("Policy-aware update check".into(),v)),
         (8, 2) => run_external(terminal, &["--no-cat","setup","--terminal"]).map(|v| ("Terminal setup".into(),v)),
         (8, 3) => maintenance_task_with_confirmation(terminal, "update", &["--no-cat", "update"], "Apply the verified GitRun update now? [y/N]", "GitRun update"),
         (8, 4) => maintenance_task_with_confirmation(terminal, "update_containers", &["--no-cat", "update", "--only-containers"], "Update eligible permanent runner containers now? [y/N]", "Permanent runner update"),
@@ -2234,6 +2242,8 @@ fn execute_action(terminal: &mut ManagementTerminal, state: &mut State) -> Resul
         (9, 7) => resolve_hypervisor_decision(terminal).map(|v| ("Hypervisor decision".into(),v)),
         (9, 8) => app_read("logic_rules", json!({})).map(|v| ("Logic Containers rules".into(),v)),
         (9, 9) => edit_logic_rules(terminal).map(|v| ("Logic Containers rules".into(),v)),
+        (9, 10) => choose_update_policy(terminal).map(|v| ("Updater release line saved".into(),v)),
+        (8, 11) => app_read("updater_info", json!({ "check": false })).map(|v| ("Updater diagnostics".into(),v)),
         (10, 1) => app_read("kitty", json!({})).map(|v| ("Kitty settings".into(),v)),
         (10, 2) => edit_kitty(terminal).map(|v| ("Kitty settings saved".into(),v)),
         (10, 3) => service_action(terminal, "start").map(|v| ("GitRun service".into(),v)),
@@ -2509,6 +2519,54 @@ fn edit_repository_policy(
         }),
     )?;
     Ok(json!({"saved":true,"selected_repository":repo}))
+}
+
+fn choose_update_policy(terminal: &mut ManagementTerminal) -> Result<Value, String> {
+    let current = app_read("updater_settings", json!({}))?;
+    let active = current
+        .get("policy")
+        .and_then(Value::as_str)
+        .unwrap_or("security_full");
+    let choices = vec![
+        format!(
+            "Security releases only{}",
+            if active == "security_only" {
+                " [active]"
+            } else {
+                ""
+            }
+        ),
+        format!(
+            "Security + Full releases{}",
+            if active == "security_full" {
+                " [active]"
+            } else {
+                ""
+            }
+        ),
+        format!(
+            "Security + Full + Pre-releases{}",
+            if active == "security_full_pre" {
+                " [active]"
+            } else {
+                ""
+            }
+        ),
+    ];
+    let selected = prompt_number(
+        terminal,
+        "Choose the GitRun updater release line. This setting is shared with the desktop GUI and CLI.",
+        &choices,
+        choices.len(),
+    )?;
+    let policy = match selected {
+        0 => "security_only",
+        1 => "security_full",
+        2 => "security_full_pre",
+        _ => return Err("invalid updater release-line selection".into()),
+    };
+    let saved = app_write("updater_settings_save", json!({ "policy": policy }))?;
+    Ok(json!({ "saved": true, "policy": policy, "settings": saved }))
 }
 
 fn edit_config(terminal: &mut ManagementTerminal) -> Result<Value, String> {

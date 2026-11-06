@@ -1,6 +1,6 @@
-# GitRun architecture — GitRun <!-- gitrun-version:start -->1.9.0<!-- gitrun-version:end -->
+# GitRun architecture — GitRun <!-- gitrun-version:start -->1.9.1<!-- gitrun-version:end -->
 
-> This is the high-level architecture overview for the <!-- gitrun-version:start -->1.9.0<!-- gitrun-version:end --> source line. The [release history](RELEASE_HISTORY.md) records the post-1.5.0 recovery and historical verification boundaries; current trust boundaries and deployment limits are documented in this file and the [security model](SECURITY_MODEL.md).
+> This is the high-level architecture overview for the <!-- gitrun-version:start -->1.9.1<!-- gitrun-version:end --> source line. The [release history](RELEASE_HISTORY.md) records the post-1.5.0 recovery and historical verification boundaries; current trust boundaries and deployment limits are documented in this file and the [security model](SECURITY_MODEL.md).
 
 GitRun is a Rust-native control plane. The workspace separates policy, execution, orchestration, security, secrets, setup and presentation so a workflow-facing API cannot silently become an arbitrary host command interface.
 
@@ -12,7 +12,7 @@ The installed Linux service runs the Rust scheduler through the `gitrun` executa
 |---|---|
 | `gitrun-core` | Shared configuration, policy, authentication, state and domain models |
 | `gitrun-platform` | Conservative host distribution, libc ABI, package-manager and active init detection; Android runtime rejection |
-| `gitrun-management` | Shared management operations, validation, persistence, typed dispatcher and privileged Control Manager; headless by default |
+| `gitrun-management` | Shared management operations, validation, general configuration persistence, typed dispatcher and privileged Control Manager; updater adapter; headless by default |
 | `gitrun-cli` | Operator CLI, keyboard-driven headless management console, and shared terminal mascot/presentation layer |
 | `gitrun-scheduler` | GitHub polling, deterministic reconciliation, autoscaling, runner lifecycle, Docker and VM backends |
 | `gitrun-exe` | Internal authorized execution model and IPC/authentication primitives |
@@ -20,7 +20,7 @@ The installed Linux service runs the Rust scheduler through the `gitrun` executa
 | `gitrun-smart-scheduler` | Optional bounded statistical workload model, Erlang-C queue-wait estimates, offline FCFS replay, Future Mapping and Think. New capabilities are disabled by default; the model has no execution authority. |
 | `gitrun-vault` | AES-256-GCM encrypted secret storage |
 | `gitrun-setup` | First-run preflight and installation preparation |
-| `gitrun-updater` | Release update, verification and rollback |
+| `gitrun-updater` | Release update, verification and rollback; shared update policy, host diagnostics and operation history |
 | `gitrun-recovery` | Headless startup/repair diagnostics and recovery engine; optional Tauri UI behind the `desktop` feature |
 | `gitrun-dashboard-tauri` | Tauri operator dashboard |
 

@@ -399,7 +399,7 @@ fn package_type() -> String {
             .is_some_and(|entries| {
                 entries
                     .filter_map(Result::ok)
-                    .any(|entry| entry.file_name().to_string_lossy().starts_with("gitrun-"))
+                    .any(|entry| entry.file_name().to_string_lossy().starts_with("gitrun-server-") || entry.file_name().to_string_lossy().starts_with("gitrun-"))
             })
         {
             return "xbps".into();

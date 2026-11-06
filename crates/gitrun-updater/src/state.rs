@@ -805,7 +805,7 @@ fn control_manager_request(
 }
 
 pub fn read_settings() -> Result<UpdaterSettings, String> {
-    if control_manager_enabled() {
+    if control_manager_enabled() && !current_process_is_root() {
         return serde_json::from_value(control_manager_request(
             "read",
             "updater_settings",

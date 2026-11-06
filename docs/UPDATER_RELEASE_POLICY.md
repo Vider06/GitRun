@@ -24,7 +24,7 @@ The manifest signature covers the classification. The updater cross-checks the s
 
 ## Operator policies
 
-The preference is persisted by `gitrun-management` and shared by CLI, TUI and desktop GUI.
+The updater crate owns persistence for the single shared preference. The CLI calls its API directly; the TUI and desktop GUI reach the same state through `gitrun-management`, which delegates to the updater crate.
 
 | Policy | Stored value | Eligible types |
 |---|---|---|
@@ -56,7 +56,7 @@ gitrun update
 - `gitrun update --check` is the concise policy-aware check.
 - `--no-cat` suppresses the normal mascot output for scripts and embedded callers.
 
-Update history is bounded and stored in the protected GitRun state directory. GUI and TUI use `gitrun-management`; systemd installations use Control Manager IPC, while other protected Linux installations use fixed-purpose CLI helpers.
+Update history is bounded and stored in the protected GitRun state directory by `gitrun-updater`. The CLI calls the updater directly. The GUI and TUI use `gitrun-management` as an adapter; on supported systemd installations the updater state API uses the fixed Control Manager IPC actions, while other protected Linux installations use fixed-purpose CLI helpers.
 
 ## Reclassifying a published release
 

@@ -4,9 +4,9 @@ use gitrun_setup::{bootstrap_linux_with_auth_and_profile, prepare_directories, B
 use gitrun_smart_scheduler::KittySettings;
 use gitrun_updater::{
     apply_installed_update, apply_update, build_plan, dependency_status, download_and_verify,
-    fetch_manifest, latest_manifest, pin_runner_image, release_manifest_download_url, rollback,
+    fetch_manifest, latest_manifest, pin_runner_image, release_manifest_download_url, resolve_policy_update, rollback,
     rollback_installed_update_with_config, update_incompatible_dependencies, update_runner_image,
-    BackupRecord, InstalledArtifact, InstalledBackupRecord, UpdateError, UpdatePaths,
+    BackupRecord, InstalledArtifact, InstalledBackupRecord, ReleaseType, UpdateError, UpdatePaths, UpdatePolicy,
 };
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -1778,14 +1778,21 @@ fn main() {
         Command::Uninstall => run_privileged_cli_action("--uninstall-root", &mut presenter),
         Command::Reinstall => run_privileged_cli_action("--reinstall-latest-root", &mut presenter),
         Command::Update {
+            info: true,
+            check,
+            ..
+        } => run_update_info(check),
+        Command::Update {
             manifest_url,
             check: true,
+            info: false,
             ..
         } => run_update_check(manifest_url.as_deref()),
         Command::Update {
             manifest_url,
             only_containers,
             check: false,
+            info: false,
             force,
         } => run_update(
             manifest_url.as_deref(),
@@ -2125,6 +2132,9 @@ enum Command {
     Doctor,
     /// Check for and apply GitRun updates.
     Update {
+        /// Print complete local updater diagnostics. Combine with --check for a read-only release check.
+        #[arg(long, conflicts_with_all = ["only_containers", "force", "manifest_url"])]
+        info: bool,
         /// Check the current release and runner image without downloading or applying anything.
         #[arg(long, conflicts_with = "only_containers")]
         check: bool,

@@ -11,9 +11,10 @@ export async function renderGeneral() {
     ]);
   } catch (error) { if (generation !== window.__gitrunNavigationGeneration) return; content.innerHTML = heading("OPERATIONS","General settings","Global runner behavior, version and diagnostics.") + errorView(error); return; }
   if (generation !== window.__gitrunNavigationGeneration) return;
-  content.innerHTML = heading("OPERATIONS","General settings","Global runner configuration, diagnostics and update checks.", '<button class="btn" id="run-health-check">Run health check</button><button class="btn btn-primary" id="check-updates">Check for updates</button>') +
+  content.innerHTML = heading("OPERATIONS","General settings","Global runner configuration, diagnostics and update checks.", '<button class="btn" id="run-health-check">Run health check</button><button class="btn btn-primary" id="check-updates">Check GitRun updates</button><button class="btn" id="check-runner-updates">Check runner image</button>') +
     '<div class="grid metrics-grid"><article class="panel metric-card"><div class="metric-top">Installed version</div><div class="metric-value metric-value-compact">' + esc(health.version || "Unknown") + '</div><div class="metric-foot">Resolved by local backend</div></article><article class="panel metric-card"><div class="metric-top">Configuration</div><div class="metric-value">' + (health.config_ok ? "Valid" : "Issue") + '</div><div class="metric-foot">' + esc(health.config_path || "Path unavailable") + '</div></article><article class="panel metric-card"><div class="metric-top">Docker</div><div class="metric-value">' + (health.docker_ok ? "Reachable" : "Unavailable") + '</div><div class="metric-foot">Local daemon check</div></article><article class="panel metric-card"><div class="metric-top">GSR process</div><div class="metric-value">' + (health.gsr_process_seen ? "Seen" : "Missing") + '</div><div class="metric-foot">Presence check only</div></article></div>' +
     '<div id="update-result" class="section"></div>' +
+    '<div id="runner-update-result" class="section"></div>' +
     '<section class="section panel panel-pad"><div class="section-heading"><div><h2>GitRun release line</h2><p class="section-description">This controls which signed GitRun releases the updater may select. It is shared by the CLI, Management TUI and desktop GUI.</p></div>' + pill(updaterSettings.policy === "security_only" ? "Security only" : updaterSettings.policy === "security_full_pre" ? "Security + Full + Pre" : "Security + Full","info") + '</div>' +
       '<div class="form-grid"><div class="field"><label for="release-policy">Allowed release types</label><select id="release-policy">' +
         '<option value="security_only" ' + (updaterSettings.policy === "security_only" ? "selected" : "") + '>Security releases only</option>' +
@@ -151,6 +152,43 @@ export async function renderGeneral() {
       if (!result.checked) toast("Update check did not complete.", "warning");
     } catch (error) {
       target.innerHTML = '<div class="notice danger"><div><strong>Update check failed</strong><p>' + esc(error) + '</p></div></div>';
+    } finally { button.disabled = false; }
+  });
+  document.getElementById("check-runner-updates").addEventListener("click", async () => {
+    const target = document.getElementById("runner-update-result");
+    const button = document.getElementById("check-runner-updates");
+    button.disabled = true;
+    target.innerHTML = '<div class="notice"><div><strong>Checking runner image…</strong><p>Read-only check of the configured permanent runner image.</p></div></div>';
+    try {
+      const result = await invoke("check_gitrun_updates");
+      const available = result.runner_image_update_available === true;
+      target.innerHTML = '<div class="notice ' + (available ? "warn" : result.checked ? "success" : "danger") + '"><div><strong>' + esc(available ? "Runner image update available" : result.checked ? "Runner image is current" : "Runner image check failed") + '</strong><p>' + esc(result.runner_image_status || result.detail || result.error || "No runner image details were returned.") + '</p>' +
+        (available ? '<button class="btn btn-primary" id="update-permanent-runners">Update eligible permanent runners</button><p class="field-hint">Busy permanent runners are left untouched and can be retried during a later GTUU run.</p>' : '') +
+        '</div></div>';
+      if (available) {
+        document.getElementById("update-permanent-runners").addEventListener("click", async () => {
+          const accepted = await confirmModal(
+            "Update the permanent runner image?",
+            "GitRun will fetch and verify the signed release manifest, download the matching runner image digest, update the configured image, and reconcile eligible permanent containers. Busy runners are not stopped. GitRun itself is not updated by this operation.",
+            "Update eligible runners",
+            true
+          );
+          if (!accepted) return;
+          const action = document.getElementById("update-permanent-runners");
+          action.disabled = true;
+          try {
+            await invoke("update_permanent_runners");
+            toast("Runner update/reconciliation completed.");
+          } catch (error) {
+            toast("Runner update failed: " + error, "error");
+          } finally {
+            if (action.isConnected) action.disabled = false;
+          }
+        });
+      }
+      if (!result.checked) toast("Runner image check did not complete.", "warning");
+    } catch (error) {
+      target.innerHTML = '<div class="notice danger"><div><strong>Runner image check failed</strong><p>' + esc(error) + '</p></div></div>';
     } finally { button.disabled = false; }
   });
   document.getElementById("check-updates").addEventListener("click", () => {

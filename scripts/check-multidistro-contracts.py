@@ -266,19 +266,26 @@ def check_native_init_package_resources(errors: list[str]) -> None:
         'install -m 0755 packaging/gitrun-service "$package_stage/usr/libexec/gitrun/gitrun-service"',
         'install -m 0755 packaging/openrc/gitrun "$package_stage/etc/init.d/gitrun"',
         'install -m 0755 packaging/openrc/gitrun-gsr "$package_stage/etc/init.d/gitrun-gsr"',
-        "scripts:\\n            preremove: packaging/apk-pre-remove\\n          overrides:",
+        "preremove: packaging/apk-pre-remove",
         "postupgrade: packaging/apk-post-upgrade",
-        "grep -Eq '(^|/)\\\\.pre-deinstall        'install -m 0755 packaging/runit/gitrun/run "$xbps_stage/etc/sv/gitrun/run"',
+        ".pre-deinstall$",
+        ".post-upgrade$",
+        'install -m 0755 packaging/runit/gitrun/run "$xbps_stage/etc/sv/gitrun/run"',
         'install -m 0755 packaging/runit/gitrun/log/run "$xbps_stage/etc/sv/gitrun/log/run"',
         'install -m 0755 packaging/runit/gitrun-gsr/run "$xbps_stage/etc/sv/gitrun-gsr/run"',
         'install -m 0755 packaging/runit/gitrun-gsr/log/run "$xbps_stage/etc/sv/gitrun-gsr/log/run"',
         'xbps_contents="$(tar -tf "$xbps_file")"',
+        'XBPS package must contain runit resources, not systemd units',
     )
     for marker in workflow_markers:
         if marker not in release:
             errors.append(f"release packaging is missing native-init integration: {marker}")
 
-    apk_override = release.split("            apk:\\n", 1)[1].split("            archlinux:\\n", 1)[0] if "            apk:\\n" in release and "            archlinux:\\n" in release else ""
+    apk_override = (
+        release.split("            apk:\n", 1)[1].split("            archlinux:\n", 1)[0]
+        if "            apk:\n" in release and "            archlinux:\n" in release
+        else ""
+    )
     if "preremove:" in apk_override:
         errors.append("nFPM APK overrides do not support an APK-specific preremove key; use the generic preremove hook")
     if "postupgrade: packaging/apk-post-upgrade" not in apk_override:

@@ -32,11 +32,20 @@ Routine setup and update operations fill missing reference-library entries and c
 
 ## Deployment and package outputs
 
-The 1.9.0 release workflow builds independent Server and Desktop components. Server binaries are built for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl`. Canonical Server outputs are then packaged into the formats declared by the workflow: DEB and RPM for GNU x86_64/aarch64, APK for musl x86_64/aarch64, Arch for GNU x86_64, XBPS for GNU/musl x86_64/aarch64, and TAR.GZ/TAR.ZST archives for all four targets. Desktop is a separate x86_64 Linux build distributed as a DEB and AppImage.
+The 1.9.1 release workflow builds independent Server and Desktop components. Server binaries cover `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl`. Canonical outputs are packaged into the native formats declared by the workflow:
 
-The 1.9.0 release also has a one-time legacy Debian migration package for existing 1.8.23 installations. It retains the old `gitrun` package identity to let the 1.8.23 updater install the new Server binary; it is not for fresh installations. See [Linux platform compatibility](../docs/PLATFORM_SUPPORT.md) for deployment boundaries and the [release workflow](../.github/workflows/release.yml) for the authoritative asset list.
+- DEB and RPM for x86_64/aarch64 GNU.
+- Arch packages for x86_64/aarch64 GNU.
+- APK for x86_64/aarch64 musl, with OpenRC service definitions.
+- XBPS for x86_64/aarch64 GNU and musl, with runit service trees and lifecycle hooks.
+- TAR.GZ updater archives and TAR.ZST portable archives for all four targets.
 
-For a specific published version, use [GitHub Releases](https://github.com/Vider06/GitRun/releases) and install only an asset actually present in that release's signed manifest. On Debian/Ubuntu, install the matching `GitRun-Server-...-deb.deb` package with APT. Docker and GitHub credentials remain operator-managed prerequisites. A package build or source version does not by itself prove that an asset has been published or that every host lifecycle is supported.
+Desktop is a separate four-target GNU/musl build. GNU targets produce AppImage, DEB, RPM and Arch packages. Musl targets produce standalone binaries and XBPS packages for both architectures; APK is published for x86_64 only. Desktop packages do not bundle the Server executable.
+
+For a specific published version, use [GitHub Releases](https://github.com/Vider06/GitRun/releases) and install only an asset actually present in that release's signed manifest. Choose the native package matching the host architecture and libc, verify its SHA-256 value against the signed manifest, install it with the host package manager, then run `gitrun setup` to configure the detected service manager. The built-in `gitrun update` command uses the signed TAR.GZ update path and does not replace the distro package; use the native package manager to upgrade a native package.
+
+The 1.9.0 release had a one-time legacy Debian migration package for existing 1.8.23 x86_64 GNU/APT installations. It retained the old `gitrun` package identity so the 1.8.23 updater could install the new Server binary. It was not for fresh installations and is not repeated in later releases. Automatic `gitrun reinstall` package replacement currently supports x86_64 GNU/Linux with APT.
+
+The native service lifecycle is service-manager-specific: DEB/RPM/Arch Server packages carry systemd units; Alpine APK carries OpenRC definitions; Void XBPS carries runit service trees and `INSTALL`/`REMOVE` hooks. Package hooks restart only previously active services on upgrade and preserve configuration/state on removal. The explicit `gitrun uninstall` command is the destructive cleanup path.
 
 The separately packaged Desktop application can be installed independently of the Server package. The CLI and Dashboard use the same `gitrun-management` backend; terminal-first users can run `gitrun setup --terminal` and `gitrun manage` without installing the Tauri runtime.
-

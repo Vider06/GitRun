@@ -27,6 +27,9 @@ use tauri::{AppHandle, Emitter, Manager};
 
 #[path = "control_manager.rs"]
 mod control_manager;
+#[path = "updater.rs"]
+mod updater;
+pub use updater::{UpdateCheckInfo, UpdateLockStatus, UpdateOperation, UpdatePolicyChoice, UpdateServiceStatus, UpdaterInfo, UpdaterSettings};
 pub use control_manager::{
     enabled as control_manager_enabled, request as control_manager_request,
     serve as run_control_manager,
@@ -4172,6 +4175,49 @@ fn management_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value, 
         .map_err(|error| format!("could not encode management response: {error}"))
 }
 
+/// Read the shared updater policy. Protected installations route through the
+/// fixed Control Manager IPC rather than exposing updater state files to the UI.
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn get_updater_settings() -> Result<UpdaterSettings, String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = control_manager_request("read", "updater_settings", serde_json::json!({}))?;
+        return serde_json::from_value(value)
+            .map_err(|error| format!("decode updater settings from Control Manager: {error}"));
+    }
+    updater::current_settings_local()
+}
+
+/// Persist the one updater policy consumed by CLI, TUI and GUI.
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn save_updater_settings(policy: String) -> Result<UpdaterSettings, String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = control_manager_request(
+            "write",
+            "updater_settings_save",
+            serde_json::json!({ "policy": policy }),
+        )?;
+        return serde_json::from_value(value)
+            .map_err(|error| format!("decode saved updater settings from Control Manager: {error}"));
+    }
+    updater::local_settings_save(&policy)
+}
+
+/// Read local updater diagnostics. The check flag performs a read-only online
+/// release check and never starts an update transaction or acquires its lock.
+#[cfg_attr(feature = "desktop", tauri::command)]
+pub fn get_updater_info(check: bool) -> Result<UpdaterInfo, String> {
+    if control_manager_enabled() && !current_process_is_root() {
+        let value = control_manager_request(
+            "read",
+            "updater_info",
+            serde_json::json!({ "check": check }),
+        )?;
+        return serde_json::from_value(value)
+            .map_err(|error| format!("decode updater diagnostics from Control Manager: {error}"));
+    }
+    updater::info_local(check)
+}
+
 /// Read live dashboard data from its existing command handlers. Args use
 /// snake_case field names and JSON so callers do not need private response DTOs.
 pub fn management_read(action: &str, args: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -4234,6 +4280,11 @@ pub fn management_read(action: &str, args: serde_json::Value) -> Result<serde_js
             management_value(get_dock_requirements(management_arg(&args, "repo")?)?)
         }
         "updates" => management_value(check_gitrun_updates()),
+        "updater_settings" => management_value(updater::current_settings_local()?),
+        "updater_info" => {
+            let check = args.get("check").and_then(serde_json::Value::as_bool).unwrap_or(false);
+            management_value(updater::info_local(check)?)
+        }
         other => Err(format!("unsupported management read action: {other}")),
     }
 }
@@ -4322,6 +4373,9 @@ pub fn management_write(
             )?;
             Ok(serde_json::json!({ "ok": true }))
         }
+        "updater_settings_save" => {
+            management_value(updater::local_settings_save(management_arg(&args, "policy")?.as_str())?)
+        }
         "config_save" => {
             save_config(management_arg(&args, "updated")?)?;
             Ok(serde_json::json!({ "ok": true }))
@@ -4403,6 +4457,9 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         save_gitrun_settings,
         get_repo_api_policies,
         get_dock_requirements,
+        get_updater_settings,
+        save_updater_settings,
+        get_updater_info,
     ]
 }
 

@@ -245,7 +245,7 @@ jobs:
     name: Independent GitRun Desktop · ${{ matrix.target }}
     needs: prepare
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
     strategy:
@@ -255,24 +255,47 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
             arch: x86_64
+            kind: gnu
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-22.04-arm
             arch: aarch64
+            kind: gnu
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            arch: x86_64
+            kind: musl
+            docker_platform: linux/amd64
+            musl_distro: alpine
+            cache_variant: alpine-rust-1.99.0-alpine3.24
+            container_image: rust:1.99.0-alpine3.24
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            arch: aarch64
+            kind: musl
+            docker_platform: linux/arm64
+            musl_distro: void
+            cache_variant: void-musl-20260801r1
+            container_image: ghcr.io/void-linux/void-musl-full:20260801r1
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
       TARGET: ${{ matrix.target }}
       DESKTOP_ARCH: ${{ matrix.arch }}
+      BUILD_KIND: ${{ matrix.kind }}
+      MUSL_DISTRO: ${{ matrix.musl_distro }}
+      CONTAINER_IMAGE: ${{ matrix.container_image }}
       CARGO_HOME: ${{ github.workspace }}/.gitrun-cargo
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       CARGO_INCREMENTAL: "0"
       NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-npm-cache
     steps:
       - name: Checkout
+        if: matrix.kind == 'gnu'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - name: Install Tauri Linux dependencies
+        if: matrix.kind == 'gnu'
         run: |
           set -euo pipefail
           sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
@@ -281,11 +304,12 @@ jobs:
             build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev \
             librsvg2-dev patchelf xdg-utils libwebkit2gtk-4.1-dev imagemagick
       - name: Install pinned Rust toolchain
+        if: matrix.kind == 'gnu'
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:
           toolchain: ${{ env.RUST_VERSION }}
       - name: Restore Dashboard Cargo and npm caches
-        id: dashboard-cache
+        id: dashboard-cache-gnu
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
@@ -296,11 +320,13 @@ jobs:
           restore-keys: |
             gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-${{ matrix.target }}-${{ env.RUST_VERSION }}-
       - name: Set up Node.js
+        if: matrix.kind == 'gnu'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "22"
           package-manager-cache: false
       - name: Synchronize Dashboard package version
+        if: matrix.kind == 'gnu'
         working-directory: crates/gitrun-dashboard-tauri
         run: |
           set -euo pipefail
@@ -320,6 +346,7 @@ jobs:
           mkdir -p "$NPM_CONFIG_CACHE"
           npm ci
       - name: Normalize Tauri PNG icons
+        if: matrix.kind == 'gnu'
         shell: bash
         run: |
           set -euo pipefail
@@ -332,6 +359,7 @@ jobs:
             mv "$tmp" "$icon"
           done
       - name: Build standalone Dashboard AppImage
+        if: matrix.kind == 'gnu'
         working-directory: crates/gitrun-dashboard-tauri
         run: |
           set -euo pipefail
@@ -346,6 +374,7 @@ jobs:
           mkdir -p "$out"
           install -m 0755 "$appimage" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH.AppImage"
       - name: Upload independent Dashboard artifacts
+        if: matrix.kind == 'gnu'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: dashboard-${{ matrix.target }}
@@ -353,7 +382,7 @@ jobs:
           if-no-files-found: error
           retention-days: 3
       - name: Save Dashboard Cargo and npm caches
-        if: success() && steps.dashboard-cache.outputs.cache-hit != 'true'
+        if: matrix.kind == 'gnu' && (success() && steps.dashboard-cache.outputs.cache-hit != 'true')
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -362,47 +391,8 @@ jobs:
             target
             .gitrun-npm-cache
           key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json') }}
-
-  build-dashboard-musl:
-    name: Independent GitRun Desktop · ${{ matrix.target }}
-    needs: prepare
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-musl
-            runner: ubuntu-24.04
-            docker_platform: linux/amd64
-            musl_distro: alpine
-            cache_variant: alpine-rust-1.99.0-alpine3.24
-            container_image: rust:1.99.0-alpine3.24
-          - target: aarch64-unknown-linux-musl
-            runner: ubuntu-24.04-arm
-            docker_platform: linux/arm64
-            musl_distro: void
-            cache_variant: void-musl-20260801r1
-            container_image: ghcr.io/void-linux/void-musl-full:20260801r1
-    env:
-      VERSION: ${{ needs.prepare.outputs.version }}
-      VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
-      TARGET: ${{ matrix.target }}
-      MUSL_DISTRO: ${{ matrix.musl_distro }}
-      CONTAINER_IMAGE: ${{ matrix.container_image }}
-      CARGO_HOME: ${{ github.workspace }}/.gitrun-cargo
-      CARGO_TARGET_DIR: ${{ github.workspace }}/target
-      CARGO_INCREMENTAL: "0"
-      NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-npm-cache
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
       - name: Restore musl Dashboard Cargo and npm caches
-        id: dashboard-cache
+        id: dashboard-cache-musl
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
@@ -413,6 +403,7 @@ jobs:
           restore-keys: |
             gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-musl-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-
       - name: Build native musl Dashboard in distro-native environment
+        if: matrix.kind == 'musl'
         env:
           DOCKER_PLATFORM: ${{ matrix.docker_platform }}
         run: |
@@ -496,6 +487,7 @@ jobs:
           mkdir -p "$out"
           install -m 0755 "$GITHUB_WORKSPACE/target/release/gitrun-dashboard-tauri" "$out/GitRun-Desktop-$VERSION-$TARGET.bin"
       - name: Upload independent musl Dashboard executable
+        if: matrix.kind == 'musl'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: dashboard-${{ matrix.target }}
@@ -503,7 +495,7 @@ jobs:
           if-no-files-found: error
           retention-days: 3
       - name: Save musl Dashboard Cargo and npm caches
-        if: success() && steps.dashboard-cache.outputs.cache-hit != 'true'
+        if: matrix.kind == 'musl' && (success() && steps.dashboard-cache.outputs.cache-hit != 'true')
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -515,7 +507,7 @@ jobs:
 
   collect:
     name: Collect canonical target builds
-    needs: [prepare, build-server, build-dashboard, build-dashboard-musl]
+    needs: [prepare, build-server, build-dashboard]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -754,7 +746,7 @@ jobs:
   package-dashboard:
     name: Package independent Desktop · ${{ matrix.target }}
     needs: [prepare, collect]
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -763,39 +755,67 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
             arch: x86_64
             package_arch: amd64
+            kind: gnu
           - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
             arch: aarch64
             package_arch: arm64
+            kind: gnu
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            arch: x86_64
+            package_arch: amd64
+            kind: musl
+            target_triple: x86_64-unknown-linux-musl
+            xbps_static_arch: x86_64
+            xbps_arch: x86_64-musl
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            arch: aarch64
+            package_arch: arm64
+            kind: musl
+            target_triple: aarch64-unknown-linux-musl
+            xbps_static_arch: aarch64
+            xbps_arch: aarch64-musl
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
+      TARGET: ${{ matrix.target_triple || matrix.target }}
       DESKTOP_ARCH: ${{ matrix.arch }}
       PACKAGE_ARCH: ${{ matrix.package_arch }}
+      XBPS_ARCH: ${{ matrix.xbps_arch }}
+      XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}
     steps:
       - name: Checkout packaging metadata
+        if: matrix.kind == 'gnu'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - name: Download canonical Dashboard build
+        if: matrix.kind == 'gnu'
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: canonical-release-inputs
           path: canonical
       - name: Install package inspection tools
+        if: matrix.kind == 'gnu'
         run: |
           set -euo pipefail
           sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm zstd
       - name: Set up pinned Go toolchain for nFPM
+        if: matrix.kind == 'gnu'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: "1.26.10"
           check-latest: false
           cache: false
       - name: Create separate Dashboard DEB
+        if: matrix.kind == 'gnu'
         shell: bash
         run: |
           set -euo pipefail
@@ -864,68 +884,35 @@ jobs:
           grep -Fq 'pkgname = gitrun-desktop' <<< "$arch_pkginfo"
           grep -Fq 'depend = webkit2gtk-4.1' <<< "$arch_pkginfo"
       - name: Upload separate Dashboard package
+        if: matrix.kind == 'gnu'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: dashboard-package-${{ matrix.target }}
           path: ${{ runner.temp }}/dashboard-package/*
           if-no-files-found: error
           retention-days: 3
-
-  package-dashboard-musl:
-    name: Package independent musl Desktop · ${{ matrix.target }}
-    needs: [prepare, collect]
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-musl
-            runner: ubuntu-24.04
-            xbps_static_arch: x86_64
-            arch: x86_64
-            package_arch: amd64
-            xbps_arch: x86_64-musl
-          - target: aarch64-unknown-linux-musl
-            runner: ubuntu-24.04-arm
-            xbps_static_arch: aarch64
-            arch: aarch64
-            package_arch: arm64
-            xbps_arch: aarch64-musl
-    env:
-      VERSION: ${{ needs.prepare.outputs.version }}
-      VERSION_NUMBER: ${{ needs.prepare.outputs.version_number }}
-      TARGET: ${{ matrix.target }}
-      DESKTOP_ARCH: ${{ matrix.arch }}
-      PACKAGE_ARCH: ${{ matrix.package_arch }}
-      XBPS_ARCH: ${{ matrix.xbps_arch }}
-      XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}
-    steps:
-      - name: Checkout packaging metadata
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          persist-credentials: false
       - name: Download canonical Dashboard build
+        if: matrix.kind == 'musl'
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: canonical-release-inputs
           path: canonical
       - name: Set up pinned Go toolchain for nFPM
+        if: matrix.kind == 'musl'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version: "1.26.10"
           check-latest: false
           cache: false
       - name: Build musl APK and XBPS packages
+        if: matrix.kind == 'musl'
         shell: bash
         run: |
           set -euo pipefail
           binary="$GITHUB_WORKSPACE/canonical/GitRun-Desktop-$VERSION-$TARGET.bin"
           test -s "$binary"
           stage="$RUNNER_TEMP/dashboard-musl-stage"
-          out="$RUNNER_TEMP/dashboard-musl-packages"
+          out="$RUNNER_TEMP/dashboard-package"
           rm -rf "$stage" "$out"
           mkdir -p "$stage/usr/bin" "$stage/usr/share/applications" "$out"
           install -m 0755 "$binary" "$stage/usr/bin/gitrun-desktop"
@@ -994,10 +981,11 @@ jobs:
           grep -Fq libwebkit2gtk41 <<< "$desktop_deps"
           grep -Fq polkit <<< "$desktop_deps"
       - name: Upload musl Desktop packages
+        if: matrix.kind == 'musl'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: dashboard-package-${{ matrix.target }}
-          path: ${{ runner.temp }}/dashboard-musl-packages/*
+          path: ${{ runner.temp }}/dashboard-package/*
           if-no-files-found: error
           retention-days: 3
 
@@ -1089,8 +1077,8 @@ jobs:
 
   validate:
     name: Validate collected package matrix
-    needs: [prepare, collect, package-server, package-dashboard, package-dashboard-musl, migration-package]
-    if: always() && needs.prepare.result == 'success' && needs.collect.result == 'success' && needs.package-server.result == 'success' && needs.package-dashboard.result == 'success' && needs.package-dashboard-musl.result == 'success' && (needs.migration-package.result == 'success' || (needs.prepare.outputs.migration_release != 'true' && needs.migration-package.result == 'skipped'))
+    needs: [prepare, collect, package-server, package-dashboard, migration-package]
+    if: always() && needs.prepare.result == 'success' && needs.collect.result == 'success' && needs.package-server.result == 'success' && needs.package-dashboard.result == 'success' && needs.package-dashboard.result == 'success' && (needs.migration-package.result == 'success' || (needs.prepare.outputs.migration_release != 'true' && needs.migration-package.result == 'skipped'))
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:

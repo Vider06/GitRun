@@ -12,6 +12,7 @@ use std::{
 use thiserror::Error;
 
 pub mod release_policy;
+pub mod state;
 pub use release_policy::{
     resolve_policy_update, resolve_policy_update_for_target, select_release, select_releases,
     PolicyUpdate, ReleaseType, SelectedRelease, UpdatePolicy,

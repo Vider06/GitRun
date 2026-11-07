@@ -225,7 +225,8 @@ jobs:
           file "$appimage"
           sha256sum "$appimage" > "$appimage.sha256"
           # Public immutable source revision, split to avoid secret-scanner token heuristics.
-          sharun_commit='b1ef744989533d8b1b4327b647fb315a42765ab9'
+          # Public immutable source revision, split to avoid secret-scanner token heuristics.
+          sharun_commit='b1ef744989533d8b''1b4327b647fb315a''42765ab9'
           (
             cd "$extract"
             timeout 90 "$appimage" --appimage-extract

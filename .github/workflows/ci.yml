@@ -3880,29 +3880,7 @@ jobs:
           todel="$(jq 'length' "$RUNNER_TEMP/gc-plan.json")"
           freed="$(jq '[.[].size_in_bytes] | add // 0' "$RUNNER_TEMP/gc-plan.json")"
           mode="deleting"; if [ "$DRY_RUN" = true ]; then mode="dry run (nothing is deleted)"; fi
-          {
-            echo "### 🗑 Cache garbage collection — $mode"; echo
-            echo "- ${total} caches, $((used_before / 1048576)) MB used of the 10 GB repository limit"
-            echo "- ${todel} to remove, $((freed / 1048576)) MB to free"; echo
-            if [ "$todel" -gt 0 ]; then
-              echo "| Reason | Caches | MB |"; echo "|---|---|---|"
-              jq -r 'group_by(.reason) | .[] | "| \(.[0].reason) | \(length) | \(([.[].size_in_bytes] | add) / 1048576 | floor) |"' "$RUNNER_TEMP/gc-plan.json"
-              echo
-            fi
-            echo "<details><summary>Caches that are kept</summary>"; echo
-            echo "| Kind | Ref | Count | MB |"; echo "|---|---|---|---|"
-            jq -r --slurpfile plan "$RUNNER_TEMP/gc-plan.json" '
-              def fam:
-                sub("-run[0-9]+-attempt[0-9]+$"; "")
-                | if contains("-target-img") then
-                    sub("-man[^-]+-[^-]+-prof"; "-prof")
-                  else sub("-[^-]+$"; "") end;
-              ([$plan[0][].id]) as $gone
-              | map(select(.id as $i | $gone | index($i) | not) | . + { fam: (.key | fam) })
-              | group_by([.fam, .ref]) | .[]
-              | "| `\(.[0].fam)` | \(.[0].ref) | \(length) | \(([.[].size_in_bytes] | add) / 1048576 | floor) |"' "$RUNNER_TEMP/caches.json"
-            echo; echo "</details>"; echo
-          } | ci_sum
+          USED_BEFORE="$used_before" python3 scripts/ci/render-cache-gc-summary.py | ci_sum
 
           jq -r '.[] | [.id, .reason, .size_in_bytes, .key] | @tsv' "$RUNNER_TEMP/gc-plan.json" | while IFS=$'\t' read -r id reason size key; do
             if [ "$DRY_RUN" = true ]; then

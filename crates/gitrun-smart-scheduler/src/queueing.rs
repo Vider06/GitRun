@@ -13,6 +13,7 @@ use vstd::prelude::*;
 
 #[cfg(not(verus))]
 const MAX_SIMULATED_JOBS: usize = 100_000;
+#[cfg(not(verus))]
 const MAX_RUNNERS: u32 = 10_000;
 
 /// Compute the upper bound on predictive runner growth without overflowing.
@@ -266,7 +267,6 @@ pub fn plan_runner_floor(
 }
 
 #[cfg(all(test, not(verus)))]
-#[cfg(test)]
 mod tests {
     use super::*;
 

@@ -13,7 +13,7 @@ readonly coverage="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-kani-source-coverage.t
 phase=preflight
 
 finish_formal_report() {
-  local rc=$? status file_state file manifest role file_status
+  local rc=$? status
   trap - EXIT
   case "$phase" in
     complete) status=PROVEN ;;
@@ -23,20 +23,31 @@ finish_formal_report() {
   esac
 
   if [ -s "$inventory" ]; then
-    printf 'SOURCE_FILE\tKANI_STATUS\tPACKAGE\tROLE\n' > "$coverage"
-    while IFS=
-      case "$status" in
-        PROVEN)
-          if [ "$file" = "$proof_source" ]; then file_status=PROVEN; else file_status=UNVERIFIED; fi
-          ;;
-        FAILED)
-          if [ "$file" = "$proof_source" ]; then file_status=FAILED; else file_status=UNVERIFIED; fi
-          ;;
-        UNVERIFIED) file_status=UNVERIFIED ;;
-        *) file_status=ERROR ;;
-      esac
-      printf '%s\t%s\t%s\t%s\n' "$file" "$file_status" "${manifest:-unknown}" "${role:-unknown}" >> "$coverage"
-    done < "$inventory"
+    python3 - "$inventory" "$coverage" "$status" "$proof_source" <<'PY'
+import csv
+import sys
+
+inventory, coverage, overall, proof_source = sys.argv[1:]
+with open(inventory, newline="", encoding="utf-8") as source, open(
+    coverage, "w", newline="", encoding="utf-8"
+) as target:
+    reader = csv.reader(source, delimiter=chr(9))
+    writer = csv.writer(target, delimiter=chr(9), lineterminator="\n")
+    writer.writerow(["SOURCE_FILE", "KANI_STATUS", "PACKAGE", "ROLE"])
+    for row in reader:
+        if len(row) != 4 or row[0] != "FORMAT_OK":
+            continue
+        _, path, package, role = row
+        if overall == "PROVEN":
+            status = "PROVEN" if path == proof_source else "UNVERIFIED"
+        elif overall == "FAILED":
+            status = "FAILED" if path == proof_source else "UNVERIFIED"
+        elif overall == "UNVERIFIED":
+            status = "UNVERIFIED"
+        else:
+            status = "ERROR"
+        writer.writerow([path, status, package, role])
+PY
   fi
 
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
@@ -46,10 +57,10 @@ finish_formal_report() {
       echo "| Scope | Status |"
       echo "|---|---|"
       echo "| Updater release-policy proof harnesses | **$status** |"
-      echo "| Production source file with Kani properties | `$proof_source` |"
-      echo "| Other tracked Rust files | `UNVERIFIED` by Kani; checked by the per-file and Cargo gates |"
+      echo "| Production source file with Kani properties | $proof_source |"
+      echo "| Other tracked Rust files | UNVERIFIED by Kani; checked by the per-file and Cargo gates |"
       echo
-      echo "Kani status vocabulary: `PROVEN`, `FAILED`, `UNVERIFIED`, `ERROR`, `NOT IN SCOPE`."
+      echo "Kani status vocabulary: PROVEN, FAILED, UNVERIFIED, ERROR, NOT IN SCOPE."
       echo
     } >> "$GITHUB_STEP_SUMMARY"
   fi
@@ -77,81 +88,8 @@ if ! test -s "$proof_source"; then
 fi
 phase=coverage
 for harness in "${required_harnesses[@]}"; do
-  if ! grep -B1 -Fq "fn $harness()" "$proof_source" || ! grep -B1 -F "fn $harness()" "$proof_source" | grep -Fq "#[kani::proof]" ; then
-    echo "Required Kani proof harness is missing: $harness" >&2
-    exit 1
-  fi
-done
-
-proof_count="$(grep -Rho --include='*.rs' '#\[kani::proof\]' crates | wc -l | tr -d '[:space:]')"
-if [[ "$proof_count" -lt "${#required_harnesses[@]}" ]]; then
-  echo "Formal verification has too few proof harnesses: $proof_count." >&2
-  exit 1
-fi
-
-echo "Kani version: $kani_version"
-echo "Required proof harnesses: ${required_harnesses[*]}"
-echo "Total source proof annotations: $proof_count"
-phase=proof
-kani verification/kani/updater_policy.rs
-phase=complete
-\t' read -r file_state file manifest role; do
-      [ "$file_state" = FORMAT_OK ] || continue
-      [ -n "$file" ] || continue
-      case "$status" in
-        PROVEN)
-          if [ "$file" = "$proof_source" ]; then file_status=PROVEN; else file_status=UNVERIFIED; fi
-          ;;
-        FAILED)
-          if [ "$file" = "$proof_source" ]; then file_status=FAILED; else file_status=UNVERIFIED; fi
-          ;;
-        UNVERIFIED) file_status=UNVERIFIED ;;
-        *) file_status=ERROR ;;
-      esac
-      printf '%s\t%s\t%s\t%s\n' "$file" "$file_status" "${manifest:-unknown}" "${role:-unknown}" >> "$coverage"
-    done < "$inventory"
-  fi
-
-  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-    {
-      echo "### Kani proof coverage"
-      echo
-      echo "| Scope | Status |"
-      echo "|---|---|"
-      echo "| Updater release-policy proof harnesses | **$status** |"
-      echo "| Production source file with Kani properties | `$proof_source` |"
-      echo "| Other tracked Rust files | `UNVERIFIED` by Kani; checked by the per-file and Cargo gates |"
-      echo
-      echo "Kani status vocabulary: `PROVEN`, `FAILED`, `UNVERIFIED`, `ERROR`, `NOT IN SCOPE`."
-      echo
-    } >> "$GITHUB_STEP_SUMMARY"
-  fi
-  if [ "$rc" -ne 0 ]; then
-    echo "Kani formal verification status: $status (exit $rc)." >&2
-  fi
-  exit "$rc"
-}
-trap finish_formal_report EXIT
-
-if ! command -v kani >/dev/null 2>&1; then
-  echo "Kani is not installed; refusing to report formal verification as successful." >&2
-  exit 1
-fi
-
-kani_version="$(kani --version 2>&1)"
-if [[ "$kani_version" != *"$expected_kani_version"* ]]; then
-  echo "Unexpected Kani version: $kani_version (expected $expected_kani_version)." >&2
-  exit 1
-fi
-
-if ! test -s "$proof_source"; then
-  echo "Required Kani production proof source is missing: $proof_source" >&2
-  exit 1
-fi
-phase=coverage
-for harness in "${required_harnesses[@]}"; do
-  if ! grep -B1 -Fq "fn $harness()" "$proof_source" || ! grep -B1 -F "fn $harness()" "$proof_source" | grep -Fq "#[kani::proof]" ; then
-    echo "Required Kani proof harness is missing: $harness" >&2
+  if ! grep -B1 -F "fn $harness()" "$proof_source" | grep -Fq "#[kani::proof]"; then
+    echo "Required Kani proof harness or its proof attribute is missing: $harness" >&2
     exit 1
   fi
 done

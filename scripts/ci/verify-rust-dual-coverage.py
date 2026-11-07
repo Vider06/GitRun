@@ -185,23 +185,10 @@ def main() -> int:
                 continue
             ready.append((source, tool, name))
 
-    if errors:
-        write_report(sources, unverified)
-        write_summary(sources, unverified, phase="preflight blocked", issues=len(errors))
-        print(
-            f"Dual-verifier coverage incomplete: {len(errors)} issue(s) across "
-            f"{len(sources)} tracked Rust source file(s).",
-            file=sys.stderr,
-        )
-        for error in errors[:200]:
-            print(f"::error::{error}", file=sys.stderr)
-        print(
-            "No verifier was started because the complete per-file proof map "
-            "did not pass preflight.",
-            file=sys.stderr,
-        )
-        return 1
-
+    # Execute every individually validated proof even when other source files
+    # are still unmapped. The overall gate remains fail-closed: incomplete
+    # coverage or any failed proof still returns non-zero. This lets the
+    # manifest grow incrementally without hiding valid proof results.
     results = {source: ["UNVERIFIED", "UNVERIFIED"] for source in sources}
     for source, tool, name in ready:
         command = (
@@ -221,10 +208,16 @@ def main() -> int:
             errors.append(f"{tool} proof failed for {source} (exit {completed.returncode})")
 
     write_report(sources, results)
-    write_summary(sources, results, phase="execution complete", issues=len(errors))
+    phase = "execution complete" if not errors else "execution complete with preflight issues"
+    write_summary(sources, results, phase=phase, issues=len(errors))
     if errors or any(status != "PROVEN" for pair in results.values() for status in pair):
-        for error in errors:
-            print(error, file=sys.stderr)
+        print(
+            f"Dual-verifier coverage incomplete: {len(errors)} preflight/execution "
+            f"issue(s) across {len(sources)} tracked Rust source file(s).",
+            file=sys.stderr,
+        )
+        for error in errors[:200]:
+            print(f"::error::{error}", file=sys.stderr)
         return 1
 
     print(f"Both Kani and Verus proved all {len(sources)} tracked Rust source files.")

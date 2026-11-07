@@ -32,3 +32,7 @@ path = "src/main.rs"
 # filetime: only to backdate a lock directory's mtime in gtuu.rs's stale-lock
 # test; not used by any non-test code.
 filetime = "0.2"
+
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(verus)'] }

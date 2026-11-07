@@ -64,10 +64,10 @@ class DualVerifierCoverageTests(unittest.TestCase):
         self.addCleanup(self.environment_patch.stop)
 
         self.write_manifest(
-            [("src/policy.rs", "kani.rs", "verus.rs")]
+            [("src/policy.rs", "kani.rs", "verus.rs", "pure policy", "Kani property", "Verus invariant", "IMPLEMENTED")]
         )
 
-    def write_manifest(self, rows: list[tuple[str, str, str]]) -> None:
+    def write_manifest(self, rows: list[tuple[str, str, str, str, str, str, str]]) -> None:
         manifest = DUAL_COVERAGE.MANIFEST
         manifest.parent.mkdir(parents=True, exist_ok=True)
         with manifest.open("w", encoding="utf-8", newline="") as handle:

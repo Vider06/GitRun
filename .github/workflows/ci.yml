@@ -248,7 +248,7 @@ jobs:
     if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
     name: Detect project components
     needs: variables-verification
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
@@ -368,7 +368,7 @@ jobs:
     name: Validate Cargo.lock
     needs: [detect, environment]
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.detect.result == 'success') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     outputs:
       rust: ${{ needs.detect.outputs.rust }}
@@ -514,7 +514,7 @@ jobs:
     name: CI helper self-test
     needs: cargo-lock
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.workflows == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     outputs:
       secs: ${{ steps.report.outputs.secs }}
@@ -578,7 +578,7 @@ jobs:
     if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
     name: Repository hygiene and syntax
     needs: cargo-lock
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     outputs:
       secs: ${{ steps.report.outputs.secs }}
@@ -780,7 +780,7 @@ jobs:
     name: Workflow lint and security audit
     needs: cargo-lock
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.workflows == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -870,7 +870,7 @@ jobs:
     name: Shell validation
     needs: cargo-lock
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.shell == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     outputs:
       secs: ${{ steps.report.outputs.secs }}
@@ -935,7 +935,7 @@ jobs:
     name: PowerShell validation
     needs: cargo-lock
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.powershell == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     outputs:
       secs: ${{ steps.report.outputs.secs }}
@@ -1034,7 +1034,7 @@ jobs:
     name: JavaScript, TypeScript and CSS validation
     needs: cargo-lock
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.node == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     env:
       NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-ci/npm-cache
@@ -1235,7 +1235,7 @@ jobs:
     name: npm dependency audit
     needs: cargo-lock
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.node == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     env:
       NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-ci/npm-cache
@@ -1329,7 +1329,7 @@ jobs:
     name: Rust lint (fmt, clippy, docs)
     needs: cargo-lock
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true' || needs.cargo-lock.outputs.workflows == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     env:
       RUST_COMPONENTS: rustfmt,clippy
@@ -1629,7 +1629,7 @@ jobs:
     name: Security hardening regression gate
     needs: [cargo-lock, rust-lint]
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -1941,7 +1941,7 @@ jobs:
     name: GSR watchdog lifecycle and failure detection
     needs: [cargo-lock, rust-lint]
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -2238,7 +2238,7 @@ jobs:
     name: Runtime contracts and configuration integration
     needs: [cargo-lock, rust-lint]
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -2598,7 +2598,7 @@ jobs:
     name: systemd-analyze unit verification
     needs: cargo-lock
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -2701,7 +2701,7 @@ jobs:
     name: Server + updater · ${{ matrix.target }}
     needs: [cargo-lock, rust-build]
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -2878,7 +2878,7 @@ jobs:
     name: Release Server package certification · ${{ matrix.target }}
     needs: [cargo-lock, rust-lint, platform-target-check]
     if: ${{ needs.cargo-lock.outputs.rust == 'true' && needs.rust-lint.result == 'success' }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -3275,7 +3275,7 @@ jobs:
     name: Conditional legacy migration package certification
     needs: [cargo-lock, rust-lint, platform-target-check]
     if: ${{ needs.cargo-lock.outputs.rust == 'true' && needs.rust-lint.result == 'success' }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -3445,7 +3445,7 @@ jobs:
     name: Release Desktop GNU package certification · ${{ matrix.arch }}
     needs: [tauri, tauri-arm64]
     if: ${{ needs.tauri.result == 'success' && needs.tauri-arm64.result == 'success' }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -3836,7 +3836,7 @@ jobs:
     name: Release Desktop musl package certification · ${{ matrix.arch }}
     needs: [release-dashboard-musl-build-certification]
     if: ${{ needs.release-dashboard-musl-build-certification.result == 'success' }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -4020,7 +4020,7 @@ jobs:
     name: Release shared metadata and input certification
     needs: [cargo-lock]
     if: ${{ needs.cargo-lock.outputs.rust == 'true' }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -4146,7 +4146,7 @@ jobs:
       - formal-verification
       - miri
     if: ${{ always() && needs.release-inputs-certification.result == 'success' && needs.release-package-certification.result == 'success' && needs.migration-package-certification.result == 'success' && needs.release-dashboard-package-certification.result == 'success' && needs.release-dashboard-musl-build-certification.result == 'success' && needs.release-dashboard-musl-package-certification.result == 'success' && needs.formal-verification.result == 'success' && needs.miri.result == 'success' }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -4306,7 +4306,7 @@ jobs:
     name: Linux platform and updater target contracts
     needs: [cargo-lock, rust-lint]
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -4627,7 +4627,7 @@ jobs:
     name: OpenRC and runit service-manager contracts
     needs: cargo-lock
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true' || needs.cargo-lock.outputs.workflows == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -4683,7 +4683,7 @@ jobs:
     name: Multi-distro portability contracts
     needs: [cargo-lock, rust-lint]
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -4748,7 +4748,7 @@ jobs:
     name: Python quality checks
     needs: [cargo-lock]
     if: ${{ needs.cargo-lock.result == 'success' && needs.cargo-lock.outputs.python == 'true' }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 30
     outputs:
       secs: ${{ steps.report.outputs.secs }}
@@ -4814,7 +4814,7 @@ jobs:
     name: Miri interpreter · pure updater regression
     needs: [cargo-lock, rust-lint]
     if: ${{ needs.cargo-lock.result == 'success' && needs.cargo-lock.outputs.rust == 'true' && needs.rust-lint.result == 'success' }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     outputs:
       secs: ${{ steps.report.outputs.secs }}
@@ -4880,7 +4880,7 @@ jobs:
     name: Rust source assurance and formal verification
     needs: [cargo-lock, rust-lint]
     if: ${{ needs.cargo-lock.result == 'success' && needs.cargo-lock.outputs.rust == 'true' && needs.rust-lint.result == 'success' }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     outputs:
       secs: ${{ steps.report.outputs.secs }}
@@ -4964,7 +4964,7 @@ jobs:
     name: Server, Desktop and migration release contracts
     needs: cargo-lock
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.workflows == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -5102,7 +5102,7 @@ jobs:
     name: Rust tests
     needs: [cargo-lock, rust-lint]
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     outputs:
       secs: ${{ steps.report.outputs.secs }}
@@ -5414,7 +5414,7 @@ jobs:
     name: Rust release build
     needs: [cargo-lock, rust-test]
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     outputs:
       secs: ${{ steps.report.outputs.secs }}
@@ -5734,7 +5734,7 @@ jobs:
     name: Cargo audit and deny
     needs: cargo-lock
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.rust == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     env:
       RUST_COMPONENTS: ""
@@ -5970,7 +5970,7 @@ jobs:
     name: Tauri GUI build and package
     needs: [cargo-lock, rust-lint, frontend]
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     env:
       RUST_COMPONENTS: ""
@@ -6479,7 +6479,7 @@ jobs:
     name: Tauri GitRun Recovery GUI build and test
     needs: [cargo-lock, rust-lint, frontend]
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     env:
       RUST_COMPONENTS: ""
@@ -6865,7 +6865,7 @@ jobs:
     name: Docker and Compose validation
     needs: cargo-lock
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.docker == 'true') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     env:
       DOCKER_HOST: unix:///var/run/docker.sock
@@ -7203,7 +7203,7 @@ jobs:
       - release-dashboard-musl-package-certification
       - tauri-recovery
       - docker
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       contents: read
@@ -7472,7 +7472,7 @@ jobs:
     name: Cache garbage collection
     needs: summary
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (!cancelled() && github.event_name != 'pull_request') }}
-    runs-on: runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || (vars.GITRUN_RUNNER_MODE || 'github-hosted') == 'github-hosted') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","miniserver-manager"]') }}
     timeout-minutes: 60
     permissions:
       actions: write

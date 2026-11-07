@@ -1508,13 +1508,16 @@ jobs:
           bash scripts/ci/install-verus.sh
       - name: Prove required Rust invariants
         shell: bash
-        run: bash scripts/ci/verify-rust-formal.sh
+        run: |
+          bash scripts/ci/verify-rust-formal.sh
       - name: Verify Verus toolchain and proof runner
         shell: bash
-        run: "${RUNNER_TEMP}/verus/installed/verus" verification/verus/smoke.rs
+        run: |
+          "${RUNNER_TEMP}/verus/installed/verus" verification/verus/smoke.rs
       - name: Enforce dual-verifier coverage for every tracked Rust file
         shell: bash
-        run: python3 scripts/ci/verify-rust-dual-coverage.py
+        run: |
+          python3 scripts/ci/verify-rust-dual-coverage.py
       - name: Install pinned nightly Miri toolchain
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:

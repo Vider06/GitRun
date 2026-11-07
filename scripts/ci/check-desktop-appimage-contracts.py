@@ -78,6 +78,8 @@ def main() -> int:
         errors.append("Void musl builder must install the nodejs package")
     if re.search(r"\bnpm\b", void_install):
         errors.append("Void musl builder must not request npm as a separate XBPS package")
+    if 'bash -O extglob -n "$tools_dir/lib4bin"' not in packager:
+        errors.append("lib4bin syntax validation must enable extglob before parsing")
     if 'SHARUN="$tools_dir/sharun" bash -O extglob "$tools_dir/lib4bin"' not in packager:
         errors.append("lib4bin must run in Bash with extglob enabled")
 

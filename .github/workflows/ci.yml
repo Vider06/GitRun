@@ -250,6 +250,7 @@ jobs:
     timeout-minutes: 60
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
+      python: ${{ steps.detect.outputs.python }}
 
       docker: ${{ steps.detect.outputs.docker }}
       dockerfiles: ${{ steps.detect.outputs.dockerfiles }}
@@ -281,6 +282,7 @@ jobs:
           flag() { if has "$1"; then echo true; else echo false; fi; }
 
           rust="$(flag '^Cargo\.toml$')"
+          python="$(flag '\.py$')"
 
           powershell="$(flag '\.ps1$')"
           node="$(flag '(^|/)package\.json$')"
@@ -307,14 +309,14 @@ jobs:
             if changed="$(git diff --name-only HEAD^1 HEAD 2>/dev/null)" && [ -n "$changed" ]; then
               if ! grep -Evq '^(docs/|LICENSE|CODEOWNERS|\.github/(ISSUE_TEMPLATE|PULL_REQUEST_TEMPLATE)/)|\.(md|mdx|txt|rst)$' <<<"$changed"; then
                 docs_only=true
-                rust=false; node=false; tauri=false; docker=false
-                ci_note "docs-only pull request: Rust, Node, Tauri and Docker jobs are skipped (use full_run to force)"
+                rust=false; python=false; node=false; tauri=false; docker=false
+                ci_note "docs-only pull request: Rust, Python, Node, Tauri and Docker jobs are skipped (use full_run to force)"
               fi
             fi
           fi
 
           {
-            echo "rust=$rust"; echo "powershell=$powershell"; echo "node=$node"
+            echo "rust=$rust"; echo "python=$python"; echo "powershell=$powershell"; echo "node=$node"
             echo "shell=$shell"; echo "workflows=$workflows"; echo "dockerfiles=$dockerfiles"
             echo "docker=$docker"; echo "tauri=$tauri"; echo "docs_only=$docs_only"
           } >> "$GITHUB_OUTPUT"
@@ -322,7 +324,7 @@ jobs:
           {
             echo "### 🔎 Detected components"; echo
             echo "| Component | Active |"; echo "|---|---|"
-            for k in rust powershell node shell workflows dockerfiles docker tauri docs_only; do
+            for k in rust python powershell node shell workflows dockerfiles docker tauri docs_only; do
               v="${!k}"; if [ "$v" = true ]; then echo "| $k | ✅ |"; else echo "| $k | – |"; fi
             done
             echo
@@ -339,6 +341,7 @@ jobs:
     timeout-minutes: 60
     outputs:
       rust: ${{ needs.detect.outputs.rust }}
+      python: ${{ needs.detect.outputs.python }}
 
       docker: ${{ needs.detect.outputs.docker }}
       dockerfiles: ${{ needs.detect.outputs.dockerfiles }}
@@ -1747,6 +1750,35 @@ jobs:
       - *report
       - *logs
 
+  python-quality:
+    name: Python quality checks
+    needs: [cargo-lock]
+    if: ${{ needs.cargo-lock.result == 'success' && needs.cargo-lock.outputs.python == 'true' }}
+    runs-on: *runner
+    timeout-minutes: 30
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - name: Compile, lint and test tracked Python files
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          mapfile -d '' python_files < <(git ls-files -z '*.py')
+          if [ "${#python_files[@]}" -eq 0 ]; then
+            ci_err "Python files were detected but none are tracked."
+            exit 1
+          fi
+          python3 -m venv "$RUNNER_TEMP/python-quality-venv"
+          py="$RUNNER_TEMP/python-quality-venv/bin/python"
+          ci_run "Install pinned Ruff 0.17.3" "$py" -m pip install --disable-pip-version-check "ruff==0.17.3"
+          rc=0
+          ci_run "Compile all tracked Python files" "$py" -m compileall -q "${python_files[@]}" || rc=1
+          ci_run "Lint all tracked Python files with Ruff" "$RUNNER_TEMP/python-quality-venv/bin/ruff" check --target-version py311 --output-format=github "${python_files[@]}" || rc=1
+          ci_run "Run Python unit tests" "$py" -m unittest discover -s scripts/tests -p 'test_*.py' || rc=1
+          exit "$rc"
+      - *report
+      - *logs
+
   # ───────────────────────────────────────────── release contracts ──
   release-contracts:
     name: Server, Desktop and migration release contracts
@@ -1800,11 +1832,10 @@ jobs:
               "no post-publication migration rollback remains": "Revert failed migration verification to prerelease" not in release and "make_latest=false" not in release,
               "new releases are initially prereleases": "<!-- GITRUN_RELEASE_TYPE: pre -->" in release and 'gh release edit "$VERSION"' in release and 'gh release create "$VERSION"' in release and release.count("--prerelease") >= 2,
               "new Server package identity": "name: gitrun-server" in release and "GitRun-Server-$VERSION-" in release,
-              "release workflow exposes a reusable workflow_call entry point": "  workflow_call:" in release and "certification_only:" in release,
-              "CI runs the complete release workflow in certification-only mode": "uses: ./.github/workflows/release.yml" in ci and "certification_only: true" in ci,
-              "release manifest signing is tested during certification": "inputs.certification_only || github.event_name == 'push'" in release and "Run updater tests against the aggregated manifest" in release,
-              "certification mode validates release publication preconditions without uploading assets": release.count("if: $" + "{{ !inputs.certification_only && (github.event_name == 'push' || github.ref == 'refs/heads/main') }}") == 1 and "name: Validate release publication preconditions" in release and "gh auth status --hostname github.com" in release and "sha256sum -c SHA256SUMS" in release,
-              "pull request release calls fail closed unless certification-only mode is enabled": ("CERTIFICATION_ONLY: $" + "{{ inputs.certification_only }}") in release and 'Refusing non-certification release invocation for pull requests.' in release,
+              "reusable release workflow exposes a Server package-only input": "  workflow_call:" in release and "server_packages_only:" in release,
+              "CI certifies the shared Server compile and package matrices after Cargo.lock validation": "needs: [cargo-lock]" in ci and "server_packages_only: true" in ci and "name: Server target matrix" in release and "name: Package Server target matrix" in release,
+              "Server-only certification skips Desktop, migration, validation, signing and publishing": "if: ${{ !inputs.server_packages_only }}" in release and "!inputs.server_packages_only && needs.prepare.outputs.migration_release" in release and "!inputs.server_packages_only && always()" in release and "!inputs.server_packages_only && (github.event_name == 'push'" in release,
+              "pull request release calls require Server package-only certification": ("SERVER_PACKAGES_ONLY: $" + "{{ inputs.server_packages_only }}") in release and "unless Server package certification is enabled" in release,
               "Server package replaces legacy Debian package": "conflicts: [gitrun]" in release and "replaces: [gitrun]" in release,
               "new CLI prefers the Server DEB target": 'artifact_for("linux-x86_64-server-deb")' in cli,
               "new CLI validates gitrun-server package identity": '"gitrun-server"' in cli and "trim() != expected_package" in cli,
@@ -2529,15 +2560,14 @@ jobs:
 
   # ───────────────────────────────────────────────────────────── summary ──
   release-certification:
-    name: Full release artifact certification
+    name: Server compile and package matrix
+    needs: [cargo-lock]
     uses: ./.github/workflows/release.yml
-    if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
+    if: ${{ needs.cargo-lock.result == 'success' && needs.cargo-lock.outputs.rust == 'true' && (github.event_name != 'push' || github.ref == 'refs/heads/main') }}
     permissions:
-      contents: write
+      contents: read
     with:
-      certification_only: true
-    secrets:
-      GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ github.event_name == 'pull_request' && 'ci-ephemeral' || secrets.GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64 }}
+      server_packages_only: true
 
   summary:
     name: Verification summary
@@ -2547,6 +2577,7 @@ jobs:
       - environment
       - detect
       - cargo-lock
+      - python-quality
       - ci-selftest
       - repository
       - workflows
@@ -2611,6 +2642,7 @@ jobs:
           environment|Runner environment|always|
           detect|Detect components|always|
           cargo-lock|Cargo.lock validation|rust|
+          python-quality|Python quality checks|python|
           ci-selftest|CI self-test|workflows|
           repository|Hygiene and syntax|always|
           workflows|Workflow lint and security|workflows|
@@ -2631,7 +2663,7 @@ jobs:
           platform-compatibility|Linux platform and updater target contracts|rust|rust-lint
           multi-distro-contracts|Multi-distro portability contracts|rust|rust-lint
           release-contracts|Server, Desktop and migration release contracts|workflows|
-          release-certification|Full release artifact certification|always|
+          release-certification|Server compile and package matrix|rust|
           tauri|Tauri GUI|tauri|rust-lint frontend
           tauri-arm64|Tauri GUI native ARM64 build|tauri|rust-lint frontend
           tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend
@@ -2646,7 +2678,7 @@ jobs:
             order+=("$id"); LABEL[$id]="$label"
             r="$(res "$id")"; SECS[$id]="$(out "$id" secs)"; CACHE[$id]="$(out "$id" cache)"
             case "$id" in
-              variables-verification|release-certification) DEP_IDS[$id]="" ;;
+              variables-verification) DEP_IDS[$id]="" ;;
               environment|detect) DEP_IDS[$id]="variables-verification" ;;
               cargo-lock) DEP_IDS[$id]="detect" ;;
               *) DEP_IDS[$id]="cargo-lock${extra:+ $extra}" ;;

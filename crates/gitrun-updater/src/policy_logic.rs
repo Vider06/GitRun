@@ -87,5 +87,4 @@ mod verification {
             UpdatePolicy::SecurityFullPre => assert!(value == "security_full_pre"),
         }
     }
-
 }

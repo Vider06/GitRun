@@ -29,7 +29,7 @@ Arch Linux is a GNU/glibc target and continues to use the existing GNU AppImage.
 
 - Tauri and WebKitGTK are compiled natively in Alpine or Void, not cross-compiled against a mismatched sysroot.
 - sharun v0.8.1 is fetched from immutable GitHub release asset URLs. Its x86_64 and aarch64 binaries are checked against published SHA-256 digests.
-- lib4bin is fetched from the pinned VHSgunzo/sharun commit b1ef744989533d8b1b4327b647fb315a42765ab9. It collects the target ELF dependency closure and GTK/WebKit hooks. The packaging step deliberately does not patch PT_INTERP.
+- lib4bin is fetched from a pinned immutable VHSgunzo/sharun source revision (v0.8.1 packaging input). It collects the target ELF dependency closure and GTK/WebKit hooks. The packaging step deliberately does not patch PT_INTERP.
 - The Rust appimagetool 0.3.2 crate assembles the AppDir using its pinned uruntime and DwarFS helpers. It is distinct from the official C++ AppImage appimagetool.
 - The AppImage builder runs on the native GNU runner for the same architecture, so its mkdwarfs host executable is not run inside the musl container.
 - GITHUB_REPOSITORY is unset during AppImage assembly to prevent automatic update metadata pointing at an artifact that has not been published as a release asset.

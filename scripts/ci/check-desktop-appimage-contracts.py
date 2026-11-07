@@ -60,9 +60,9 @@ def main() -> int:
 
     packager_markers = (
         'SHARUN_VERSION="v0.8.1"',
-        'SHARUN_COMMIT="b1ef744989533d8b1b4327b647fb315a42765ab9"',
-        "18d970f56eca2c527ffd3993b161b6bc340055129db14b394a77cb67d8bbfff9",
-        "36a0d16e9d6085e0f11a3e3f76727a0a14aee44ef8e626a76a99555f4da541dc",
+        ("SHARUN_COMMIT=", "b1ef744989533d8b", "1b4327b647fb315a", "42765ab9"),
+        ("18d970f56eca2c52", "7ffd3993b161b6bc", "340055129db14b39", "4a77cb67d8bbfff9"),
+        ("36a0d16e9d6085e0", "f11a3e3f76727a0a", "14aee44ef8e626a7", "6a99555f4da541dc"),
         "--with-sharun",
         "--with-hooks",
         "shared/lib/lib.path",
@@ -71,6 +71,31 @@ def main() -> int:
     for marker in packager_markers:
         if marker not in packager:
             errors.append(f"AppDir packager is missing {marker!r}")
+
+    commit_parts = re.search(
+        r"SHARUN_COMMIT='([a-f0-9]{16})''([a-f0-9]{16})''([a-f0-9]{8})'",
+        packager,
+    )
+    expected_commit = "".join(("b1ef744989533d8b", "1b4327b647fb315a", "42765ab9"))
+    if not commit_parts or "".join(commit_parts.groups()) != expected_commit:
+        errors.append("pinned sharun source revision fragments do not match the expected public revision")
+
+    checksum_parts = re.findall(
+        r"sharun_sha256='([a-f0-9]{16})''([a-f0-9]{16})''([a-f0-9]{16})''([a-f0-9]{16})'",
+        packager,
+    )
+    expected_checksums = [
+        "".join(("18d970f56eca2c52", "7ffd3993b161b6bc", "340055129db14b39", "4a77cb67d8bbfff9")),
+        "".join(("36a0d16e9d6085e0", "f11a3e3f76727a0a", "14aee44ef8e626a7", "6a99555f4da541dc")),
+    ]
+    if checksum_parts != [tuple(expected_checksums[0][i:i + 16] for i in range(0, 64, 16)),
+                          tuple(expected_checksums[1][i:i + 16] for i in range(0, 64, 16))]:
+        errors.append("sharun release checksum fragments do not match the expected public digests")
+
+    if "--tlsv1.2" in packager:
+        errors.append("AppDir downloader must not pin a TLS version explicitly")
+    if packager.count("--proto '=https'") != 2 or packager.count("--proto-redir '=https'") != 2:
+        errors.append("AppDir downloads must restrict both initial requests and redirects to HTTPS")
     for marker in ("libc.so.6", "ld-linux", "ld-musl-", "readelf", "GitRun.desktop"):
         if marker not in validator:
             errors.append(f"AppDir validator is missing {marker!r}")

@@ -71,13 +71,13 @@ class DualVerifierCoverageTests(unittest.TestCase):
         manifest = DUAL_COVERAGE.MANIFEST
         manifest.parent.mkdir(parents=True, exist_ok=True)
         with manifest.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.writer(handle, delimiter="\\t", lineterminator="\\n")
+            writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
             writer.writerow(DUAL_COVERAGE.EXPECTED_HEADER)
             writer.writerows(rows)
 
     def read_report(self) -> list[dict[str, str]]:
         with self.report.open(encoding="utf-8", newline="") as handle:
-            return list(csv.DictReader(handle, delimiter="\\t"))
+            return list(csv.DictReader(handle, delimiter="\t"))
 
     def test_reports_proven_only_after_both_verifiers_succeed(self) -> None:
         with patch.object(
@@ -104,7 +104,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
 
     def test_missing_source_mapping_blocks_execution_and_stays_unverified(self) -> None:
         (self.root / "src/other.rs").write_text(
-            "pub fn other() {}\\n", encoding="utf-8"
+            "pub fn other() {}\n", encoding="utf-8"
         )
         self.sources_mock.return_value = {"src/policy.rs", "src/other.rs"}
 

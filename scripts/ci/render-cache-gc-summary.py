@@ -9,7 +9,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 STARTED = time.monotonic()

@@ -41,8 +41,8 @@ impl JsonRecoveryAction {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[cfg(not(any(kani, verus)))]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct JsonRecoveryReport {
     pub action: String,
     pub scanned: usize,

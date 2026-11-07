@@ -1216,6 +1216,9 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
           components: rustfmt
+      - name: Check Rust workspace formatting
+        shell: bash
+        run: cargo fmt --all -- --check
       - name: Verify every tracked Rust source file
         shell: bash
         run: bash scripts/ci/verify-rust-source-coverage.bash

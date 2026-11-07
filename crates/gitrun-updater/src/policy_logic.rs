@@ -51,41 +51,37 @@ mod verification {
     use super::*;
 
     /// Exhaustively proves the updater policy's release-type allowlist.
+    ///
+    /// Both enums are finite, so enumerate their complete domains explicitly.
+    /// This avoids relying on a custom Arbitrary implementation for either enum.
     #[kani::proof]
     fn update_policy_acceptance_is_exact() {
-        let policy: UpdatePolicy = kani::any();
-        let release_type: ReleaseType = kani::any();
-        let expected = match (policy, release_type) {
-            (UpdatePolicy::SecurityOnly, ReleaseType::Security) => true,
-            (UpdatePolicy::SecurityOnly, _) => false,
-            (UpdatePolicy::SecurityFull, ReleaseType::Security | ReleaseType::Full) => true,
-            (UpdatePolicy::SecurityFull, ReleaseType::Pre) => false,
-            (UpdatePolicy::SecurityFullPre, _) => true,
-        };
-        assert_eq!(policy.accepts_release_type(release_type), expected);
+        assert!(!UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Pre));
+        assert!(!UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Full));
+        assert!(UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Security));
+
+        assert!(!UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Pre));
+        assert!(UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Full));
+        assert!(UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Security));
+
+        assert!(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Pre));
+        assert!(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Full));
+        assert!(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Security));
     }
 
     /// Proves that every representable release type has a stable wire value.
     #[kani::proof]
     fn release_type_wire_values_are_total() {
-        let release_type: ReleaseType = kani::any();
-        let value = release_type.as_str();
-        match release_type {
-            ReleaseType::Pre => assert!(value == "pre"),
-            ReleaseType::Full => assert!(value == "full"),
-            ReleaseType::Security => assert!(value == "security"),
-        }
+        assert!(ReleaseType::Pre.as_str() == "pre");
+        assert!(ReleaseType::Full.as_str() == "full");
+        assert!(ReleaseType::Security.as_str() == "security");
     }
 
     /// Proves that every update policy has a stable wire value.
     #[kani::proof]
     fn update_policy_wire_values_are_total() {
-        let policy: UpdatePolicy = kani::any();
-        let value = policy.as_str();
-        match policy {
-            UpdatePolicy::SecurityOnly => assert!(value == "security_only"),
-            UpdatePolicy::SecurityFull => assert!(value == "security_full"),
-            UpdatePolicy::SecurityFullPre => assert!(value == "security_full_pre"),
-        }
+        assert!(UpdatePolicy::SecurityOnly.as_str() == "security_only");
+        assert!(UpdatePolicy::SecurityFull.as_str() == "security_full");
+        assert!(UpdatePolicy::SecurityFullPre.as_str() == "security_full_pre");
     }
 }

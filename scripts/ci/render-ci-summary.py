@@ -92,7 +92,8 @@ def make_report():
     for jid,label,_,deptext in jobs:
         node=jid.replace("-","_")
         lines.append("  "+node+'["'+label+"<br/>"+states[jid].upper()+" "+fmt(times[jid])+'"]:::'+states[jid])
-    lines.append('  verdict{{"'+heading+'"}}:::success' if verdict=="success" else '  verdict{{"'+heading+'"}}:::failure')
+    verdict_class={"success":"success","failure":"failure","cancelled":"cancelled"}[verdict]
+    lines.append('  verdict{{"'+heading+'"}}:::'+verdict_class)
     for jid,_,_,deptext in jobs:
         node=jid.replace("-","_")
         for dep in deptext.split(): lines.append("  "+dep.replace("-","_")+" --> "+node)
@@ -146,6 +147,9 @@ if __name__=="__main__":
     status=0
     try: main()
     except SystemExit as exc: status=int(exc.code) if isinstance(exc.code,int) else 1
+    except Exception:
+        status=1
+        raise
     finally:
         steps.parent.mkdir(parents=True,exist_ok=True)
         with steps.open("a",encoding="utf-8") as stream:

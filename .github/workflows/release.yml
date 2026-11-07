@@ -1504,6 +1504,13 @@ jobs:
       - name: Prove required Rust invariants
         shell: bash
         run: bash scripts/ci/verify-rust-formal.sh
+      - name: Upload Kani per-file coverage status
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: release-kani-source-coverage
+          path: ${{ runner.temp }}/gitrun-kani-source-coverage.tsv
+          if-no-files-found: error
+          retention-days: 7
       - name: Upload formally verified release payload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

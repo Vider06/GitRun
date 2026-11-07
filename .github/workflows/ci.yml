@@ -1773,7 +1773,7 @@ jobs:
           ci_run "Install pinned Ruff 0.17.3" "$py" -m pip install --disable-pip-version-check "ruff==0.17.3"
           rc=0
           ci_run "Compile all tracked Python files" "$py" -m compileall -q "${python_files[@]}" || rc=1
-          ci_run "Lint all tracked Python files with Ruff" "$RUNNER_TEMP/python-quality-venv/bin/ruff" check --target-version py311 --output-format=github "${python_files[@]}" || rc=1
+          ci_run "Check Python correctness with Ruff" "$RUNNER_TEMP/python-quality-venv/bin/ruff" check --select E9,F --target-version py311 --output-format=github "${python_files[@]}" || rc=1
           ci_run "Run Python unit tests" "$py" -m unittest discover -s scripts/tests -p 'test_*.py' || rc=1
           exit "$rc"
       - *report

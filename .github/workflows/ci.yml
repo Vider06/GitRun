@@ -2536,7 +2536,8 @@ jobs:
       contents: read
     with:
       certification_only: true
-    secrets: inherit
+    secrets:
+      GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ github.event_name == 'pull_request' && 'ci-ephemeral' || secrets.GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64 }}
 
   summary:
     name: Verification summary

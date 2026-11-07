@@ -2018,12 +2018,16 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-    outputs: *job_outputs
+    outputs:
+      <<: *job_outputs
+      migration_release: ${{ steps.migration.outputs.enabled }}
     steps:
       - *checkout
       - *boot
       - name: Detect one-time migration release
         id: migration
+        env:
+          MIGRATION_RELEASE_ENABLED: ${{ vars.GITRUN_ENABLE_MIGRATION_RELEASE }}
         shell: bash
         run: |
           set -euo pipefail
@@ -2033,7 +2037,7 @@ jobs:
             echo "VERSION_NUMBER=$VERSION_NUMBER"
             echo "VERSION=$VERSION"
           } >> "$GITHUB_ENV"
-          if [ "$VERSION" = v1.9.1 ]; then
+          if [ "$VERSION" = v1.9.1 ] && [ "$MIGRATION_RELEASE_ENABLED" = "true" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
@@ -2199,6 +2203,7 @@ jobs:
           rm -rf "$stage" "$out"
           mkdir -p "$stage/opt/gitrun-desktop" "$stage/usr/share/applications" "$out"
           install -m 0755 "$appimage" "$stage/opt/gitrun-desktop/GitRun.AppImage"
+           install -m 0755 "$appimage" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH.AppImage"
           cat > "$stage/usr/share/applications/gitrun-desktop.desktop" <<'DESKTOP'
           [Desktop Entry]
           Type=Application
@@ -2603,6 +2608,218 @@ jobs:
       - *logs
 
 
+  release-inputs-certification:
+    name: Release shared metadata and input certification
+    needs: [cargo-lock]
+    if: ${{ needs.cargo-lock.outputs.rust == 'true' }}
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Install metadata tools
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq zip
+      - name: Synchronize and validate release version metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_NUMBER="$(tr -d '[:space:]' < version.txt)"
+          test -n "$VERSION_NUMBER"
+          python3 scripts/sync-markdown-version.py --version "$VERSION_NUMBER"
+          python3 scripts/sync-markdown-version.py --check --version "$VERSION_NUMBER"
+          python3 scripts/check-version-consistency.py
+      - name: Assemble the exact shared Release inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/common"
+          library="$RUNNER_TEMP/library"
+          rm -rf "$root" "$library"
+          mkdir -p "$root" "$library"
+          sources=(
+            "Core/Dockers/runners/linux-x86_64/profiles.json"
+            "crates/gitrun-cli/src/cat/cat_states.json"
+            "crates/gitrun-cli/src/cat/gitrun.json"
+            "crates/gitrun-dashboard-tauri/package.json"
+            "crates/gitrun-dashboard-tauri/package-lock.json"
+            "crates/gitrun-dashboard-tauri/src-tauri/capabilities/default.json"
+            "crates/gitrun-dashboard-tauri/src-tauri/tauri.conf.json"
+            "crates/gitrun-recovery/capabilities/default.json"
+            "crates/gitrun-recovery/tauri.conf.json"
+            "release/release-manifest.example.json"
+            "release/release-manifest.schema.json"
+          )
+          entries=()
+          for source in "${sources[@]}"; do
+            test -f "$source"
+            jq -e 'type == "object" or type == "array"' "$source" >/dev/null
+            mkdir -p "$library/$(dirname "$source")"
+            install -m 0644 "$source" "$library/$source.Back"
+            entries+=("$source.Back")
+          done
+          (cd "$library" && zip -q -9 "$root/library.zip" "${entries[@]}")
+          cargo metadata --locked --format-version 1 > "$root/cargo-metadata.json"
+          created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq --arg created "$created" --arg commit "$GITHUB_SHA" \
+            '{spdxVersion:"SPDX-2.3",dataLicense:"CC0-1.0",SPDXID:"SPDXRef-DOCUMENT",name:"GitRun",documentNamespace:("https://github.com/Vider06/GitRun/spdx/" + $commit),creationInfo:{created:$created,creators:["Tool: GitRun CI"]},packages:[.packages | to_entries[] | {SPDXID:("SPDXRef-Package-" + (.key|tostring)),name:.value.name,versionInfo:.value.version,downloadLocation:(.value.source // "NOASSERTION")}]}' \
+            "$root/cargo-metadata.json" > "$root/sbom.spdx.json"
+          jq -n --arg commit "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" \
+            '{schema:"gitrun.provenance.v2",git_commit:$commit,run_id:$run,server_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],updater_archive:"tar.gz",package_formats:["deb","rpm","apk","archlinux","xbps","tar.zst"],desktop:"GitRun-Desktop",desktop_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],desktop_package_formats:["deb","rpm","archlinux","appimage","apk","xbps"],desktop_package_arches:{apk:["x86_64"],xbps:["x86_64","aarch64"]}}' \
+            > "$root/provenance.json"
+          for metadata in cargo-metadata.json sbom.spdx.json provenance.json; do jq -e . "$root/$metadata" >/dev/null; done
+          test "$(unzip -Z1 "$root/library.zip" | wc -l)" -eq 11
+      - name: Upload certified shared Release inputs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-release-common
+          path: ${{ runner.temp }}/common/*
+          if-no-files-found: error
+          retention-days: 1
+      - *report
+      - *logs
+
+  release-asset-assembly-certification:
+    name: Final Release asset assembly and exact inventory
+    needs:
+      - release-inputs-certification
+      - release-package-certification
+      - migration-package-certification
+      - release-dashboard-package-certification
+      - release-dashboard-musl-build-certification
+      - release-dashboard-musl-package-certification
+      - formal-verification
+      - miri
+    if: ${{ always() && needs.release-inputs-certification.result == 'success' && needs.release-package-certification.result == 'success' && needs.migration-package-certification.result == 'success' && needs.release-dashboard-package-certification.result == 'success' && needs.release-dashboard-musl-build-certification.result == 'success' && needs.release-dashboard-musl-package-certification.result == 'success' && needs.formal-verification.result == 'success' && needs.miri.result == 'success' }}
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs: *job_outputs
+    env:
+      MIGRATION_RELEASE: ${{ needs.migration-package-certification.outputs.migration_release }}
+    steps:
+      - *checkout
+      - *boot
+      - name: Download certified Server packages
+        uses: actions/download-artifact@37930e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          pattern: ci-server-packages-*
+          path: all-assets/server
+          merge-multiple: true
+      - name: Download certified GNU Desktop packages and AppImages
+        uses: actions/download-artifact@37930e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          pattern: ci-dashboard-gnu-packages-*
+          path: all-assets/desktop-gnu
+          merge-multiple: true
+      - name: Download certified musl Desktop executables
+        uses: actions/download-artifact@37930e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          pattern: ci-dashboard-musl-build-*
+          path: all-assets/desktop-musl-build
+          merge-multiple: true
+      - name: Download certified musl Desktop packages
+        uses: actions/download-artifact@37930e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          pattern: ci-dashboard-musl-packages-*
+          path: all-assets/desktop-musl-packages
+          merge-multiple: true
+      - name: Download exact shared Release inputs
+        uses: actions/download-artifact@37930e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-release-common
+          path: all-assets/common
+      - name: Download conditional migration package
+        if: env.MIGRATION_RELEASE == 'true'
+        uses: actions/download-artifact@37930e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-migration-deb-linux-x86_64
+          path: all-assets/migration
+      - name: Install release asset inspection tools
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq zstd unzip rpm file
+      - name: Assemble canonical Release asset set
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/release-assets"
+          rm -rf "$root"
+          mkdir -p "$root"
+          for group in server desktop-gnu desktop-musl-build desktop-musl-packages migration; do
+            [ -d "all-assets/$group" ] || continue
+            find "all-assets/$group" -maxdepth 1 -type f -name 'GitRun-*' -exec cp -t "$root" {} +
+          done
+          cp all-assets/common/library.zip all-assets/common/cargo-metadata.json all-assets/common/sbom.spdx.json all-assets/common/provenance.json "$root/"
+          find "$root" -maxdepth 1 -type f \
+            \( -name 'GitRun-Desktop-*.AppImage' -o -name 'GitRun-Desktop-*-unknown-linux-musl.bin' \) \
+            -exec chmod 0755 {} +
+          VERSION_NUMBER="$(tr -d '[:space:]' < version.txt)"
+          VERSION="v$VERSION_NUMBER"
+          expected=()
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            expected+=("GitRun-Server-$VERSION-$target-server.tar.gz" "GitRun-Server-$VERSION-$target-server.tar.zst")
+          done
+          for arch in x86_64 aarch64; do
+            expected+=("GitRun-Server-$VERSION-linux-$arch-deb.deb" "GitRun-Server-$VERSION-linux-$arch-rpm.rpm" "GitRun-Server-$VERSION-linux-$arch-arch.pkg.tar.zst" "GitRun-Server-$VERSION-linux-$arch-xbps.xbps")
+            expected+=("GitRun-Server-$VERSION-linux-$arch-musl-apk.apk" "GitRun-Server-$VERSION-linux-$arch-musl-xbps.xbps")
+            expected+=("GitRun-Desktop-$VERSION-linux-$arch-deb.deb" "GitRun-Desktop-$VERSION-linux-$arch-rpm.rpm" "GitRun-Desktop-$VERSION-linux-$arch-archlinux.pkg.tar.zst" "GitRun-Desktop-$VERSION-linux-$arch.AppImage")
+            expected+=("GitRun-Desktop-$VERSION-linux-$arch-musl-xbps.xbps")
+            expected+=("GitRun-Desktop-$VERSION-$arch-unknown-linux-musl.bin")
+          done
+          expected+=("GitRun-Desktop-$VERSION-linux-x86_64-musl-apk.apk" library.zip cargo-metadata.json sbom.spdx.json provenance.json)
+          if [ "$MIGRATION_RELEASE" = true ]; then expected+=("GitRun-$VERSION-linux-x86_64-deb.deb"); fi
+          for name in "${expected[@]}"; do
+            test -s "$root/$name" || { echo "Missing required Release asset: $name" >&2; exit 1; }
+          done
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+          mapfile -t actual_sorted < <(find "$root" -maxdepth 1 -type f -printf '%f\n' | sort)
+          diff -u <(printf '%s\n' "${expected_sorted[@]}") <(printf '%s\n' "${actual_sorted[@]}")
+          for metadata in cargo-metadata.json sbom.spdx.json provenance.json; do jq -e . "$root/$metadata" >/dev/null; done
+          mapfile -t library_members < <(unzip -Z1 "$root/library.zip")
+          (( ${#library_members[@]} == 11 ))
+          for member in "${library_members[@]}"; do
+            [[ "$member" == *.json.Back && "$member" != /* && "$member" != *".."* && "$member" != *\\* ]]
+            unzip -p "$root/library.zip" "$member" | jq -e 'type == "object" or type == "array"' >/dev/null
+          done
+          for package in "$root"/GitRun-*; do
+            test -s "$package"
+            name="${package##*/}"
+            case "$name" in
+              *.deb) dpkg-deb --info "$package" >/dev/null ;;
+              *.rpm) rpm -qp "$package" >/dev/null ;;
+              *.pkg.tar.zst) tar --zstd -tf "$package" >/dev/null ;;
+              *.apk) tar -tzf "$package" >/dev/null ;;
+              *.xbps) tar -tJf "$package" >/dev/null ;;
+              *-server.tar.gz) tar -tzf "$package" >/dev/null ;;
+              *-server.tar.zst) tar --zstd -tf "$package" >/dev/null ;;
+              *.AppImage|*.bin) test -x "$package"; file "$package" >/dev/null ;;
+              *) echo "Unknown Release asset type: $name" >&2; exit 1 ;;
+            esac
+          done
+          (cd "$root" && sha256sum -- * > SHA256SUMS && sha256sum -c SHA256SUMS)
+      - name: Upload assembled CI Release candidate assets
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-certified-release-asset-set
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 3
+      - *report
+      - *logs
   platform-compatibility:
     name: Linux platform and updater target contracts
     needs: [cargo-lock, rust-lint]

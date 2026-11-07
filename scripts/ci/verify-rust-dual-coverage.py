@@ -106,7 +106,7 @@ def write_summary(
 
 def main() -> int:
     sources = tracked_sources()
-    rows: dict[str, tuple[str, str, str, str, str, str]] = {}
+    rows: dict[str, tuple[str, str, str, str, str, str, str]] = {}
     errors: list[str] = []
 
     if not sources:

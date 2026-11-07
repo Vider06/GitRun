@@ -1656,6 +1656,7 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    outputs: *job_outputs
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -2406,6 +2407,7 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    outputs: *job_outputs
     strategy:
       fail-fast: false
       matrix:
@@ -7376,6 +7378,8 @@ jobs:
           path: ${{ runner.temp }}/server-packages/*
           if-no-files-found: error
           retention-days: 1
+      - *report
+      - *logs
 
 
   # ───────────────────────────────────────────── Linux platform contracts ──

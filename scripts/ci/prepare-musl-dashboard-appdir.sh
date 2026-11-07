@@ -88,7 +88,7 @@ fi
 
 curl --fail --silent --show-error --location --retry 3 --proto '=https' --proto-redir '=https' \
   "$lib4bin_url" -o "$tools_dir/lib4bin"
-bash -n "$tools_dir/lib4bin"
+bash -O extglob -n "$tools_dir/lib4bin"
 
 rm -rf "$appdir"
 mkdir -p "$appdir"

@@ -123,7 +123,6 @@ mod tests {
     }
 }
 
-
 #[cfg(kani)]
 mod kani_verification {
     use super::Runner;

@@ -1505,6 +1505,23 @@ jobs:
       - name: Prove required Rust invariants
         shell: bash
         run: bash scripts/ci/verify-rust-formal.sh
+      - name: Install pinned nightly Miri toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: nightly-2026-11-06
+          components: miri
+      - name: Prepare Miri sysroot
+        run: cargo +nightly-2026-11-06 miri setup
+      - name: Run targeted Miri regression test
+        run: bash scripts/ci/verify-rust-miri.sh
+      - name: Upload Miri source coverage
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: release-miri-source-coverage
+          path: ${{ runner.temp }}/gitrun-miri-source-coverage.tsv
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload Kani per-file coverage status
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

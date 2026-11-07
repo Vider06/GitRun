@@ -2492,7 +2492,7 @@ jobs:
             xbps_arch: aarch64-musl
             xbps_static_arch: x86_64
     env:
-      TARGET: ${{ matrix.target_triple || matrix.target }}
+      TARGET: ${{ matrix.target_triple }}
       DESKTOP_ARCH: ${{ matrix.arch }}
       PACKAGE_ARCH: ${{ matrix.package_arch }}
       XBPS_ARCH: ${{ matrix.xbps_arch }}

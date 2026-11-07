@@ -7,10 +7,12 @@ formal proofs simply because they cover the same source tree.
 
 ## Active Kani proofs
 
-Kani is pinned to `0.68.0`. The current production proof target is
-`crates/gitrun-updater/src/policy_logic.rs`, which is a dependency-light
-module shared by the updater and the standalone harness
-`verification/kani/updater_policy.rs`.
+Kani is pinned to `0.68.0`. The initial production proof target,
+`crates/gitrun-updater/src/policy_logic.rs`, is a dependency-light module
+shared by the updater and the standalone harness
+`verification/kani/updater_policy.rs`. The current Kani targets now also
+include the closed API-operation matrix, runner capacity bounds, scheduler
+cooldown ceiling, watchdog PID range, and Kitty queue-growth ceiling.
 
 The current Kani proof targets are:
 
@@ -107,9 +109,9 @@ smoke proof, compilation, inventory entry, or lint result cannot substitute.
 files. Seven rows have source-local Kani and Verus entrypoints: updater policy,
 its standalone verifier harness, the closed API-operation matrix, runner
 target bounds, scheduler cooldown clamping, watchdog PID range validation, and
-Kitty queue growth bounds. The remaining 68 rows are still `PLANNED`. These entries describe
-authored proof targets, not `PROVEN` results: both verifier processes must
-complete successfully before a source is reported as covered. The gate
+Kitty queue growth bounds. The remaining 68 rows are still `PLANNED`. These
+entries describe authored proof targets, not `PROVEN` results: both verifier
+processes must complete successfully before a source is reported as covered. The gate
 remains intentionally red until every tracked Rust file has a reviewed,
 meaningful Kani proof and a reviewed, meaningful Verus proof. This includes
 tests, build scripts, and verification harnesses; no file is silently

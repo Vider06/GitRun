@@ -64,10 +64,10 @@ class DualVerifierCoverageTests(unittest.TestCase):
         self.addCleanup(self.environment_patch.stop)
 
         self.write_manifest(
-            [("src/policy.rs", "kani.rs", "verus.rs", "pure policy", "Kani property", "Verus invariant", "IMPLEMENTED")]
+            [("src/policy.rs", "kani.rs", "verus.rs", "pure policy", "Kani property", "finite Kani cases", "Verus invariant", "IMPLEMENTED")]
         )
 
-    def write_manifest(self, rows: list[tuple[str, str, str, str, str, str, str]]) -> None:
+    def write_manifest(self, rows: list[tuple[str, str, str, str, str, str, str, str]]) -> None:
         manifest = DUAL_COVERAGE.MANIFEST
         manifest.parent.mkdir(parents=True, exist_ok=True)
         with manifest.open("w", encoding="utf-8", newline="") as handle:
@@ -78,6 +78,16 @@ class DualVerifierCoverageTests(unittest.TestCase):
     def read_report(self) -> list[dict[str, str]]:
         with self.report.open(encoding="utf-8", newline="") as handle:
             return list(csv.DictReader(handle, delimiter="\t"))
+
+    def test_manifest_schema_preserves_kani_cases_as_a_distinct_column(self) -> None:
+        self.assertEqual(len(DUAL_COVERAGE.EXPECTED_HEADER), 8)
+        self.assertEqual(DUAL_COVERAGE.EXPECTED_HEADER[5], "KANI_CASES")
+        with DUAL_COVERAGE.MANIFEST.open(encoding="utf-8", newline="") as handle:
+            rows = list(csv.reader(handle, delimiter="\\t"))
+        self.assertEqual(len(rows[0]), 8)
+        self.assertEqual(len(rows[1]), 8)
+        self.assertEqual(rows[1][5], "finite Kani cases")
+        self.assertEqual(rows[1][7], "IMPLEMENTED")
 
     def test_reports_proven_only_after_both_verifiers_succeed(self) -> None:
         with patch.object(
@@ -104,7 +114,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
 
     def test_planned_source_proof_remains_unverified_and_is_not_executed(self) -> None:
         self.write_manifest(
-            [("src/policy.rs", "", "", "pure policy", "Kani property", "Verus invariant", "PLANNED")]
+            [("src/policy.rs", "", "", "pure policy", "Kani property", "finite Kani cases", "Verus invariant", "PLANNED")]
         )
 
         with patch.object(DUAL_COVERAGE.subprocess, "run") as run:

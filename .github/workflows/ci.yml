@@ -2376,8 +2376,8 @@ jobs:
           mkdir -p "$TMPDIR" "$XDG_CACHE_HOME"
           bundle() { (cd crates/gitrun-dashboard-tauri && npm run tauri bundle -- --bundles deb,appimage --no-binary-patching); }
           ci_run "tauri bundle (deb, appimage)" bundle
-      - name: Upload Tauri bundles
-        if: always() && env.CI_UPLOAD_ARTIFACTS == 'true'
+      - name: Upload Tauri bundles for release package certification
+        if: success()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: gitrun-tauri-bundles
@@ -2393,6 +2393,157 @@ jobs:
       - *cache_save_report
       - *s_npm
       - *npm_cache_save_report
+      - *report
+      - *logs
+
+  release-dashboard-package-certification:
+    name: Release Desktop package certification · ${{ matrix.arch }}
+    needs: [tauri, tauri-arm64]
+    if: ${{ needs.tauri.result == 'success' && needs.tauri-arm64.result == 'success' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            package_arch: amd64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            package_arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      DESKTOP_ARCH: ${{ matrix.arch }}
+      PACKAGE_ARCH: ${{ matrix.package_arch }}
+    steps:
+      - *checkout
+      - *boot
+      - name: Set package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_NUMBER="$(tr -d '[:space:]' < version.txt)"
+          test -n "$VERSION_NUMBER"
+          VERSION="v$VERSION_NUMBER"
+          {
+            echo "VERSION_NUMBER=$VERSION_NUMBER"
+            echo "VERSION=$VERSION"
+          } >> "$GITHUB_ENV"
+      - name: Download x86_64 Dashboard build
+        if: matrix.arch == 'x86_64'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: gitrun-tauri-bundles
+          path: dashboard-input
+      - name: Download ARM64 Dashboard build
+        if: matrix.arch == 'aarch64'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: gitrun-dashboard-arm64-ci
+          path: dashboard-input
+      - name: Stage and inspect the Dashboard AppImage
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$DESKTOP_ARCH" = x86_64 ]; then
+            appimage="$(find dashboard-input -type f -name '*.AppImage' -print -quit)"
+          else
+            appimage="$(find dashboard-input -type f -name '*.AppImage' -print -quit)"
+          fi
+          test -n "$appimage"
+          test -s "$appimage"
+          file "$appimage"
+          stage="$RUNNER_TEMP/dashboard-stage"
+          out="$RUNNER_TEMP/dashboard-package"
+          rm -rf "$stage" "$out"
+          mkdir -p "$stage/opt/gitrun-desktop" "$stage/usr/share/applications" "$out"
+          install -m 0755 "$appimage" "$stage/opt/gitrun-desktop/GitRun.AppImage"
+          cat > "$stage/usr/share/applications/gitrun-desktop.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=GitRun Desktop
+          Comment=GitRun desktop management interface
+          Exec=/opt/gitrun-desktop/GitRun.AppImage
+          Terminal=false
+          Categories=Development;System;
+          DESKTOP
+      - name: Install package inspection tools
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm zstd
+      - name: Set up pinned Go toolchain for nFPM
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.26.10"
+          check-latest: false
+          cache: false
+      - name: Create independent Dashboard DEB, RPM and Arch packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/dashboard-stage"
+          out="$RUNNER_TEMP/dashboard-package"
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          cat > "$RUNNER_TEMP/dashboard-nfpm.yaml" <<NFPM
+          name: gitrun-desktop
+          arch: $PACKAGE_ARCH
+          platform: linux
+          version: $VERSION_NUMBER
+          maintainer: Vider06
+          description: GitRun Tauri Dashboard, independently installable from the server
+          license: Apache-2.0
+          depends: [libwebkit2gtk-4.1-0, policykit-1]
+          overrides:
+            rpm:
+              depends: ["(webkit2gtk4.1 or libwebkit2gtk-4_1-0)", polkit]
+            archlinux:
+              depends: [webkit2gtk-4.1, polkit]
+          contents:
+            - src: $stage/opt/gitrun-desktop/GitRun.AppImage
+              dst: /opt/gitrun-desktop/GitRun.AppImage
+              file_info:
+                mode: 0755
+            - src: $stage/usr/share/applications/gitrun-desktop.desktop
+              dst: /usr/share/applications/gitrun-desktop.desktop
+          NFPM
+          config="$RUNNER_TEMP/dashboard-nfpm.yaml"
+          nfpm package --config "$config" --packager deb --target "$out"
+          deb="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop_*.deb' -print -quit)"
+          test -n "$deb"
+          mv "$deb" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb"
+          test "$(dpkg-deb -f "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb" Package)" = gitrun-desktop
+          test "$(dpkg-deb -f "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb" Version)" = "$VERSION_NUMBER"
+
+          nfpm package --config "$config" --packager rpm --target "$out"
+          rpm_file="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.rpm' -print -quit)"
+          test -n "$rpm_file"
+          mv "$rpm_file" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm"
+          test "$(rpm -qp --queryformat '%{NAME}' "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm")" = gitrun-desktop
+          rpm_requires="$(rpm -qp --requires "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm")"
+          grep -Fq webkit2gtk4.1 <<< "$rpm_requires"
+          grep -Fq libwebkit2gtk-4_1-0 <<< "$rpm_requires"
+
+          nfpm package --config "$config" --packager archlinux --target "$out"
+          arch="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.pkg.tar.zst' -print -quit)"
+          test -n "$arch"
+          mv "$arch" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst"
+          arch_pkginfo="$(tar --zstd -xOf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst" .PKGINFO)"
+          grep -Fq 'pkgname = gitrun-desktop' <<< "$arch_pkginfo"
+          grep -Fq 'depend = webkit2gtk-4.1' <<< "$arch_pkginfo"
+          package_files="$(tar --zstd -tf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst")"
+          grep -Fq 'opt/gitrun-desktop/GitRun.AppImage' <<< "$package_files"
+      - name: Upload certified Dashboard packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-dashboard-packages-${{ matrix.arch }}
+          path: ${{ runner.temp }}/dashboard-package/*
+          if-no-files-found: error
+          retention-days: 1
       - *report
       - *logs
 
@@ -2841,6 +2992,7 @@ jobs:
       - formal-verification
       - tauri
       - tauri-arm64
+      - release-dashboard-package-certification
       - tauri-recovery
       - docker
     runs-on: *runner
@@ -2907,6 +3059,7 @@ jobs:
           formal-verification|Rust source assurance and formal verification|rust|rust-lint
           tauri|Tauri GUI|tauri|rust-lint frontend
           tauri-arm64|Tauri GUI native ARM64 build|tauri|rust-lint frontend
+          release-dashboard-package-certification|Release Desktop package matrix|tauri|tauri tauri-arm64
           tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend
           docker|Docker|docker|
           JOBS

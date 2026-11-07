@@ -31,7 +31,10 @@ pub fn parse_boolean_argument(value: &str) -> Option<bool> {
 /// surface cannot grow accidentally through configuration.
 #[cfg_attr(verus, verus_verify)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(any(kani, verus)), derive(PartialOrd, Ord, Hash, Serialize, Deserialize))]
+#[cfg_attr(
+    not(any(kani, verus)),
+    derive(PartialOrd, Ord, Hash, Serialize, Deserialize)
+)]
 pub enum GitRunApi {
     GitVaultRun,
     GitDockRun,
@@ -276,7 +279,10 @@ pub fn validate_arguments(
 /// Closed set of operation verbs understood by the GitRun APIs.
 #[cfg_attr(verus, verus_verify)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(any(kani, verus)), derive(PartialOrd, Ord, Hash, Serialize, Deserialize))]
+#[cfg_attr(
+    not(any(kani, verus)),
+    derive(PartialOrd, Ord, Hash, Serialize, Deserialize)
+)]
 pub enum GitRunOperation {
     Read,
     Write,
@@ -465,7 +471,6 @@ impl PolicyMatrix {
     }
 }
 
-
 #[cfg(kani)]
 mod kani_verification {
     use super::{GitRunApi, GitRunOperation};
@@ -508,16 +513,46 @@ mod kani_verification {
 
     // Rows follow APIS order; columns follow OPERATIONS order.
     const EXPECTED: [[bool; 20]; 10] = [
-        [true, true, true, true, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
-        [true, true, false, false, false, true, true, true, true, true, true, false, false, false, false, false, false, false, false, false],
-        [false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false],
-        [false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false],
-        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, true, false, false, false],
-        [true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
-        [false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
-        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false],
-        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false],
-        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true],
+        [
+            true, true, true, true, true, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false,
+        ],
+        [
+            true, true, false, false, false, true, true, true, true, true, true, false, false,
+            false, false, false, false, false, false, false,
+        ],
+        [
+            false, false, false, false, false, false, false, false, false, false, false, true,
+            true, false, false, false, false, false, false, false,
+        ],
+        [
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, true, false, false, false, false, false, false,
+        ],
+        [
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, true, true, true, false, false, false,
+        ],
+        [
+            true, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false,
+        ],
+        [
+            false, true, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false,
+        ],
+        [
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, true, false, false,
+        ],
+        [
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, true, false,
+        ],
+        [
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, true,
+        ],
     ];
 
     /// Exhaustively compares all 200 API/operation pairs with the closed contract matrix.

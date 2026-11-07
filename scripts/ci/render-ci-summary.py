@@ -146,7 +146,7 @@ if __name__=="__main__":
     try: main()
     except SystemExit as exc: status=int(exc.code) if isinstance(exc.code,int) else 1
     finally:
-        STEPS.parent.mkdir(parents=True,exist_ok=True)
-        with STEPS.open("a",encoding="utf-8") as stream:
+        steps.parent.mkdir(parents=True,exist_ok=True)
+        with steps.open("a",encoding="utf-8") as stream:
             stream.write("Build workflow verdict and pipeline report\t"+("ok" if status==0 else "fail")+"\t"+str(int(time.monotonic()-started))+"\n")
     raise SystemExit(status)

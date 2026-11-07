@@ -114,15 +114,15 @@ mod verus_verification {
         proof fn update_policy_acceptance_is_exact() {
             assert(!UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Pre));
             assert(!UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Full));
-            assert!(UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Security));
+            assert(UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Security));
 
             assert(!UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Pre));
-            assert!(UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Full));
-            assert!(UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Security));
+            assert(UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Full));
+            assert(UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Security));
 
-            assert!(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Pre));
-            assert!(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Full));
-            assert!(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Security));
+            assert(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Pre));
+            assert(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Full));
+            assert(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Security));
         }
     }
 }

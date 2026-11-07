@@ -18,6 +18,8 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+#[cfg(verus)]
+use vstd::prelude::*;
 
 pub struct RateLimitTracker {
     cooldowns: Mutex<HashMap<String, Instant>>,
@@ -26,7 +28,18 @@ pub struct RateLimitTracker {
 /// Do not let an untrusted or malformed Retry-After value suspend a repo
 /// for an effectively unbounded period. GitHub's normal reset windows are
 /// far shorter than this defensive ceiling.
-const MAX_COOLDOWN: Duration = Duration::from_secs(24 * 60 * 60);
+const MAX_COOLDOWN_SECONDS: u64 = 24 * 60 * 60;
+const MAX_COOLDOWN: Duration = Duration::from_secs(MAX_COOLDOWN_SECONDS);
+
+/// Clamp an untrusted Retry-After value to the repository cooldown ceiling.
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(returns cap_cooldown_seconds(seconds))
+)]
+fn cap_cooldown_seconds(seconds: u64) -> u64 {
+    seconds.min(MAX_COOLDOWN_SECONDS)
+}
 
 impl Default for RateLimitTracker {
     fn default() -> Self {
@@ -51,7 +64,13 @@ impl RateLimitTracker {
         // Retry-After is parsed from an HTTP response and can contain any u64
         // number of seconds. Adding an unbounded Duration to Instant can panic
         // on overflow; cap it before constructing the deadline.
-        let cooldown = retry_after.unwrap_or(FALLBACK_COOLDOWN).min(MAX_COOLDOWN);
+        let requested_cooldown = retry_after.unwrap_or(FALLBACK_COOLDOWN);
+        let cooldown = if requested_cooldown > MAX_COOLDOWN {
+            MAX_COOLDOWN
+        } else {
+            Duration::from_secs(cap_cooldown_seconds(requested_cooldown.as_secs()))
+                + Duration::from_nanos(u64::from(requested_cooldown.subsec_nanos()))
+        };
         let until = now + cooldown;
         let mut cooldowns = self.cooldowns.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -163,3 +182,48 @@ mod tests {
         assert!(tracker.remaining_cooldown("owner/repo").is_none());
     }
 }
+
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{cap_cooldown_seconds, MAX_COOLDOWN_SECONDS};
+
+    /// Proves the production Retry-After cap for every u64 input.
+    #[kani::proof]
+    fn cooldown_seconds_are_bounded() {
+        let seconds: u64 = kani::any();
+        let capped = cap_cooldown_seconds(seconds);
+
+        assert!(capped <= MAX_COOLDOWN_SECONDS);
+        assert!(capped <= seconds);
+        if seconds <= MAX_COOLDOWN_SECONDS {
+            assert_eq!(capped, seconds);
+        } else {
+            assert_eq!(capped, MAX_COOLDOWN_SECONDS);
+        }
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{cap_cooldown_seconds, MAX_COOLDOWN_SECONDS};
+    use vstd::prelude::*;
+
+    verus! {
+        /// Proves the production clamp's upper bound and monotonic lower bound.
+        proof fn cooldown_seconds_are_bounded(seconds: u64)
+            ensures
+                cap_cooldown_seconds(seconds) <= MAX_COOLDOWN_SECONDS,
+                cap_cooldown_seconds(seconds) <= seconds,
+                seconds <= MAX_COOLDOWN_SECONDS ==> cap_cooldown_seconds(seconds) == seconds,
+                seconds > MAX_COOLDOWN_SECONDS ==> cap_cooldown_seconds(seconds) == MAX_COOLDOWN_SECONDS,
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

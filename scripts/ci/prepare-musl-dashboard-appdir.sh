@@ -117,7 +117,7 @@ set -eu
 HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 export APPDIR="$HERE"
 export SHARUN_DIR="$HERE"
-exec "$HERE/sharun" "$HERE/bin/gitrun-dashboard-tauri" "$@"
+exec "$HERE/bin/gitrun-dashboard-tauri" "$@"
 APPRUN
 chmod 0755 "$appdir/AppRun"
 

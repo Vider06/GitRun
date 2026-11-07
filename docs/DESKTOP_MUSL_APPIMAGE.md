@@ -2,7 +2,7 @@
 
 ## Status
 
-The musl Desktop AppImage pipeline is experimental. Its workflow creates short-lived GitHub Actions artifacts for validation; it does not add these files to the official GitRun release, signed release manifest, or updater policy.
+The musl Desktop AppImage pipeline is experimental. Its workflow creates short-lived GitHub Actions artifacts for validation; these files are not uploaded to the official release, signed release manifest, or updater channel.
 
 The supported GNU AppImages and the existing native musl Desktop binaries and packages remain unchanged. Do not describe these experimental files as generally supported or install them through the signed updater.
 

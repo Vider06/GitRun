@@ -216,7 +216,9 @@ jobs:
             cd "$extract"
             timeout 90 "$appimage" --appimage-extract
           )
-          extracted="$extract/squashfs-root"
+          extracted_apprun="$(find "$extract" -type f -name AppRun -print -quit)"
+          test -n "$extracted_apprun"
+          extracted="$(dirname "$extracted_apprun")"
           test -x "$extracted/AppRun"
           test -x "$extracted/sharun"
           test -x "$extracted/bin/gitrun-dashboard-tauri"

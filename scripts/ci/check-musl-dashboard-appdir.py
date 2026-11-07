@@ -57,7 +57,7 @@ def main() -> int:
         content = apprun.read_text(encoding="utf-8")
         for marker in (
             'export SHARUN_DIR="$HERE"',
-            'exec "$HERE/sharun" "$HERE/bin/gitrun-dashboard-tauri"',
+            'exec "$HERE/bin/gitrun-dashboard-tauri"',
         ):
             if marker not in content:
                 errors.append(f"AppRun is missing launcher contract: {marker}")

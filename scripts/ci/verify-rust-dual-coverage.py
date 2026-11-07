@@ -13,7 +13,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "verification/source-proof-map.tsv"
 REPORT = Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "gitrun-dual-verifier-coverage.tsv"
-EXPECTED_HEADER = ["SOURCE_FILE", "KANI_ENTRYPOINT", "VERUS_ENTRYPOINT"]
+EXPECTED_HEADER = [
+    "SOURCE_FILE",
+    "KANI_ENTRYPOINT",
+    "VERUS_ENTRYPOINT",
+    "PROOF_SCOPE",
+    "KANI_OBLIGATIONS",
+    "VERUS_OBLIGATIONS",
+    "STATUS",
+]
 PATH_ATTRIBUTE = re.compile(r'#\s*\[\s*path\s*=\s*"([^"]+)"\s*\]')
 KANI_PROOF = re.compile(r"#\s*\[\s*kani\s*::\s*proof\s*\]")
 VERUS_MODULE = re.compile(r"\bverus\s*!")
@@ -97,7 +105,7 @@ def write_summary(
 
 def main() -> int:
     sources = tracked_sources()
-    rows: dict[str, tuple[str, str]] = {}
+    rows: dict[str, tuple[str, str, str, str, str, str]] = {}
     errors: list[str] = []
 
     if not sources:
@@ -116,14 +124,30 @@ def main() -> int:
         for line, row in enumerate(reader, start=2):
             if not row or (len(row) == 1 and not row[0].strip()):
                 continue
-            if len(row) != 3:
-                errors.append(f"Manifest line {line}: expected exactly 3 TSV columns.")
+            if len(row) != len(EXPECTED_HEADER):
+                errors.append(
+                    f"Manifest line {line}: expected exactly {len(EXPECTED_HEADER)} TSV columns."
+                )
                 continue
-            source, kani_name, verus_name = (value.strip() for value in row)
+            (
+                source,
+                kani_name,
+                verus_name,
+                proof_scope,
+                kani_obligations,
+                verus_obligations,
+                plan_status,
+            ) = (value.strip() for value in row)
+            if not proof_scope or not kani_obligations or not verus_obligations:
+                errors.append(f"Manifest line {line}: proof scope and both verifier obligations are required.")
+            if plan_status not in {"PLANNED", "IMPLEMENTED"}:
+                errors.append(
+                    f"Manifest line {line}: STATUS must be PLANNED or IMPLEMENTED, got {plan_status!r}."
+                )
             if source in rows:
                 errors.append(f"Duplicate source mapping: {source}")
                 continue
-            rows[source] = (kani_name, verus_name)
+            rows[source] = (kani_name, verus_name, proof_scope, kani_obligations, verus_obligations, plan_status)
 
     for stale in sorted(set(rows) - sources):
         errors.append(f"Manifest contains a non-tracked or stale Rust source: {stale}")
@@ -134,7 +158,8 @@ def main() -> int:
     verus_used: set[str] = set()
     ready: list[tuple[str, str, str]] = []
 
-    for source, (kani_name, verus_name) in sorted(rows.items()):
+    for source, mapping in sorted(rows.items()):
+        kani_name, verus_name = mapping[:2]
         if source not in sources:
             continue
         for tool, name, used in (

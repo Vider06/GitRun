@@ -7321,6 +7321,53 @@ jobs:
           fi
           test "$(find "$out" -maxdepth 1 -type f -name '*.xbps' | wc -l)" -eq 1
           test "$(find "$out" -maxdepth 1 -type f | wc -l)" -ge 3
+      - name: Audit every Server package output
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/server-packages"
+          cpu=x86_64
+          case "$TARGET" in
+            aarch64-*) cpu=aarch64 ;;
+            x86_64-*) cpu=x86_64 ;;
+            *) echo "Unsupported target architecture: $TARGET" >&2; exit 1 ;;
+          esac
+          test -s "$out/GitRun-Server-$VERSION-$TARGET-server.tar.gz"
+          test -s "$out/GitRun-Server-$VERSION-$TARGET-server.tar.zst"
+          test -s "$out/GitRun-Server-$VERSION-linux-$cpu-xbps.xbps"
+          if [[ "$TARGET" == *-gnu ]]; then
+            deb="$out/GitRun-Server-$VERSION-linux-$cpu-deb.deb"
+            rpm_file="$out/GitRun-Server-$VERSION-linux-$cpu-rpm.rpm"
+            arch="$out/GitRun-Server-$VERSION-linux-$cpu-arch.pkg.tar.zst"
+            test "$(dpkg-deb -f "$deb" Package)" = gitrun-server
+            test "$(dpkg-deb -f "$deb" Version)" = "$VERSION_NUMBER"
+            test "$(dpkg-deb -f "$deb" Conflicts)" = gitrun
+            test "$(dpkg-deb -f "$deb" Replaces)" = gitrun
+            rpm -qp --queryformat '%{NAME} %{VERSION}' "$rpm_file" | grep -Fx "gitrun-server $VERSION_NUMBER"
+            rpm_files="$(rpm -qpl "$rpm_file")"
+            grep -Fxq /usr/bin/gitrun <<< "$rpm_files"
+            arch_info="$(tar --zstd -xOf "$arch" .PKGINFO)"
+            grep -Fxq 'pkgname = gitrun-server' <<< "$arch_info"
+            grep -Fxq "pkgver = ${VERSION_NUMBER}-1" <<< "$arch_info"
+            arch_files="$(tar --zstd -tf "$arch")"
+            grep -Fq 'usr/bin/gitrun' <<< "$arch_files"
+            grep -Fq 'usr/lib/systemd/system/gitrun.service' <<< "$arch_files"
+          else
+            apk="$out/GitRun-Server-$VERSION-linux-$cpu-musl-apk.apk"
+            apk_contents="$(tar -tzf "$apk")"
+            grep -Fq '.PKGINFO' <<< "$apk_contents"
+            apk_info="$(tar -xOzf "$apk" .PKGINFO)"
+            grep -Fxq 'pkgname = gitrun-server' <<< "$apk_info"
+            grep -Fxq "pkgver = $VERSION_NUMBER" <<< "$apk_info"
+            grep -Fq 'etc/init.d/gitrun' <<< "$apk_contents"
+            grep -Fq 'etc/init.d/gitrun-gsr' <<< "$apk_contents"
+          fi
+          xbps="$out/GitRun-Server-$VERSION-linux-$cpu-xbps.xbps"
+          test -s "$xbps"
+          xbps_contents="$(tar -tf "$xbps")"
+          grep -Fq './usr/bin/gitrun' <<< "$xbps_contents"
+          sha256sum "$out"/* > "$out/SHA256SUMS"
+          echo "Audited every generated Server archive and native package for $TARGET."
       - name: Upload immutable target packages
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

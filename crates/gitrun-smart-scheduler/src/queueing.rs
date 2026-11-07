@@ -4,12 +4,32 @@
 //! workloads. Replay is deterministic and offline-only; it has no I/O or
 //! third-party dependencies.
 
+#[cfg(not(verus))]
 use std::cmp::Reverse;
+#[cfg(not(verus))]
 use std::collections::BinaryHeap;
+#[cfg(verus)]
+use vstd::prelude::*;
 
+#[cfg(not(verus))]
 const MAX_SIMULATED_JOBS: usize = 100_000;
 const MAX_RUNNERS: u32 = 10_000;
 
+/// Compute the upper bound on predictive runner growth without overflowing.
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(returns bounded_growth_upper(current_floor, max_additional_runners, max_runners))
+)]
+fn bounded_growth_upper(
+    current_floor: u32,
+    max_additional_runners: u32,
+    max_runners: u32,
+) -> u32 {
+    current_floor.saturating_add(max_additional_runners).min(max_runners)
+}
+
+#[cfg(not(verus))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct QueueEstimate {
     pub probability_of_wait: f64,
@@ -17,6 +37,7 @@ pub struct QueueEstimate {
     pub utilization: f64,
 }
 
+#[cfg(not(verus))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueueModelError {
     InvalidRate,
@@ -26,6 +47,7 @@ pub enum QueueModelError {
     InvalidJobDuration,
 }
 
+#[cfg(not(verus))]
 impl std::fmt::Display for QueueModelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let message = match self {
@@ -40,10 +62,12 @@ impl std::fmt::Display for QueueModelError {
         f.write_str(message)
     }
 }
+#[cfg(not(verus))]
 impl std::error::Error for QueueModelError {}
 
 /// Estimate M/M/c queue wait with Erlang-C. Unstable queues return an error
 /// rather than a misleading finite wait.
+#[cfg(not(verus))]
 pub fn erlang_c(
     arrival_rate_per_second: f64,
     service_rate_per_runner_per_second: f64,
@@ -94,6 +118,7 @@ pub fn erlang_c(
     })
 }
 
+#[cfg(not(verus))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct QueueJob {
     pub arrival_seconds: u64,
@@ -101,6 +126,7 @@ pub struct QueueJob {
     pub service_seconds: u64,
 }
 
+#[cfg(not(verus))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReplayMetrics {
     pub jobs: usize,
@@ -113,6 +139,7 @@ pub struct ReplayMetrics {
 
 /// Deterministic offline FCFS replay for a known arrival/service trace.
 /// Historical future durations must never leak into live scaling decisions.
+#[cfg(not(verus))]
 pub fn replay_fcfs(jobs: &[QueueJob], runners: u32) -> Result<ReplayMetrics, QueueModelError> {
     if runners == 0 || runners > MAX_RUNNERS {
         return Err(QueueModelError::InvalidRunnerCount);
@@ -164,6 +191,7 @@ pub fn replay_fcfs(jobs: &[QueueJob], runners: u32) -> Result<ReplayMetrics, Que
     })
 }
 
+#[cfg(not(verus))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct QueueAwarePlan {
     pub runner_floor: u32,
@@ -174,6 +202,7 @@ pub struct QueueAwarePlan {
 /// Return the smallest bounded floor meeting a modeled mean-wait objective.
 /// This helper does not authorize runner creation; hard resource/policy gates
 /// must be applied by the deterministic scheduler.
+#[cfg(not(verus))]
 pub fn plan_runner_floor(
     current_floor: u32,
     max_runners: u32,
@@ -205,9 +234,7 @@ pub fn plan_runner_floor(
             reason: "runner floor is already at the configured maximum",
         });
     }
-    let upper = current_floor
-        .saturating_add(max_additional_runners)
-        .min(max_runners);
+    let upper = bounded_growth_upper(current_floor, max_additional_runners, max_runners);
     for candidate in current_floor..=upper {
         if let Ok(estimate) = erlang_c(
             arrival_rate_per_second,
@@ -240,6 +267,7 @@ pub fn plan_runner_floor(
     })
 }
 
+#[cfg(all(test, not(verus)))]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,3 +380,60 @@ mod tests {
         );
     }
 }
+
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::bounded_growth_upper;
+
+    /// Proves the planner's runner growth ceiling for every u32 input.
+    #[kani::proof]
+    fn growth_ceiling_is_bounded_and_saturating() {
+        let current: u32 = kani::any();
+        let additional: u32 = kani::any();
+        let maximum: u32 = kani::any();
+
+        let upper = bounded_growth_upper(current, additional, maximum);
+        assert!(upper <= maximum);
+        assert!(upper <= current.saturating_add(additional));
+        assert!(upper >= current.min(maximum));
+        if current.saturating_add(additional) <= maximum {
+            assert_eq!(upper, current.saturating_add(additional));
+        } else {
+            assert_eq!(upper, maximum);
+        }
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::bounded_growth_upper;
+    use vstd::prelude::*;
+
+    verus! {
+        /// Verifies the growth ceiling, saturation, and configured maximum.
+        proof fn growth_ceiling_is_bounded_and_saturating(
+            current: u32,
+            additional: u32,
+            maximum: u32,
+        )
+            ensures
+                bounded_growth_upper(current, additional, maximum) <= maximum,
+                bounded_growth_upper(current, additional, maximum)
+                    <= current.saturating_add(additional),
+                bounded_growth_upper(current, additional, maximum) >= current.min(maximum),
+                current.saturating_add(additional) <= maximum
+                    ==> bounded_growth_upper(current, additional, maximum)
+                        == current.saturating_add(additional),
+                current.saturating_add(additional) > maximum
+                    ==> bounded_growth_upper(current, additional, maximum) == maximum,
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

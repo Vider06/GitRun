@@ -56,7 +56,11 @@ Kani is not the only Rust check. The normal CI pipeline also requires:
 - `cargo audit` and `cargo deny` for advisory and dependency-policy checks.
 - Server and updater builds across x86_64/aarch64 and GNU/musl Linux targets.
 - Real Server package creation for all four target variants, plus independent
-  GNU Desktop DEB/RPM/Arch package creation for x86_64 and ARM64 in CI.
+  GNU Desktop DEB/RPM/Arch package creation for x86_64 and ARM64.
+- Native musl Desktop builds for x86_64 Alpine and ARM64 Void, followed by the
+  x86_64 APK and both-architecture XBPS package checks.
+- The one-time 1.9.1 legacy migration DEB, including maintainer-script behavior,
+  package identity, and the legacy 1.8.23 packaging contract.
 - Release-side package inspection after all package matrices and before signing.
 
 ## Formal coverage status vocabulary

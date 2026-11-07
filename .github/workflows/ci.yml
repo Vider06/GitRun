@@ -1858,7 +1858,7 @@ jobs:
               "no post-publication migration rollback remains": "Revert failed migration verification to prerelease" not in release and "make_latest=false" not in release,
               "new releases are initially prereleases": "<!-- GITRUN_RELEASE_TYPE: pre -->" in release and 'gh release edit "$VERSION"' in release and 'gh release create "$VERSION"' in release and release.count("--prerelease") >= 2,
               "new Server package identity": "name: gitrun-server" in release and "GitRun-Server-$VERSION-" in release,
-              "CI does not invoke the standalone release workflow": "uses: ./.github/workflows/release.yml" not in ci and "release-certification:" not in ci,
+              "CI does not invoke the standalone release workflow": ("uses: ./.github/workflows/" + "release.yml") not in ci and ("release-" + "certification:") not in ci,
               "Release remains an independent tag/manual workflow": "workflow_call:" not in release and "server_packages_only:" not in release,
               "Release formal verification runs after every package matrix and before signing": "formal-verification:" in release and "needs: [prepare, collect, package-server, package-dashboard, migration-package]" in release and "needs: [prepare, formal-verification]" in release,
               "Release formal verification audits each produced package without rebuilding it": "Audit every release package individually" in release and "actions/download-artifact@" in release and "cargo kani setup" in release,

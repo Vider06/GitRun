@@ -53,6 +53,14 @@ def build_server_package(args: argparse.Namespace) -> Path:
         raise FileNotFoundError(f"XBPS package staging directory does not exist: {stage}")
     if not install_hook.is_file() or not remove_hook.is_file():
         raise FileNotFoundError("XBPS lifecycle hook source is missing")
+    if "sv restart" not in install_hook.read_text(encoding="utf-8"):
+        raise RuntimeError(
+            f"XBPS INSTALL hook for {args.package_id} does not restart active runit services on upgrade"
+        )
+    if "sv down" not in remove_hook.read_text(encoding="utf-8"):
+        raise RuntimeError(
+            f"XBPS REMOVE hook for {args.package_id} does not stop runit services before removal"
+        )
 
     output.mkdir(parents=True, exist_ok=True)
     if repository.exists():
@@ -149,15 +157,6 @@ def build_server_package(args: argparse.Namespace) -> Path:
     for hook in ("INSTALL", "REMOVE"):
         if not any(entry.rstrip("/").endswith(f"/{hook}") or entry == hook for entry in file_entries):
             raise RuntimeError(f"XBPS package {package_id} is missing its {hook} lifecycle hook")
-
-    if "sv restart" not in install_hook.read_text(encoding="utf-8"):
-        raise RuntimeError(
-            f"XBPS INSTALL hook for {package_id} does not restart active runit services on upgrade"
-        )
-    if "sv down" not in remove_hook.read_text(encoding="utf-8"):
-        raise RuntimeError(
-            f"XBPS REMOVE hook for {package_id} does not stop runit services before removal"
-        )
 
     final_path = output / f"GitRun-Server-{args.version}-linux-{args.cpu}-xbps.xbps"
     shutil.copy2(archive, final_path)

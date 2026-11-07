@@ -1211,6 +1211,21 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt
+      - name: Verify every tracked Rust source file
+        shell: bash
+        run: bash scripts/ci/verify-rust-source-coverage.sh
+      - name: Upload Rust source inventory
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: release-rust-source-inventory
+          path: ${{ runner.temp }}/gitrun-rust-source-inventory.tsv
+          if-no-files-found: error
+          retention-days: 7
       - name: Download collected canonical inputs
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:

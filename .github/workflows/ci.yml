@@ -1722,6 +1722,7 @@ jobs:
           install -m 0755 "$binary" "$stage/usr/bin/gitrun"
           install -m 0644 version.txt "$stage/usr/share/gitrun/version.txt"
           install -m 0644 LICENSE README.md config/config.example.env "$stage/usr/share/doc/gitrun/"
+          tar -C "$stage" -czf "$out/GitRun-Server-$VERSION-$TARGET-server.tar.gz" .
           tar --zstd -C "$stage" -cf "$out/GitRun-Server-$VERSION-$TARGET-server.tar.zst" .
           package_stage="$RUNNER_TEMP/package-stage"
           rm -rf "$package_stage"
@@ -2077,6 +2078,11 @@ jobs:
               "no post-publication migration rollback remains": "Revert failed migration verification to prerelease" not in release and "make_latest=false" not in release,
               "new releases are initially prereleases": "<!-- GITRUN_RELEASE_TYPE: pre -->" in release and 'gh release edit "$VERSION"' in release and 'gh release create "$VERSION"' in release and release.count("--prerelease") >= 2,
               "new Server package identity": "name: gitrun-server" in release and "GitRun-Server-$VERSION-" in release,
+              "CI formal verification waits for successful Rust lint": "needs: [cargo-lock, rust-lint]" in ci and "needs.rust-lint.result == 'success'" in ci,
+              "CI inventories every tracked Rust source file": "verify-rust-source-coverage.sh" in ci and "git ls-files -z -- '*.rs'" in Path("scripts/ci/verify-rust-source-coverage.sh").read_text(encoding="utf-8"),
+              "Release repeats the complete Rust source inventory before signing": "verify-rust-source-coverage.sh" in release and "needs: [prepare, formal-verification]" in release,
+              "CI builds and packages all four Server target variants independently of Release": "release-package-certification:" in ci and all(target in ci for target in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]) and "server-build-${{ matrix.target }}" in ci and "nfpm package" in ci,
+              "CI packages independent GNU Desktop DEB, RPM and Arch artifacts for x86_64 and ARM64": "release-dashboard-package-certification:" in ci and all(token in ci for token in ["GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb", "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm", "GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst"]),
               "CI does not invoke the standalone release workflow": ("uses: ./.github/workflows/" + "release.yml") not in ci and ("release-" + "certification:") not in ci,
               "Release remains an independent tag/manual workflow": "workflow_call:" not in release and "server_packages_only:" not in release,
               "Release formal verification runs after every package matrix and before signing": "formal-verification:" in release and "needs: [prepare, collect, package-server, package-dashboard, migration-package]" in release and "needs: [prepare, formal-verification]" in release,

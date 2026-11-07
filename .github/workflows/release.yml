@@ -704,6 +704,9 @@ jobs:
           # override below replaces it with the dpkg-specific maintainer script.
           scripts:
             preremove: packaging/apk-pre-remove
+          apk:
+            scripts:
+              postupgrade: packaging/apk-post-upgrade
           overrides:
             deb:
               depends: [libc6, policykit-1]
@@ -718,8 +721,6 @@ jobs:
               depends: [glibc, polkit]
             apk:
               depends: [musl]
-              scripts:
-                postupgrade: packaging/apk-post-upgrade
             archlinux:
               depends: [glibc, polkit]
           NFPM

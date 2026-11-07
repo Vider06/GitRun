@@ -1,0 +1,270 @@
+name: Dashboard musl AppImage experiment
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/dashboard-musl-appimage.yml"
+      - ".github/workflows/release.yml"
+      - "crates/gitrun-dashboard-tauri/**"
+      - "scripts/ci/prepare-musl-dashboard-appdir.sh"
+      - "scripts/ci/check-musl-dashboard-appdir.py"
+      - "docs/DESKTOP_MUSL_APPIMAGE.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitrun-dashboard-musl-appimage-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_VERSION: "1.99.0"
+  APPIMAGETOOL_VERSION: "0.3.2"
+
+jobs:
+  build-musl-appimage:
+    name: ${{ matrix.distro }} musl Desktop AppImage · ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            arch: x86_64
+            runner: ubuntu-24.04
+            distro: alpine
+            docker_platform: linux/amd64
+            container_image: rust:1.99.0-alpine3.24
+            cache_variant: alpine-3.24
+          - target: aarch64-unknown-linux-musl
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            distro: alpine
+            docker_platform: linux/arm64
+            container_image: rust:1.99.0-alpine3.24
+            cache_variant: alpine-3.24
+          - target: x86_64-unknown-linux-musl
+            arch: x86_64
+            runner: ubuntu-24.04
+            distro: void
+            docker_platform: linux/amd64
+            container_image: ghcr.io/void-linux/void-musl-full:20260801r1
+            cache_variant: void-musl-20260801r1
+          - target: aarch64-unknown-linux-musl
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            distro: void
+            docker_platform: linux/arm64
+            container_image: ghcr.io/void-linux/void-musl-full:20260801r1
+            cache_variant: void-musl-20260801r1
+    env:
+      TARGET: ${{ matrix.target }}
+      DESKTOP_ARCH: ${{ matrix.arch }}
+      MUSL_DISTRO: ${{ matrix.distro }}
+      CONTAINER_IMAGE: ${{ matrix.container_image }}
+      DOCKER_PLATFORM: ${{ matrix.docker_platform }}
+      CARGO_HOME: ${{ github.workspace }}/.gitrun-musl-appimage-cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.gitrun-musl-appimage-target-${{ matrix.target }}
+      NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-musl-appimage-npm
+      APPIMAGE_TOOL_CARGO_HOME: ${{ github.workspace }}/.gitrun-appimagetool-cargo
+      APPIMAGE_TOOL_TARGET_DIR: ${{ github.workspace }}/.gitrun-appimagetool-target
+      APPDIR: ${{ runner.temp }}/gitrun-dashboard-${{ matrix.distro }}-${{ matrix.target }}.AppDir
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain for AppImage builder
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Restore target and AppImage builder caches
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-musl-appimage-cargo
+            .gitrun-musl-appimage-target-${{ matrix.target }}
+            .gitrun-musl-appimage-npm
+            .gitrun-appimagetool-cargo
+            .gitrun-appimagetool-target
+          key: gitrun-release-v6-${{ runner.os }}-${{ runner.arch }}-desktop-musl-appimage-${{ matrix.distro }}-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ env.APPIMAGETOOL_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json', 'scripts/ci/prepare-musl-dashboard-appdir.sh') }}
+          restore-keys: |
+            gitrun-release-v6-${{ runner.os }}-${{ runner.arch }}-desktop-musl-appimage-${{ matrix.distro }}-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ env.APPIMAGETOOL_VERSION }}-
+
+      - name: Build Tauri and prepare native musl AppDir
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR" "$NPM_CONFIG_CACHE" "$APPIMAGE_TOOL_CARGO_HOME" "$APPIMAGE_TOOL_TARGET_DIR"
+          docker run --rm --pull=always --platform "$DOCKER_PLATFORM" \
+            -e TARGET="$TARGET" \
+            -e VERSION_NUMBER=0.0.0-experimental \
+            -e RUST_VERSION="$RUST_VERSION" \
+            -e MUSL_DISTRO="$MUSL_DISTRO" \
+            -e RUSTFLAGS="-C target-feature=-crt-static" \
+            -e CARGO_HOME=/workspace/.gitrun-musl-appimage-cargo \
+            -e CARGO_TARGET_DIR="/workspace/.gitrun-musl-appimage-target-$TARGET" \
+            -e CARGO_INCREMENTAL=0 \
+            -e NPM_CONFIG_CACHE=/workspace/.gitrun-musl-appimage-npm \
+            -e APPDIR="/runner-temp/gitrun-dashboard-$MUSL_DISTRO-$TARGET.AppDir" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -v "$RUNNER_TEMP:/runner-temp" \
+            -w /workspace/crates/gitrun-dashboard-tauri \
+            "$CONTAINER_IMAGE" sh -ec '
+              if [ "$MUSL_DISTRO" = "alpine" ]; then
+                apk add --no-cache bash build-base pkgconf nodejs npm curl wget file \
+                  openssl-dev webkit2gtk-4.1-dev libayatana-appindicator-dev librsvg \
+                  font-dejavu imagemagick patchelf findutils grep sed coreutils binutils \
+                  openssl-libs-static cairo-static harfbuzz-static glib-static wayland-static zlib-static
+                export RUSTUP_HOME=/usr/local/rustup
+              else
+                xbps-install -Suy
+                xbps-install -y base-devel pkg-config nodejs npm curl ca-certificates file ImageMagick \
+                  libwebkit2gtk41-devel libayatana-appindicator-devel librsvg-devel gtk+3-devel \
+                  openssl-devel cairo-devel harfbuzz-devel glib-devel wayland-devel zlib-devel \
+                  bash patchelf findutils grep sed coreutils binutils
+                export RUSTUP_HOME=/workspace/.gitrun-musl-appimage-cargo/rustup
+                curl --fail --silent --show-error --location \
+                  "https://static.rust-lang.org/rustup/dist/$TARGET/rustup-init" \
+                  -o /tmp/rustup-init
+                chmod 0755 /tmp/rustup-init
+                /tmp/rustup-init -y --no-modify-path --profile minimal \
+                  --default-toolchain "$RUST_VERSION" --default-host "$TARGET"
+                . "$CARGO_HOME/env"
+              fi
+
+              test "$(rustc -vV | sed -n "s/^host: //p")" = "$TARGET"
+              rustc --version | grep -Fq "rustc $RUST_VERSION "
+              pkg-config --exists gtk+-3.0 webkit2gtk-4.1
+              pkg-config --exists openssl
+              node --version
+              npm --version
+
+              node --input-type=module - "0.0.0-experimental" <<NODE
+          import fs from "node:fs";
+          const version = process.argv[2];
+          for (const file of ["package.json", "src-tauri/tauri.conf.json"]) {
+            const value = JSON.parse(fs.readFileSync(file, "utf8"));
+            value.version = version;
+            fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n");
+          }
+          const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+          lock.version = version;
+          lock.packages[""].version = version;
+          fs.writeFileSync("package-lock.json", JSON.stringify(lock, null, 2) + "\n");
+          NODE
+              mkdir -p "$NPM_CONFIG_CACHE"
+              npm ci
+              for icon in src-tauri/icons/*.png; do
+                [ -f "$icon" ] || continue
+                tmp="$(mktemp --suffix=.png)"
+                convert "$icon" -alpha on -define png:color-type=6 "PNG32:$tmp"
+                mv "$tmp" "$icon"
+              done
+
+              npm run tauri build -- --ci --no-bundle
+              binary="$CARGO_TARGET_DIR/release/gitrun-dashboard-tauri"
+              test -s "$binary"
+              bash /workspace/scripts/ci/prepare-musl-dashboard-appdir.sh \
+                "$binary" "$APPDIR" "$TARGET" "0.0.0-experimental"
+            '
+          sudo chown -R "$(id -u):$(id -g)" "$CARGO_HOME" "$CARGO_TARGET_DIR" "$NPM_CONFIG_CACHE" "$APPIMAGE_TOOL_CARGO_HOME" "$APPIMAGE_TOOL_TARGET_DIR" "$APPDIR"
+
+      - name: Verify staged musl AppDir
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/check-musl-dashboard-appdir.py --appdir "$APPDIR" --target "$TARGET"
+
+      - name: Build pinned AppImage assembler
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CARGO_HOME="$APPIMAGE_TOOL_CARGO_HOME"
+          export CARGO_TARGET_DIR="$APPIMAGE_TOOL_TARGET_DIR"
+          cargo install --locked --version "$APPIMAGETOOL_VERSION" appimagetool
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Assemble and extract-test musl AppImage
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/musl-appimage-output"
+          extract="$RUNNER_TEMP/musl-appimage-extract"
+          rm -rf "$out" "$extract"
+          mkdir -p "$out" "$extract"
+          filename="GitRun-Desktop-${GITHUB_SHA:0:12}-linux-$DESKTOP_ARCH-$MUSL_DISTRO-musl.AppImage"
+          env -u GITHUB_REPOSITORY \
+            APPIMAGE_ARCH="$DESKTOP_ARCH" \
+            ARCH="$DESKTOP_ARCH" \
+            VERSION="0.0.0-experimental" \
+            APPNAME="GitRun Desktop" \
+            appimagetool "$APPDIR" --output "$out" --name "$filename"
+          appimage="$out/$filename"
+          test -s "$appimage"
+          chmod 0755 "$appimage"
+          file "$appimage"
+          sha256sum "$appimage" > "$appimage.sha256"
+          (
+            cd "$extract"
+            timeout 90 "$appimage" --appimage-extract
+          )
+          extracted="$extract/squashfs-root"
+          test -x "$extracted/AppRun"
+          test -x "$extracted/sharun"
+          test -x "$extracted/bin/gitrun-dashboard-tauri"
+          python3 scripts/ci/check-musl-dashboard-appdir.py --appdir "$extracted" --target "$TARGET"
+          cat > "$out/build-metadata.json" <<META
+          {
+            "git_commit": "$GITHUB_SHA",
+            "version": "0.0.0-experimental",
+            "target": "$TARGET",
+            "architecture": "$DESKTOP_ARCH",
+            "libc": "musl",
+            "build_distribution": "$MUSL_DISTRO",
+            "sharun_version": "v0.8.1",
+            "sharun_commit": "b1ef744989533d8b1b4327b647fb315a42765ab9",
+            "appimagetool_version": "$APPIMAGETOOL_VERSION",
+            "release_channel": "experimental",
+            "official_release_asset": false
+          }
+          META
+          {
+            echo "### Experimental musl AppImage"
+            echo
+            echo "- Target: $TARGET"
+            echo "- Build distribution: $MUSL_DISTRO"
+            echo "- Artifact: $filename"
+            echo "- SHA-256: $(cut -d ' ' -f 1 "$appimage.sha256")"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload experimental musl AppImage artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dashboard-musl-appimage-${{ matrix.distro }}-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/musl-appimage-output/*.AppImage
+            ${{ runner.temp }}/musl-appimage-output/*.sha256
+            ${{ runner.temp }}/musl-appimage-output/build-metadata.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Save musl AppImage caches
+        if: success() && steps.cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-musl-appimage-cargo
+            .gitrun-musl-appimage-target-${{ matrix.target }}
+            .gitrun-musl-appimage-npm
+            .gitrun-appimagetool-cargo
+            .gitrun-appimagetool-target
+          key: gitrun-release-v6-${{ runner.os }}-${{ runner.arch }}-desktop-musl-appimage-${{ matrix.distro }}-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ env.APPIMAGETOOL_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json', 'scripts/ci/prepare-musl-dashboard-appdir.sh') }}

@@ -11,10 +11,7 @@ use vstd::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(verus, verus_verify)]
-#[cfg_attr(
-    all(not(kani), not(verus)),
-    derive(Serialize, Deserialize)
-)]
+#[cfg_attr(all(not(kani), not(verus)), derive(Serialize, Deserialize))]
 #[cfg_attr(all(not(kani), not(verus)), serde(rename_all = "kebab-case"))]
 pub enum JsonRecoveryAction {
     Repair,
@@ -922,7 +919,6 @@ mod tests {
         assert!(!same_json_root_shape(&object, &array));
     }
 }
-
 
 #[cfg(kani)]
 mod kani_verification {

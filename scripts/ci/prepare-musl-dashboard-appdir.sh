@@ -10,7 +10,7 @@ binary="$(realpath "$1")"
 appdir="$2"
 target="$3"
 version="$4"
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
+repo_root="$(cd -- "$(dirname -- "$0")/../.." && pwd)"
 tools_dir="$(mktemp -d "${TMPDIR:-/tmp}/gitrun-sharun.XXXXXX")"
 trap 'rm -rf "$tools_dir"' EXIT
 

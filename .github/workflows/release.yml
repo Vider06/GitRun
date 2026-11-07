@@ -700,10 +700,13 @@ jobs:
           $unit_contents
           $init_contents
           depends: [$base_dep]
-          # nFPM's generic preremove hook maps to APK pre-deinstall. The DEB
-          # override below replaces it with the dpkg-specific maintainer script.
+          # nFPM's generic preremove hook maps to APK pre-deinstall.
           scripts:
             preremove: packaging/apk-pre-remove
+          # APK lifecycle scripts use nFPM's dedicated top-level APK section.
+          apk:
+            scripts:
+              postupgrade: packaging/apk-post-upgrade
           overrides:
             deb:
               depends: [libc6, policykit-1]
@@ -718,8 +721,6 @@ jobs:
               depends: [glibc, polkit]
             apk:
               depends: [musl]
-              scripts:
-                postupgrade: packaging/apk-post-upgrade
             archlinux:
               depends: [glibc, polkit]
           NFPM

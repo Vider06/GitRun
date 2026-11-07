@@ -139,7 +139,7 @@ jobs:
                 export RUSTUP_HOME=/usr/local/rustup
               else
                 xbps-install -Suy
-                xbps-install -y base-devel pkg-config nodejs npm curl ca-certificates file ImageMagick \
+                xbps-install -y base-devel pkg-config nodejs curl ca-certificates file ImageMagick \
                   libwebkit2gtk41-devel libayatana-appindicator-devel librsvg-devel gtk+3-devel \
                   openssl-devel cairo-devel harfbuzz-devel glib-devel wayland-devel zlib-devel \
                   bash patchelf findutils grep sed coreutils binutils

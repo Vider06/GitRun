@@ -69,6 +69,18 @@ def main() -> int:
         if marker not in packager:
             errors.append(f"AppDir packager is missing {marker!r}")
 
+    void_install = (
+        workflow.split("xbps-install -y", 1)[1].split("export RUSTUP_HOME", 1)[0]
+        if "xbps-install -y" in workflow and "export RUSTUP_HOME" in workflow
+        else ""
+    )
+    if not re.search(r"\bnodejs\b", void_install):
+        errors.append("Void musl builder must install the nodejs package")
+    if re.search(r"\bnpm\b", void_install):
+        errors.append("Void musl builder must not request npm as a separate XBPS package")
+    if 'SHARUN="$tools_dir/sharun" bash -O extglob "$tools_dir/lib4bin"' not in packager:
+        errors.append("lib4bin must run in Bash with extglob enabled")
+
     commit_parts = re.search(
         r"SHARUN_COMMIT='([a-f0-9]{16})''([a-f0-9]{16})''([a-f0-9]{8})'",
         packager,

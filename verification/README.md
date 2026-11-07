@@ -1,41 +1,32 @@
 # GitRun formal verification
 
-GitRun uses Kani for bit-precise model checking of selected pure Rust logic.
+GitRun combines ordinary Rust source assurance with narrowly scoped formal
+proofs. These gates are deliberately reported separately: formatting,
+compilation, tests, static analysis, and package inspection do not become
+formal proofs simply because they cover the same source tree.
 
-## Complementary Rust checks
+## Active Kani proofs
 
-The CI workflow also applies these complementary checks:
+Kani is pinned to `0.68.0`. The current production proof target is
+`crates/gitrun-updater/src/policy_logic.rs`, which is a dependency-light
+module shared by the updater and the standalone harness
+`verification/kani/updater_policy.rs`.
 
-- `cargo fmt --all -- --check` once in the existing `rust-lint` job. The source inventory does not rerun formatting for workspace files; it checks the standalone Kani entrypoint separately because it is outside the Cargo workspace.
-- Cargo workspace metadata validation and a fail-closed owner mapping for every tracked `.rs` file.
-- Workspace Clippy (`-D warnings`) and documentation builds run in the existing `rust-lint` job; Cargo tests run in their existing package/target jobs. The Dashboard, Recovery and Management packages have dedicated build or headless validation paths where they are excluded from broad workspace commands.
-- `cargo audit` and `cargo deny` run in the existing `audit-rust` job; formal verification does not repeat dependency analysis.
-- Miri runs the targeted pure updater regression test `canonical_premade_runner_source_is_immutable` from `crates/gitrun-updater/src/lib.rs`. It is not presented as whole-workspace Miri coverage.
-- The source inventory, Kani coverage and Miri coverage are separate artifacts. Files not covered by a Kani harness or the targeted Miri test remain explicitly `UNVERIFIED` or `NOT IN SCOPE`.
+The current Kani harnesses prove these properties over the actual shared
+implementation:
 
-Kani, Miri, Clippy, tests and dependency analysis answer different questions. The source inventory ensures every tracked Rust file is discovered and assigned to a real Cargo package (except explicit standalone verification entrypoints). Formatting, Clippy, documentation, dependency analysis and Cargo tests remain in their existing dedicated jobs and are not duplicated by the inventory gate. Rust modules cannot generally be compiled independently of their parent crate because they rely on crate-level imports, macros, features and module visibility.
+- `update_policy_acceptance_is_exact`: every combination of the finite
+  `UpdatePolicy` and `ReleaseType` domains has the expected acceptance result.
+- `release_type_wire_values_are_total`: every release type has its expected
+  stable wire representation.
+- `update_policy_wire_values_are_total`: every update policy has its expected
+  stable wire representation.
 
-## Second formal verification tool: Verus
+These properties do not prove the updater's HTTP, cryptography, archive,
+filesystem, process, or operating-system integration, and they do not prove
+the rest of the GitRun workspace.
 
-Verus is now installed and invoked as the second formal verifier in both CI and Release. The verifier version is pinned to `0.2026.11.02.8bf68ee` and its required Rust toolchain (`1.99.1`, including `rustc-dev` and `llvm-tools`) is installed without changing GitRun's primary `1.99.0` toolchain; each workflow runs a toolchain smoke proof to detect missing binaries, incompatible runtime dependencies, or a broken installation. This smoke proof is not counted as production-source coverage.
-
-Kani remains the bit-precise model checker; Verus supplies deductive proofs with explicit preconditions, postconditions, and invariants. They are independent gates and neither substitutes for the other. The dual-coverage gate requires a proof-map row for every tracked `.rs` file and fails closed on missing, duplicate, stale, or incomplete mappings. It follows repository-local path-module imports when checking whether a declared proof entrypoint reaches its mapped source. A source is not `PROVEN` merely because it was inventoried, formatted, compiled, linted, or included in a smoke proof. The source-closure check is a structural guard, not a semantic proof that every function in the source file is covered; proof review and executable verifier results remain necessary.
-
-`verification/source-proof-map.tsv` is the authoritative per-file map. Each row must name the source file, its Kani proof entrypoint, and its Verus proof entrypoint. Proof entrypoints must include the mapped source through a repository-local path-module closure; the gate rejects disconnected imports. Kani `#[kani::proof]` harnesses and Verus `verus!` modules may live either in the mapped production source or in another file in that entrypoint's repository-local closure. This supports dedicated proof harnesses without accepting an entrypoint that is structurally disconnected from the mapped source. These checks are structural only: they do not establish that a harness actually exercises the mapped production behavior, so every proof must also be reviewed for direct use of the implementation and meaningful properties. The gate executes both verifiers for every mapped source and records independent results. The current map contains no completed per-file mappings, so the strict gate must remain red. No blanket `UNVERIFIED` file can pass. The next implementation work is to extract small, pure production logic behind stable module boundaries, add Kani harnesses and Verus specifications that exercise those exact implementations, and only then add their source rows. Files whose behavior depends on operating-system, network, process, UI, build-script, or test-harness facilities need individually justified proof boundaries; they must not be marked `PROVEN` by importing unrelated code.
-
-Verus supports a subset of Rust and requires annotated specifications; arbitrary Rust files cannot be certified by simply passing their paths to the verifier. Unsupported code must be refactored into proof-compatible production modules or receive a justified, explicitly scoped proof boundary. Do not substitute disconnected specifications, smoke tests, or inventory records for proofs. The gate must not duplicate Clippy, `cargo audit`, `cargo deny`, or ordinary Cargo tests.
-
-## Required gate
-
-- Kani version: `0.68.0`
-- Production proof target: `gitrun-updater/src/policy_logic.rs`
-- Standalone Kani entrypoint: `verification/kani/updater_policy.rs`
-- Required harnesses:
-  - `update_policy_acceptance_is_exact`
-  - `release_type_wire_values_are_total`
-  - `update_policy_wire_values_are_total`
-
-Run locally after installing the pinned Kani release:
+Run the current Kani suite locally after installing the pinned release:
 
 ```sh
 cargo install --locked kani-verifier --version 0.68.0
@@ -43,70 +34,100 @@ cargo kani setup
 bash scripts/ci/verify-rust-formal.sh
 ```
 
-The pure policy module is shared directly by the updater and the standalone Kani entrypoint, so proofs analyze production code without compiling the updater's HTTP, cryptography, archive, or operating-system integration dependencies. No Kani dependency is added to production builds.
+Kani remains outside production dependencies and shipped binaries.
 
-The gate fails if Kani is missing, the pinned version differs, a required harness disappears, or any proof fails. It does not claim that every GitRun crate or runtime behavior is formally proven; the proof inventory must expand as additional production invariants are selected.
+## Verus status
 
-The release workflow runs the same source proofs after its package matrices complete, then inspects every produced release package individually before allowing the verified payload to reach signing.
+Verus is pinned to `0.2026.11.02.8bf68ee` and installed by
+`scripts/ci/install-verus.sh`. Its required Rust toolchain (`1.99.1`, with
+`rustc-dev` and `llvm-tools`) is installed separately from GitRun's primary
+Rust toolchain (`1.99.0`).
+
+At this revision, Verus runs only the toolchain smoke proof in
+`verification/verus/smoke.rs`. That arithmetic assertion checks that the
+pinned Verus executable and its toolchain can perform a proof; it is not a
+proof of GitRun production code and is not counted as source coverage. There
+are currently no production-source Verus properties.
+
+## Required dual-verifier source gate
+
+`verification/source-proof-map.tsv` is the authoritative manifest for
+per-file Kani and Verus coverage. It requires one row for every tracked Rust
+source file, with a Kani entrypoint and a Verus entrypoint. The gate discovers
+sources from `git ls-files` on every run and fails closed for missing,
+duplicate, stale, reused, or structurally disconnected mappings. Each
+entrypoint must reach its mapped source through repository-local
+`#[path]` modules and contain the corresponding verifier proof construct.
+
+The source-closure checks are structural preflight only. They do not establish
+that a proof exercises the mapped implementation or that it states meaningful
+properties. Every mapping therefore also requires review of the actual proof
+and its connection to the production implementation. A successful gate means
+both verifier processes completed successfully for every mapped source; a
+smoke proof, compilation, inventory entry, or lint result cannot substitute.
+
+**Coverage at this PR revision:** the repository has 75 tracked Rust source
+files, while `verification/source-proof-map.tsv` contains only its header and
+no completed mappings. Consequently, dual-verifier coverage is currently
+`0/75` and the strict gate is expected to fail. This is intentional: the
+manifest must not be filled with disconnected harnesses or placeholder
+mappings to make CI appear green. The gate becomes green only after every
+tracked Rust file has a reviewed, meaningful Kani proof and a reviewed,
+meaningful Verus proof. This includes tests, build scripts, and verification
+harnesses; no file is silently excluded.
+
+Run the strict map gate locally only after preparing both verifier entrypoints
+for every tracked source:
+
+```sh
+python3 scripts/ci/verify-rust-dual-coverage.py
+```
+
+The report records only executed outcomes: `PROVEN`, `FAILED`,
+`UNVERIFIED`, or `ERROR`. A source is fully covered only when both its Kani
+and Verus statuses are `PROVEN`. Structural readiness is not published as a
+proof status.
 
 ## Per-file Rust source assurance
 
-The source-assurance gate inventories every tracked `.rs` file, including
-test, build-script, example, benchmark, and verification sources. Each file
-must have an owning Cargo package (or be an explicitly permitted standalone
-verification entrypoint). Workspace files are formatted by the existing
-`rust-lint` job in CI and by the Release workflow's single workspace-format
-step; the standalone Kani entrypoint is checked individually because it is
-outside the workspace. The generated inventory records the path, manifest,
-and source role; an unowned file fails the gate.
+The separate source-assurance gate inventories every tracked `.rs` file,
+including tests, build scripts, examples, benchmarks, and verification
+sources. Each file must be assigned to a real Cargo package or to an explicitly
+permitted standalone verification entrypoint. Workspace formatting is checked
+by the existing `rust-lint` job; standalone verification entrypoints are
+formatted individually. The generated inventory records each path, manifest,
+and source role, and unowned files fail the gate.
 
-Package-level type checking, Clippy, documentation, and behavior tests remain
-Cargo target/package checks in their dedicated CI jobs. They are not falsely
-reported as independent per-file proofs: Rust modules are compiled through
-their owning targets, and conditional/platform-specific modules are covered by
-the relevant target checks. Kani proves only its declared harness properties,
-not every Rust file.
+Cargo metadata validation, package-level type checking, Clippy, documentation,
+and behavior tests remain in their existing CI jobs. Rust modules are normally
+compiled through their owning targets rather than as independent crates.
+These checks provide source assurance but are not reported as formal proofs.
 
-The source inventory is uploaded as a CI artifact. New tracked Rust files are
-discovered automatically, so a stale hand-maintained file count cannot hide
-them.
+## Complementary checks
 
-## Complementary assurance gates
+- `cargo fmt --all -- --check`, workspace Clippy with `-D warnings`, and
+  Rust documentation builds run in the existing `rust-lint` job.
+- Dedicated test jobs cover workspace and headless-management tests, plus
+  updater, security, runtime, scheduler, platform, service-manager, and
+  release-contract regression suites.
+- `cargo audit` and `cargo deny` run in the existing `audit-rust` job.
+- Miri runs the targeted updater regression test
+  `canonical_premade_runner_source_is_immutable`. This is not whole-workspace
+  Miri coverage.
+- Server and updater builds run across x86_64/aarch64 and GNU/musl Linux
+  targets. Desktop and package checks remain in their dedicated matrices.
 
-Kani is not the only Rust check. The existing CI jobs already require:
+## CI and Release integration
 
-- `rust-lint`: `cargo fmt --all -- --check`, Clippy with `-D warnings`, and Rust documentation builds.
-- Dedicated test jobs: workspace and headless-management tests, plus updater,
-  security, runtime, scheduler, platform, service-manager, and release-contract
-  regression suites.
-- `audit-rust`: `cargo audit` and `cargo deny` for advisory and
-  dependency-policy checks.
+The pull-request CI workflow and the standalone Release workflow both install
+the pinned Kani and Verus versions, run the current Kani production proofs,
+smoke-test the Verus toolchain, and execute the strict dual-verifier source
+gate. The source inventory and Kani, Verus, and Miri coverage reports are
+uploaded separately so their different scopes remain visible.
 
-These checks remain in their existing jobs; the formal-verification and source
-inventory jobs do not rerun them.
-- Server and updater builds across x86_64/aarch64 and GNU/musl Linux targets.
-- Real Server package creation for all four target variants, plus independent
-  GNU Desktop DEB/RPM/Arch package creation for x86_64 and ARM64.
-- Native musl Desktop builds for x86_64 Alpine and ARM64 Void, followed by the
-  x86_64 APK and both-architecture XBPS package checks.
-- The one-time 1.9.1 legacy migration DEB, including maintainer-script behavior,
-  package identity, and the legacy 1.8.23 packaging contract.
-- Release-side package inspection after all package matrices and before signing.
-
-## Formal coverage status vocabulary
-
-- `PROVEN`: the declared Kani harness completed successfully.
-- `FAILED`: a declared proof assertion or Kani proof run failed.
-- `UNVERIFIED`: the Rust file is covered by source/Cargo gates but has no
-  declared Kani property yet.
-- `ERROR`: the verifier, toolchain, or proof setup could not run reliably.
-- `NOT IN SCOPE`: the item is not a Rust source property represented by the
-  current formal model.
-
-The per-file Kani coverage artifact intentionally marks only
-`crates/gitrun-updater/src/policy_logic.rs` as `PROVEN`; other Rust files stay
-`UNVERIFIED` until meaningful properties are added. This avoids claiming that
-three updater-policy harnesses formally prove the entire repository.
-Verus remains a planned next-stage verifier; it is not reported as active until
-production properties can be proved rather than duplicated in a disconnected
-model.
+Release package certification runs after the package matrices have produced
+their artifacts. It downloads and inspects those artifacts without rebuilding
+them, and the signing job depends on the formal-verification and package
+certification job. Signing therefore cannot proceed when that gate fails.
+The formal source gate remains strict in both workflows; it is not bypassed
+for Release.

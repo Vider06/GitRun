@@ -29,11 +29,10 @@ def tracked_sources() -> set[str]:
     return {item.decode() for item in result.stdout.split(b"\0") if item}
 
 
-def source_closure(entrypoint: Path) -> tuple[set[str], str]:
+def source_closure(entrypoint: Path) -> set[str]:
     """Return all repository-local path modules reachable from an entrypoint."""
     root = ROOT.resolve()
     visited: set[Path] = set()
-    contents: list[str] = []
 
     def visit(path: Path) -> None:
         resolved = path.resolve()
@@ -45,13 +44,12 @@ def source_closure(entrypoint: Path) -> tuple[set[str], str]:
             return
         visited.add(resolved)
         source = resolved.read_text(encoding="utf-8")
-        contents.append(source)
         for imported in PATH_ATTRIBUTE.findall(source):
             visit(resolved.parent / imported)
 
     visit(entrypoint)
     names = {path.relative_to(root).as_posix() for path in visited}
-    return names, "\n".join(contents)
+    return names
 
 
 def main() -> int:
@@ -107,7 +105,7 @@ def main() -> int:
                 errors.append(f"{tool} entrypoint reused; require a per-file proof: {name}")
                 continue
             used.add(name)
-            imported, _ = source_closure(entrypoint)
+            imported = source_closure(entrypoint)
             if source not in imported:
                 errors.append(
                     f"{tool} entrypoint {name} does not include {source} "

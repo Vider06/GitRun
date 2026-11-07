@@ -60,11 +60,16 @@ jobs:
         id: version
         env:
           RELEASE_VERSION_INPUT: ${{ inputs.version || github.event.inputs.version }}
+          CERTIFICATION_ONLY: ${{ inputs.certification_only }}
           MIGRATION_RELEASE_ENABLED: ${{ vars.GITRUN_ENABLE_MIGRATION_RELEASE }}
           MIGRATION_RELEASE_ALLOWED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         shell: bash
         run: |
           set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$CERTIFICATION_ONLY" != "true" ]]; then
+            echo "Refusing non-certification release invocation for pull requests." >&2
+            exit 1
+          fi
           version="${RELEASE_VERSION_INPUT:-}"
           if [ -z "$version" ]; then
             if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
@@ -2387,7 +2392,7 @@ jobs:
           fi
           echo "Publication preflight passed for '$title' with ${#assets[@]} assets."
       - name: Publish all release assets
-        if: ${{ !inputs.certification_only }}
+        if: ${{ !inputs.certification_only && (github.event_name == 'push' || github.ref == 'refs/heads/main') }}
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}

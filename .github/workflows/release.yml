@@ -2353,7 +2353,6 @@ jobs:
           MIGRATION_RELEASE: ${{ needs.prepare.outputs.migration_release }}
           ROOT: ${{ github.workspace }}/release-assets
           NOTES_FILE: ${{ runner.temp }}/release-notes.md
-          GITHUB_REPOSITORY: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
@@ -2362,7 +2361,7 @@ jobs:
           test -s "$ROOT/SHA256SUMS"
           test -s "$NOTES_FILE"
           (cd "$ROOT" && sha256sum -c SHA256SUMS)
-          mapfile -t assets < <(find "$ROOT" -maxdepth 1 -type f -printf '%p\\n' | sort)
+          mapfile -t assets < <(find "$ROOT" -maxdepth 1 -type f -print | sort)
           (("${#assets[@]}" > 0))
 
           existing="$RUNNER_TEMP/existing-release.json"

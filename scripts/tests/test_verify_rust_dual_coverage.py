@@ -102,6 +102,20 @@ class DualVerifierCoverageTests(unittest.TestCase):
         )
         self.assertIn("Fully proven by Kani and Verus | 1", self.summary.read_text())
 
+    def test_planned_source_proof_remains_unverified_and_is_not_executed(self) -> None:
+        self.write_manifest(
+            [("src/policy.rs", "", "", "pure policy", "Kani property", "Verus invariant", "PLANNED")]
+        )
+
+        with patch.object(DUAL_COVERAGE.subprocess, "run") as run:
+            result = DUAL_COVERAGE.main()
+
+        self.assertEqual(result, 1)
+        run.assert_not_called()
+        row = self.read_report()[0]
+        self.assertEqual(row["KANI_STATUS"], "UNVERIFIED")
+        self.assertEqual(row["VERUS_STATUS"], "UNVERIFIED")
+
     def test_missing_source_mapping_does_not_block_validated_proofs(self) -> None:
         (self.root / "src/other.rs").write_text(
             "pub fn other() {}\n", encoding="utf-8"

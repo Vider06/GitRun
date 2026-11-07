@@ -2073,7 +2073,6 @@ jobs:
           test "$(/usr/local/bin/gitrun --version --gitrun)" = "GitRun $VERSION_NUMBER"
 
       - name: Generate professional release notes
-        if: ${{ !inputs.certification_only }}
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -2346,6 +2345,48 @@ jobs:
           Path(output_path).write_text("<!-- GITRUN_RELEASE_TYPE: pre -->\n\n" + "\n".join(lines).rstrip() + "\n", encoding="utf-8")
           PY
           echo "NOTES_FILE=$notes" >> "$GITHUB_ENV"
+      - name: Validate release publication preconditions
+        if: ${{ inputs.certification_only }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          MIGRATION_RELEASE: ${{ needs.prepare.outputs.migration_release }}
+          ROOT: ${{ github.workspace }}/release-assets
+          NOTES_FILE: ${{ runner.temp }}/release-notes.md
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh auth status --hostname github.com
+          test -s "$ROOT/release-manifest.json"
+          test -s "$ROOT/SHA256SUMS"
+          test -s "$NOTES_FILE"
+          (cd "$ROOT" && sha256sum -c SHA256SUMS)
+          mapfile -t assets < <(find "$ROOT" -maxdepth 1 -type f -printf '%p\\n' | sort)
+          (("${#assets[@]}" > 0))
+
+          existing="$RUNNER_TEMP/existing-release.json"
+          error_file="$RUNNER_TEMP/existing-release-error.txt"
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$VERSION" > "$existing" 2> "$error_file"; then
+            jq -e '.prerelease == true and ((.body // "") | contains("<!-- GITRUN_RELEASE_TYPE: pre -->"))' "$existing" >/dev/null || {
+              echo "Refusing certification: an existing release is not an eligible prerelease." >&2
+              exit 1
+            }
+            echo "Publication preflight: existing prerelease is eligible for replacement."
+          else
+            if grep -Eq 'HTTP 404|Not Found' "$error_file"; then
+              echo "Publication preflight: no release exists; the publish stage would create it."
+            else
+              cat "$error_file" >&2
+              exit 1
+            fi
+          fi
+          if [ "$MIGRATION_RELEASE" = true ]; then
+            title="GitRun $VERSION — Migration Release"
+          else
+            title="GitRun $VERSION"
+          fi
+          echo "Publication preflight passed for '$title' with ${#assets[@]} assets."
       - name: Publish all release assets
         if: ${{ !inputs.certification_only }}
         env:

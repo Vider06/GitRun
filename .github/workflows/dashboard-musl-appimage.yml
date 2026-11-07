@@ -104,9 +104,9 @@ jobs:
             .gitrun-musl-appimage-npm
             .gitrun-appimagetool-cargo
             .gitrun-appimagetool-target
-          key: gitrun-release-v6-${{ runner.os }}-${{ runner.arch }}-desktop-musl-appimage-${{ matrix.distro }}-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ env.APPIMAGETOOL_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json', 'scripts/ci/prepare-musl-dashboard-appdir.sh') }}
+          key: gitrun-release-v6-linux-${{ matrix.arch }}-desktop-musl-appimage-${{ matrix.distro }}-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ env.APPIMAGETOOL_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json', 'scripts/ci/prepare-musl-dashboard-appdir.sh') }}
           restore-keys: |
-            gitrun-release-v6-${{ runner.os }}-${{ runner.arch }}-desktop-musl-appimage-${{ matrix.distro }}-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ env.APPIMAGETOOL_VERSION }}-
+            gitrun-release-v6-linux-${{ matrix.arch }}-desktop-musl-appimage-${{ matrix.distro }}-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ env.APPIMAGETOOL_VERSION }}-
 
       - name: Build Tauri and prepare native musl AppDir
         shell: bash
@@ -281,4 +281,4 @@ jobs:
             .gitrun-musl-appimage-npm
             .gitrun-appimagetool-cargo
             .gitrun-appimagetool-target
-          key: gitrun-release-v6-${{ runner.os }}-${{ runner.arch }}-desktop-musl-appimage-${{ matrix.distro }}-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ env.APPIMAGETOOL_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json', 'scripts/ci/prepare-musl-dashboard-appdir.sh') }}
+          key: gitrun-release-v6-linux-${{ matrix.arch }}-desktop-musl-appimage-${{ matrix.distro }}-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ env.APPIMAGETOOL_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json', 'scripts/ci/prepare-musl-dashboard-appdir.sh') }}

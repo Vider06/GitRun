@@ -321,8 +321,6 @@ def check_native_init_package_resources(errors: list[str]) -> None:
         'install -m 0755 packaging/runit/gitrun/log/run "$xbps_stage/etc/sv/gitrun/log/run"',
         'install -m 0755 packaging/runit/gitrun-gsr/run "$xbps_stage/etc/sv/gitrun-gsr/run"',
         'install -m 0755 packaging/runit/gitrun-gsr/log/run "$xbps_stage/etc/sv/gitrun-gsr/log/run"',
-        'xbps_contents="$(tar -tf "$xbps_file")"',
-        'XBPS package must contain runit resources, not systemd units',
         'install -m 0755 packaging/gitrun-migration-prerm "$root/DEBIAN/prerm"',
         'test ! -s "$mock_log"',
         "grep -Fq 'disable --now gitrun-gsr.service gitrun.service' \"$mock_log\"",
@@ -339,7 +337,10 @@ def check_native_init_package_resources(errors: list[str]) -> None:
         '"sv restart"',
         '"sv down"',
         "REQUIRED_ARCHIVE_PATHS",
-        "xbps-rindex",
+        "args.rindex",
+        '["tar", "-tf", str(archive)]',
+        'path.startswith("./etc/systemd/")',
+        'path.startswith("./usr/lib/systemd/")',
     )
     for marker in xbps_builder_markers:
         if marker not in xbps_builder:

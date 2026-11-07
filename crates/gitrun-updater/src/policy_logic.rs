@@ -1,7 +1,10 @@
 //! Pure updater release-policy types shared by runtime code and Kani proofs.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(all(not(kani), not(verus)), derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    all(not(kani), not(verus)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[cfg_attr(all(not(kani), not(verus)), serde(rename_all = "snake_case"))]
 pub enum ReleaseType {
     Pre,
@@ -20,7 +23,10 @@ impl ReleaseType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(all(not(kani), not(verus)), derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    all(not(kani), not(verus)),
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[cfg_attr(all(not(kani), not(verus)), serde(rename_all = "snake_case"))]
 pub enum UpdatePolicy {
     SecurityOnly,
@@ -90,7 +96,6 @@ mod verification {
         assert!(UpdatePolicy::SecurityFullPre.as_str() == "security_full_pre");
     }
 }
-
 
 #[cfg(verus)]
 mod verus_verification {

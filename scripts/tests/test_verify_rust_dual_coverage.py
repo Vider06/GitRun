@@ -83,7 +83,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
         self.assertEqual(len(DUAL_COVERAGE.EXPECTED_HEADER), 8)
         self.assertEqual(DUAL_COVERAGE.EXPECTED_HEADER[5], "KANI_CASES")
         with DUAL_COVERAGE.MANIFEST.open(encoding="utf-8", newline="") as handle:
-            rows = list(csv.reader(handle, delimiter="\\t"))
+            rows = list(csv.reader(handle, delimiter="\t"))
         self.assertEqual(len(rows[0]), 8)
         self.assertEqual(len(rows[1]), 8)
         self.assertEqual(rows[1][5], "finite Kani cases")

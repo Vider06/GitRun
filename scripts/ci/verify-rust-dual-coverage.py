@@ -120,7 +120,8 @@ def main() -> int:
         reader = csv.reader(handle, delimiter="\t")
         if next(reader, []) != EXPECTED_HEADER:
             errors.append(
-                "Manifest header must define source, verifier entrypoints, proof scope, both verifier obligations, and status."
+                "Manifest header must define source, entrypoints, proof scope, Kani obligations, "
+                "Kani cases, Verus obligations, and status."
             )
         for line, row in enumerate(reader, start=2):
             if not row or (len(row) == 1 and not row[0].strip()):
@@ -142,7 +143,8 @@ def main() -> int:
             ) = (value.strip() for value in row)
             if not all((proof_scope, kani_obligations, kani_cases, verus_obligations)):
                 errors.append(
-                    f"Manifest line {line}: proof scope, Kani obligations/cases, and Verus obligations are required."
+                    f"Manifest line {line}: proof scope, Kani obligations/cases, "
+                    "and Verus obligations are required."
                 )
             if plan_status not in {"PLANNED", "IMPLEMENTED"}:
                 errors.append(

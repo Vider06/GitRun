@@ -2558,6 +2558,306 @@ jobs:
       - *report
       - *logs
 
+  release-dashboard-musl-build-certification:
+    name: Release Desktop musl build certification · ${{ matrix.target }}
+    needs: [cargo-lock, rust-lint, frontend]
+    if: ${{ needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    outputs: *job_outputs
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            arch: x86_64
+            docker_platform: linux/amd64
+            musl_distro: alpine
+            cache_variant: alpine-rust-1.99.0-alpine3.24
+            container_image: rust:1.99.0-alpine3.24
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            arch: aarch64
+            docker_platform: linux/arm64
+            musl_distro: void
+            cache_variant: void-musl-20260801r1
+            container_image: ghcr.io/void-linux/void-musl-full:20260801r1
+    env:
+      TARGET: ${{ matrix.target }}
+      DESKTOP_ARCH: ${{ matrix.arch }}
+      MUSL_DISTRO: ${{ matrix.musl_distro }}
+      CONTAINER_IMAGE: ${{ matrix.container_image }}
+      CARGO_HOME: ${{ github.workspace }}/.gitrun-cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      CARGO_INCREMENTAL: "0"
+      NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-npm-cache
+    steps:
+      - *checkout
+      - *boot
+      - name: Set Dashboard package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_NUMBER="$(tr -d '[:space:]' < version.txt)"
+          test -n "$VERSION_NUMBER"
+          VERSION="v$VERSION_NUMBER"
+          {
+            echo "VERSION_NUMBER=$VERSION_NUMBER"
+            echo "VERSION=$VERSION"
+          } >> "$GITHUB_ENV"
+      - name: Restore musl Dashboard Cargo and npm caches
+        id: dashboard-cache-musl
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-cargo
+            target
+            .gitrun-npm-cache
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-musl-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json', '.github/workflows/release.yml', 'scripts/ci/check-dashboard-distro-dependencies.py') }}
+          restore-keys: |
+            gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-musl-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-
+      - name: Build native musl Dashboard in distro-native environment
+        env:
+          DOCKER_PLATFORM: ${{ matrix.docker_platform }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR" "$NPM_CONFIG_CACHE"
+          docker run --rm --pull=always --platform "$DOCKER_PLATFORM" \
+            -e VERSION_NUMBER="$VERSION_NUMBER" \
+            -e TARGET="$TARGET" \
+            -e RUST_VERSION="$RUST_VERSION" \
+            -e MUSL_DISTRO="$MUSL_DISTRO" \
+            -e RUSTFLAGS="-C target-feature=-crt-static" \
+            -e CARGO_HOME=/workspace/.gitrun-cargo \
+            -e CARGO_TARGET_DIR=/workspace/target \
+            -e CARGO_INCREMENTAL=0 \
+            -e NPM_CONFIG_CACHE=/workspace/.gitrun-npm-cache \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace/crates/gitrun-dashboard-tauri \
+            "$CONTAINER_IMAGE" sh -ec '
+              if [ "$MUSL_DISTRO" = "alpine" ]; then
+                apk add --no-cache build-base pkgconf nodejs npm curl wget file openssl-dev \
+                  webkit2gtk-4.1-dev libayatana-appindicator-dev librsvg font-dejavu imagemagick \
+                  openssl-libs-static cairo-static harfbuzz-static glib-static wayland-static zlib-static
+              else
+                xbps-install -Suy
+                xbps-install -y base-devel pkg-config nodejs curl ca-certificates file ImageMagick \
+                  libwebkit2gtk41-devel libayatana-appindicator-devel librsvg-devel gtk+3-devel \
+                  openssl-devel cairo-devel harfbuzz-devel glib-devel wayland-devel zlib-devel
+                export RUSTUP_HOME=/workspace/.gitrun-cargo/rustup
+                curl --fail --silent --show-error --location \
+                  "https://static.rust-lang.org/rustup/dist/${TARGET}/rustup-init" \
+                  -o /tmp/rustup-init
+                chmod 0755 /tmp/rustup-init
+                /tmp/rustup-init -y --no-modify-path --profile minimal \
+                  --default-toolchain "$RUST_VERSION" --default-host "$TARGET"
+                . "$CARGO_HOME/env"
+              fi
+              if [ "$MUSL_DISTRO" = "alpine" ]; then
+                export RUSTUP_HOME=/usr/local/rustup
+              fi
+              test "$(rustc -vV | sed -n "s/^host: //p")" = "$TARGET"
+              rustc --version | grep -Fq "rustc $RUST_VERSION "
+              pkg-config --exists gtk+-3.0 webkit2gtk-4.1 ayatana-appindicator3-0.1
+              node --version
+              npm --version
+              node --input-type=module - "$VERSION_NUMBER" <<NODE
+          import fs from "node:fs";
+          const version = process.argv[2];
+          for (const file of ["package.json", "src-tauri/tauri.conf.json"]) {
+            const value = JSON.parse(fs.readFileSync(file, "utf8"));
+            value.version = version;
+            fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\\n");
+          }
+          const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+          lock.version = version;
+          lock.packages[""].version = version;
+          fs.writeFileSync("package-lock.json", JSON.stringify(lock, null, 2) + "\\n");
+          NODE
+              npm ci
+              for icon in src-tauri/icons/*.png; do
+                [ -f "$icon" ] || continue
+                tmp="$(mktemp)"
+                convert "$icon" -alpha on -define png:color-type=6 "PNG32:$tmp"
+                mv "$tmp" "$icon"
+              done
+              npm run tauri build -- --ci --no-bundle
+              binary=/workspace/target/release/gitrun-dashboard-tauri
+              test -s "$binary"
+              ldd "$binary" > /tmp/gitrun-dashboard-ldd.txt
+              if grep -Fq "not found" /tmp/gitrun-dashboard-ldd.txt; then
+                cat /tmp/gitrun-dashboard-ldd.txt >&2
+                exit 1
+              fi
+            '
+          sudo chown -R "$(id -u):$(id -g)" "$CARGO_HOME" "$CARGO_TARGET_DIR" "$NPM_CONFIG_CACHE"
+          out="$RUNNER_TEMP/dashboard-musl-canonical"
+          rm -rf "$out"
+          mkdir -p "$out"
+          install -m 0755 "$GITHUB_WORKSPACE/target/release/gitrun-dashboard-tauri" "$out/GitRun-Desktop-$VERSION-$TARGET.bin"
+      - name: Upload independent musl Dashboard executable
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-dashboard-musl-build-${{ matrix.target }}
+          path: ${{ runner.temp }}/dashboard-musl-canonical/*
+          if-no-files-found: error
+          retention-days: 1
+      - name: Save musl Dashboard Cargo and npm caches
+        if: success() && steps.dashboard-cache-musl.outputs.cache-matched-key != steps.dashboard-cache-musl.outputs.cache-primary-key && github.event_name != 'pull_request'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-cargo
+            target
+            .gitrun-npm-cache
+          key: ${{ steps.dashboard-cache-musl.outputs.cache-primary-key }}
+      - *report
+      - *logs
+
+  release-dashboard-musl-package-certification:
+    name: Release Desktop musl package certification · ${{ matrix.arch }}
+    needs: [release-dashboard-musl-build-certification]
+    if: ${{ needs.release-dashboard-musl-build-certification.result == 'success' }}
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs: *job_outputs
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            arch: x86_64
+            package_arch: amd64
+            xbps_arch: x86_64-musl
+          - target: aarch64-unknown-linux-musl
+            arch: aarch64
+            package_arch: arm64
+            xbps_arch: aarch64-musl
+    env:
+      TARGET: ${{ matrix.target }}
+      DESKTOP_ARCH: ${{ matrix.arch }}
+      PACKAGE_ARCH: ${{ matrix.package_arch }}
+      XBPS_ARCH: ${{ matrix.xbps_arch }}
+      XBPS_STATIC_ARCH: x86_64
+    steps:
+      - *checkout
+      - *boot
+      - name: Set Dashboard package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_NUMBER="$(tr -d '[:space:]' < version.txt)"
+          test -n "$VERSION_NUMBER"
+          VERSION="v$VERSION_NUMBER"
+          {
+            echo "VERSION_NUMBER=$VERSION_NUMBER"
+            echo "VERSION=$VERSION"
+          } >> "$GITHUB_ENV"
+      - name: Download musl Dashboard executable
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: ci-dashboard-musl-build-${{ matrix.target }}
+          path: canonical
+      - name: Create musl APK and XBPS packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="$GITHUB_WORKSPACE/canonical/GitRun-Desktop-$VERSION-$TARGET.bin"
+          test -s "$binary"
+          stage="$RUNNER_TEMP/dashboard-musl-stage"
+          out="$RUNNER_TEMP/dashboard-package"
+          rm -rf "$stage" "$out"
+          mkdir -p "$stage/usr/bin" "$stage/usr/share/applications" "$out"
+          install -m 0755 "$binary" "$stage/usr/bin/gitrun-desktop"
+          cat > "$stage/usr/share/applications/gitrun-desktop.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=GitRun Desktop
+          Comment=GitRun desktop management interface
+          Exec=/usr/bin/gitrun-desktop
+          Terminal=false
+          Categories=Development;System;
+          DESKTOP
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          cat > "$RUNNER_TEMP/dashboard-musl-nfpm.yaml" <<NFPM
+          name: gitrun-desktop
+          arch: $PACKAGE_ARCH
+          platform: linux
+          version: $VERSION_NUMBER
+          maintainer: Vider06
+          description: GitRun Tauri Dashboard for musl Linux, independently installable from the server
+          license: Apache-2.0
+          depends: [musl]
+          overrides:
+            apk:
+              depends: [musl, webkit2gtk-4.1, polkit]
+          contents:
+            - src: $stage/usr/bin/gitrun-desktop
+              dst: /usr/bin/gitrun-desktop
+              file_info:
+                mode: 0755
+            - src: $stage/usr/share/applications/gitrun-desktop.desktop
+              dst: /usr/share/applications/gitrun-desktop.desktop
+          NFPM
+          if [ "$DESKTOP_ARCH" = "x86_64" ]; then
+            nfpm package --config "$RUNNER_TEMP/dashboard-musl-nfpm.yaml" --packager apk --target "$out"
+            apk="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop*.apk' -print -quit)"
+            test -n "$apk"
+            mv "$apk" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk"
+            apk_contents="$(tar -tzf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk")"
+            grep -Fq '.PKGINFO' <<< "$apk_contents"
+            apk_info="$(tar -xOzf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk" .PKGINFO)"
+            grep -Fxq 'pkgname = gitrun-desktop' <<< "$apk_info"
+            grep -Fxq 'arch = x86_64' <<< "$apk_info"
+            grep -Fxq 'depend = musl' <<< "$apk_info"
+            grep -Fxq 'depend = webkit2gtk-4.1' <<< "$apk_info"
+            grep -Fxq 'depend = polkit' <<< "$apk_info"
+          fi
+
+          xbps_stage="$RUNNER_TEMP/dashboard-xbps-stage"
+          cp -a "$stage" "$xbps_stage"
+          xbps_root="$RUNNER_TEMP/xbps-static"
+          mkdir -p "$xbps_root"
+          curl --fail --silent --show-error --location \
+            "https://repo-default.voidlinux.org/static/xbps-static-latest.$XBPS_STATIC_ARCH-musl.tar.xz" \
+            -o "$RUNNER_TEMP/xbps-static.tar.xz"
+          tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
+          xbps_create="$xbps_root/usr/bin/xbps-create"
+          xbps_rindex="$xbps_root/usr/bin/xbps-rindex"
+          xbps_query="$xbps_root/usr/bin/xbps-query"
+          test -x "$xbps_create" && test -x "$xbps_rindex" && test -x "$xbps_query"
+          (cd "$out" && "$xbps_create" -A "$XBPS_ARCH" \
+            -n "gitrun-desktop-${VERSION_NUMBER}_1" -D "musl libwebkit2gtk41 polkit" \
+            -H https://github.com/Vider06/GitRun -l Apache-2.0 -m Vider06 \
+            -s "GitRun Desktop for musl Linux" "$xbps_stage")
+          xbps="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop*.xbps' -print -quit)"
+          test -n "$xbps"
+          mv "$xbps" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-xbps.xbps"
+          "$xbps_rindex" -a "$out"/*.xbps
+          desktop_deps="$("$xbps_query" -R --repository="$out" -x "gitrun-desktop-${VERSION_NUMBER}_1")"
+          grep -Fq musl <<< "$desktop_deps"
+          grep -Fq libwebkit2gtk41 <<< "$desktop_deps"
+          grep -Fq polkit <<< "$desktop_deps"
+          test -s "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-xbps.xbps"
+          sha256sum "$out"/* > "$out/SHA256SUMS"
+      - name: Upload certified musl Desktop packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-dashboard-musl-packages-${{ matrix.arch }}
+          path: ${{ runner.temp }}/dashboard-package/*
+          if-no-files-found: error
+          retention-days: 1
+      - *report
+      - *logs
+
   # ───────────────────────────────────────────── native ARM64 Dashboard ──
   tauri-arm64:
     name: Tauri GUI build and package · ARM64
@@ -3004,6 +3304,8 @@ jobs:
       - tauri
       - tauri-arm64
       - release-dashboard-package-certification
+      - release-dashboard-musl-build-certification
+      - release-dashboard-musl-package-certification
       - tauri-recovery
       - docker
     runs-on: *runner
@@ -3070,7 +3372,9 @@ jobs:
           formal-verification|Rust source assurance and formal verification|rust|rust-lint
           tauri|Tauri GUI|tauri|rust-lint frontend
           tauri-arm64|Tauri GUI native ARM64 build|tauri|rust-lint frontend
-          release-dashboard-package-certification|Release Desktop package matrix|tauri|tauri tauri-arm64
+          release-dashboard-package-certification|Release Desktop GNU package matrix|tauri|tauri tauri-arm64
+          release-dashboard-musl-build-certification|Release Desktop musl build matrix|tauri|rust-lint frontend
+          release-dashboard-musl-package-certification|Release Desktop musl package matrix|tauri|release-dashboard-musl-build-certification
           tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend
           docker|Docker|docker|
           JOBS

@@ -316,8 +316,609 @@ def check_native_init_package_resources(errors: list[str]) -> None:
         ".post-upgrade$",
         'install -m 0755 packaging/xbps/INSTALL "$xbps_stage/INSTALL"',
         'install -m 0755 packaging/xbps/REMOVE "$xbps_stage/REMOVE"',
-        ' -p install-script -S ',
-        ' -p remove-script -S ',
+        ' -f "$package_id")"',
+        "grep -Eq '(^|/)INSTALL
+        'install -m 0755 packaging/runit/gitrun/run "$xbps_stage/etc/sv/gitrun/run"',
+        'install -m 0755 packaging/runit/gitrun/log/run "$xbps_stage/etc/sv/gitrun/log/run"',
+        'install -m 0755 packaging/runit/gitrun-gsr/run "$xbps_stage/etc/sv/gitrun-gsr/run"',
+        'install -m 0755 packaging/runit/gitrun-gsr/log/run "$xbps_stage/etc/sv/gitrun-gsr/log/run"',
+        'xbps_contents="$(tar -tf "$xbps_file")"',
+        'XBPS package must contain runit resources, not systemd units',
+        'install -m 0755 packaging/gitrun-migration-prerm "$root/DEBIAN/prerm"',
+        'test ! -s "$mock_log"',
+        "grep -Fq 'disable --now gitrun-gsr.service gitrun.service' \"$mock_log\"",
+    )
+    for marker in workflow_markers:
+        if marker not in release:
+            errors.append(f"release packaging is missing native-init integration: {marker}")
+
+    nfpm_marker = 'cat > "$RUNNER_TEMP/nfpm.yaml" <<NFPM'
+    nfpm_source = (
+        release.split(nfpm_marker, 1)[1].split("\n          NFPM", 1)[0]
+        if nfpm_marker in release and "\n          NFPM" in release.split(nfpm_marker, 1)[1]
+        else ""
+    )
+    nfpm_config = re.sub(r"(?m)^ {10}", "", nfpm_source)
+    apk_section = re.search(r"(?ms)^apk:\n(.*?)(?=^[^ \t]|\Z)", nfpm_config)
+    if not apk_section or not re.search(
+        r"(?m)^  scripts:\n    postupgrade: packaging/apk-post-upgrade$",
+        apk_section.group(0),
+    ):
+        errors.append("APK post-upgrade hook must use the dedicated top-level APK scripts section")
+
+    overrides = re.search(r"(?ms)^overrides:\n(.*)\Z", nfpm_config)
+    apk_override = (
+        re.search(r"(?ms)^  apk:\n(.*?)(?=^  [A-Za-z0-9_-]+:|\Z)", overrides.group(1))
+        if overrides
+        else None
+    )
+    if not apk_override or not re.search(r"(?m)^    depends: \[musl\]$", apk_override.group(0)):
+        errors.append("APK musl dependency must remain under overrides.apk")
+    if apk_override and "scripts:" in apk_override.group(0):
+        errors.append("APK lifecycle scripts must not be nested under overrides.apk")
+    if apk_override and "preremove:" in apk_override.group(0):
+        errors.append("nFPM APK overrides must not contain a preremove hook; use the generic preremove hook")
+
+    if "init-neutral" in release:
+        errors.append("native APK/XBPS packages must not be described as init-neutral")
+
+
+def check_portable_privilege_helpers(errors: list[str]) -> None:
+    cli = (ROOT / "crates/gitrun-cli/src/main.rs").read_text(encoding="utf-8")
+    updater = (ROOT / "crates/gitrun-updater/src/lib.rs").read_text(encoding="utf-8")
+    if "run_privileged_cli_action(" not in cli or "trusted_privilege_command()" not in cli:
+        errors.append("CLI uninstall/reinstall must use the trusted platform privilege helper directly")
+    if "run_embedded_privileged_helper(" in cli:
+        errors.append("CLI must not execute user-owned temporary scripts with elevated privileges")
+    if "trusted_privilege_escalation_binary()" not in updater:
+        errors.append("updater dependency installation must support the platform privilege helper")
+
+    for relative in ("scripts/uninstall.sh", "scripts/reinstall-latest.sh"):
+        source = read_text(ROOT / relative)
+        if source is None:
+            errors.append(f"missing portable privilege script: {relative}")
+            continue
+        if not source.startswith("#!/bin/sh"):
+            errors.append(f"{relative} must use the POSIX shell")
+        if "[[ " in source or "(( " in source or "bash" in source:
+            errors.append(f"{relative} contains Bash-only syntax")
+        if "trusted_helper" not in source or "/usr/bin/doas" not in source:
+            errors.append(f"{relative} must validate and support doas as a privilege helper")
+        syntax = subprocess.run(["sh", "-n", str(ROOT / relative)], check=False, capture_output=True, text=True)
+        if syntax.returncode:
+            errors.append(f"{relative} failed POSIX shell syntax validation: {syntax.stderr.strip()}")
+
+
+def check_dashboard_service_manager_contract(errors: list[str]) -> None:
+    backend = (ROOT / "crates/gitrun-management/src/backend.rs").read_text(encoding="utf-8")
+    control = (ROOT / "crates/gitrun-management/src/control_manager.rs").read_text(encoding="utf-8")
+    platform = (ROOT / "crates/gitrun-platform/src/lib.rs").read_text(encoding="utf-8")
+    required_backend = (
+        "gitrun_platform::detect_service_manager()",
+        "gitrun_platform::service_command(",
+        "gitrun_platform::service_is_installed(",
+        "gitrun_platform::ManagedService::Scheduler",
+        "gitrun_platform::ManagedService::Gsr",
+    )
+    missing = [item for item in required_backend if item not in backend]
+    required_platform = ("ServiceManager::Systemd", "ServiceManager::OpenRc", "ServiceManager::Runit")
+    missing.extend(item for item in required_platform if item not in platform)
+    if missing:
+        errors.append("Dashboard service operations are missing native init-system routing: " + ", ".join(missing))
+    if "pkexec_path()" not in backend or "gitrun_platform::trusted_privilege_escalation_binary" not in backend:
+        errors.append(
+            "Dashboard service controls must retain a trusted pkexec/sudo/doas privilege fallback"
+        )
+    if 'PathBuf::from("/usr/bin/systemctl")' in backend or 'PathBuf::from("/bin/systemctl")' in backend:
+        errors.append("Dashboard service controls must not hardcode systemctl executable paths")
+    if "detect_service_manager()" not in control or "ServiceManager::Systemd" not in control:
+        errors.append("Control Manager IPC must be gated to its installed systemd service backend")
+
+
+def check_setup_native_lifecycle_contract(errors: list[str]) -> None:
+    setup = (ROOT / "crates/gitrun-setup/src/lib.rs").read_text(encoding="utf-8")
+    required = (
+        "current_package_manager()",
+        "package_install_spec(",
+        "docker_packages(",
+        "buildx_packages(",
+        "package_remove_spec(",
+        "package_is_registered(",
+        "install_gitrun_service_definitions(",
+        "start_gitrun_services()",
+        "stop_gitrun_services()",
+        "trusted_service_manager_binary(manager)",
+        "gitrun_platform::PackageManager::Apt",
+        "gitrun_platform::PackageManager::Dnf",
+        "gitrun_platform::PackageManager::Zypper",
+        "gitrun_platform::PackageManager::Pacman",
+        "gitrun_platform::PackageManager::Apk",
+        "gitrun_platform::PackageManager::Xbps",
+        "gitrun_platform::PackageManager::Emerge",
+        "docker_packages(manager: gitrun_platform::PackageManager)",
+        "buildx_packages(manager: gitrun_platform::PackageManager)",
+        'PackageManager::Dnf => &["moby-engine", "docker-compose"]',
+        "ServiceManager::Systemd",
+        "ServiceManager::OpenRc",
+        "ServiceManager::Runit",
+    )
+    missing = [item for item in required if item not in setup]
+    if missing:
+        errors.append(
+            "Setup must use native package/service manager lifecycle operations; "
+            "missing: " + ", ".join(missing)
+        )
+    if 'Command::new("/usr/bin/apt-get").args(["install"' in setup:
+        errors.append("Docker bootstrap must not invoke apt-get outside the Apt package-manager branch")
+    if '"-Syu"' in setup:
+        errors.append("Docker bootstrap must not trigger a full Arch system upgrade")
+
+    install_services = setup.split("fn install_gitrun_service_definitions", 1)[1].split("fn start_gitrun_services", 1)[0]
+    start_services = setup.split("fn start_gitrun_services", 1)[1].split("fn stop_gitrun_services", 1)[0]
+    if "ensure_runit_service_link(service)" in install_services:
+        errors.append("runit service links must not be enabled while setup is still writing configuration")
+    if "ensure_runit_service_link(service)" not in start_services:
+        errors.append("runit service links must be created only in the service-start phase")
+
+
+def check_updater_native_package_contract(errors: list[str]) -> None:
+    updater = (ROOT / "crates/gitrun-updater/src/lib.rs").read_text(encoding="utf-8")
+    required = (
+        "current_linux_package_manager()",
+        "linux_dependency_packages(",
+        "run_linux_package_command(",
+        "P::Apt",
+        "P::Dnf",
+        "P::Zypper",
+        "P::Pacman",
+        "P::Apk",
+        "P::Xbps",
+        "P::Emerge",
+        '(P::Dnf, "Docker") => &["moby-engine", "docker-compose", "docker-buildx"][..]',
+    )
+    missing = [item for item in required if item not in updater]
+    if missing:
+        errors.append(
+            "Dependency updates must use native Linux package managers; missing: "
+            + ", ".join(missing)
+        )
+    if '"-Syu"' in updater:
+        errors.append("Dependency updates must not trigger a full Arch system upgrade")
+
+
+def check_recovery_service_manager_contract(errors: list[str]) -> None:
+    recovery = (ROOT / "crates/gitrun-recovery/src/json_recovery.rs").read_text(encoding="utf-8")
+    required = (
+        "main_library_restore_mode",
+        "ServiceManager::Systemd",
+        "ServiceManager::OpenRc",
+        "ServiceManager::Runit",
+        "MainLibraryRestoreMode::DirectRoot",
+        "run_json_recovery_root_action(action.as_str())",
+    )
+    missing = [item for item in required if item not in recovery]
+    if missing:
+        errors.append(
+            "Main Library restore must route systemd, OpenRC, and runit explicitly; "
+            "missing: " + ", ".join(missing)
+        )
+
+
+def main() -> int:
+    errors: list[str] = []
+    known: list[str] = []
+    conditional: list[str] = []
+    files = tracked_files()
+
+    for relative in files:
+        path = Path(relative)
+        if path.suffix not in SCANNED_SUFFIXES and path.name != "Dockerfile":
+            continue
+        if relative in FILE_ALLOWLIST or relative.startswith(PREFIX_ALLOWLIST):
+            continue
+        content = read_text(ROOT / path)
+        if content is None:
+            continue
+
+        counts = {name: len(pattern.findall(content)) for name, pattern in PATTERNS.items()}
+        counts = {name: count for name, count in counts.items() if count}
+        if not counts:
+            continue
+
+        if relative in CONDITIONAL_RUNTIME_ALLOWLIST:
+            contract = CONDITIONAL_RUNTIME_ALLOWLIST[relative]
+            limits = {key: value for key, value in contract.items() if key != "description"}
+            for name, count in counts.items():
+                limit = limits.get(name, 0)
+                if count != limit:
+                    errors.append(
+                        f"{relative}: conditional integration {name} count changed "
+                        f"from the reviewed contract ({limit} -> {count})"
+                    )
+            conditional.append(
+                f"- `{relative}`: {contract['description']} "
+                f"({', '.join(f'{name}={count}' for name, count in counts.items())})"
+            )
+            continue
+
+        if relative in RUNTIME_BASELINE:
+            limits = RUNTIME_BASELINE[relative]
+            for name, count in counts.items():
+                limit = limits.get(name, 0)
+                if count > limit:
+                    errors.append(
+                        f"{relative}: {name} occurrences grew from the reviewed baseline "
+                        f"({limit} -> {count})"
+                    )
+            remaining = ", ".join(f"{name}={count}" for name, count in counts.items())
+            known.append(f"- `{relative}`: {remaining}")
+            continue
+
+        if relative in CONTEXT_ALLOWLIST:
+            known.append(f"- `{relative}`: {CONTEXT_ALLOWLIST[relative]}")
+            continue
+
+        errors.append(
+            f"{relative}: unclassified platform-specific command/path occurrence(s): "
+            + ", ".join(f"{name}={count}" for name, count in counts.items())
+        )
+
+    check_platform_catalog(errors)
+    check_release_package_boundaries(errors)
+    check_native_init_package_resources(errors)
+    check_dashboard_service_manager_contract(errors)
+    check_portable_privilege_helpers(errors)
+    check_setup_native_lifecycle_contract(errors)
+    check_updater_native_package_contract(errors)
+    check_recovery_service_manager_contract(errors)
+
+    summary = [
+        "# Multi-distro contract audit",
+        "",
+        "The release package matrix and platform detection catalog are checked on every run.",
+        "",
+        "## Explicitly scoped platform-specific contexts",
+        "",
+        "- Debian-based Dockerfiles are intentional container build environments.",
+        "- GitHub workflow package-manager commands provision the CI runner, not the installed product.",
+        "- DEB maintainer hooks are package-format-specific.",
+        "- The runner API package-install operation executes inside the pinned Debian runner image.",
+        "",
+        "## Conditional host-runtime integrations",
+        "",
+        "These references are intentionally limited to a service-manager-specific branch and are not classified as migration debt.",
+        "",
+        *(conditional or ["- No conditional host-runtime integrations found."]),
+        "",
+        "## Known host-runtime migration debt",
+        "",
+        "These reviewed legacy references remain and must be migrated to the shared platform layer. "
+        "This guard prevents their spread; it does not certify every package lifecycle, updater, recovery or runner workload across all targets.",
+        "",
+        *(known or ["- No known direct platform-specific references found."]),
+        "",
+    ]
+    summary_text = "\n".join(summary)
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with open(summary_path, "a", encoding="utf-8") as stream:
+            stream.write(summary_text)
+
+    print(summary_text)
+    if errors:
+        print("Multi-distro contract violations:", file=sys.stderr)
+        for error in errors:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    print("Multi-distro contract audit: PASS (conditional integrations and known runtime debt are reported separately)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+ <<< \"$xbps_files\"",
+        "grep -Eq '(^|/)REMOVE
+        'install -m 0755 packaging/runit/gitrun/run "$xbps_stage/etc/sv/gitrun/run"',
+        'install -m 0755 packaging/runit/gitrun/log/run "$xbps_stage/etc/sv/gitrun/log/run"',
+        'install -m 0755 packaging/runit/gitrun-gsr/run "$xbps_stage/etc/sv/gitrun-gsr/run"',
+        'install -m 0755 packaging/runit/gitrun-gsr/log/run "$xbps_stage/etc/sv/gitrun-gsr/log/run"',
+        'xbps_contents="$(tar -tf "$xbps_file")"',
+        'XBPS package must contain runit resources, not systemd units',
+        'install -m 0755 packaging/gitrun-migration-prerm "$root/DEBIAN/prerm"',
+        'test ! -s "$mock_log"',
+        "grep -Fq 'disable --now gitrun-gsr.service gitrun.service' \"$mock_log\"",
+    )
+    for marker in workflow_markers:
+        if marker not in release:
+            errors.append(f"release packaging is missing native-init integration: {marker}")
+
+    nfpm_marker = 'cat > "$RUNNER_TEMP/nfpm.yaml" <<NFPM'
+    nfpm_source = (
+        release.split(nfpm_marker, 1)[1].split("\n          NFPM", 1)[0]
+        if nfpm_marker in release and "\n          NFPM" in release.split(nfpm_marker, 1)[1]
+        else ""
+    )
+    nfpm_config = re.sub(r"(?m)^ {10}", "", nfpm_source)
+    apk_section = re.search(r"(?ms)^apk:\n(.*?)(?=^[^ \t]|\Z)", nfpm_config)
+    if not apk_section or not re.search(
+        r"(?m)^  scripts:\n    postupgrade: packaging/apk-post-upgrade$",
+        apk_section.group(0),
+    ):
+        errors.append("APK post-upgrade hook must use the dedicated top-level APK scripts section")
+
+    overrides = re.search(r"(?ms)^overrides:\n(.*)\Z", nfpm_config)
+    apk_override = (
+        re.search(r"(?ms)^  apk:\n(.*?)(?=^  [A-Za-z0-9_-]+:|\Z)", overrides.group(1))
+        if overrides
+        else None
+    )
+    if not apk_override or not re.search(r"(?m)^    depends: \[musl\]$", apk_override.group(0)):
+        errors.append("APK musl dependency must remain under overrides.apk")
+    if apk_override and "scripts:" in apk_override.group(0):
+        errors.append("APK lifecycle scripts must not be nested under overrides.apk")
+    if apk_override and "preremove:" in apk_override.group(0):
+        errors.append("nFPM APK overrides must not contain a preremove hook; use the generic preremove hook")
+
+    if "init-neutral" in release:
+        errors.append("native APK/XBPS packages must not be described as init-neutral")
+
+
+def check_portable_privilege_helpers(errors: list[str]) -> None:
+    cli = (ROOT / "crates/gitrun-cli/src/main.rs").read_text(encoding="utf-8")
+    updater = (ROOT / "crates/gitrun-updater/src/lib.rs").read_text(encoding="utf-8")
+    if "run_privileged_cli_action(" not in cli or "trusted_privilege_command()" not in cli:
+        errors.append("CLI uninstall/reinstall must use the trusted platform privilege helper directly")
+    if "run_embedded_privileged_helper(" in cli:
+        errors.append("CLI must not execute user-owned temporary scripts with elevated privileges")
+    if "trusted_privilege_escalation_binary()" not in updater:
+        errors.append("updater dependency installation must support the platform privilege helper")
+
+    for relative in ("scripts/uninstall.sh", "scripts/reinstall-latest.sh"):
+        source = read_text(ROOT / relative)
+        if source is None:
+            errors.append(f"missing portable privilege script: {relative}")
+            continue
+        if not source.startswith("#!/bin/sh"):
+            errors.append(f"{relative} must use the POSIX shell")
+        if "[[ " in source or "(( " in source or "bash" in source:
+            errors.append(f"{relative} contains Bash-only syntax")
+        if "trusted_helper" not in source or "/usr/bin/doas" not in source:
+            errors.append(f"{relative} must validate and support doas as a privilege helper")
+        syntax = subprocess.run(["sh", "-n", str(ROOT / relative)], check=False, capture_output=True, text=True)
+        if syntax.returncode:
+            errors.append(f"{relative} failed POSIX shell syntax validation: {syntax.stderr.strip()}")
+
+
+def check_dashboard_service_manager_contract(errors: list[str]) -> None:
+    backend = (ROOT / "crates/gitrun-management/src/backend.rs").read_text(encoding="utf-8")
+    control = (ROOT / "crates/gitrun-management/src/control_manager.rs").read_text(encoding="utf-8")
+    platform = (ROOT / "crates/gitrun-platform/src/lib.rs").read_text(encoding="utf-8")
+    required_backend = (
+        "gitrun_platform::detect_service_manager()",
+        "gitrun_platform::service_command(",
+        "gitrun_platform::service_is_installed(",
+        "gitrun_platform::ManagedService::Scheduler",
+        "gitrun_platform::ManagedService::Gsr",
+    )
+    missing = [item for item in required_backend if item not in backend]
+    required_platform = ("ServiceManager::Systemd", "ServiceManager::OpenRc", "ServiceManager::Runit")
+    missing.extend(item for item in required_platform if item not in platform)
+    if missing:
+        errors.append("Dashboard service operations are missing native init-system routing: " + ", ".join(missing))
+    if "pkexec_path()" not in backend or "gitrun_platform::trusted_privilege_escalation_binary" not in backend:
+        errors.append(
+            "Dashboard service controls must retain a trusted pkexec/sudo/doas privilege fallback"
+        )
+    if 'PathBuf::from("/usr/bin/systemctl")' in backend or 'PathBuf::from("/bin/systemctl")' in backend:
+        errors.append("Dashboard service controls must not hardcode systemctl executable paths")
+    if "detect_service_manager()" not in control or "ServiceManager::Systemd" not in control:
+        errors.append("Control Manager IPC must be gated to its installed systemd service backend")
+
+
+def check_setup_native_lifecycle_contract(errors: list[str]) -> None:
+    setup = (ROOT / "crates/gitrun-setup/src/lib.rs").read_text(encoding="utf-8")
+    required = (
+        "current_package_manager()",
+        "package_install_spec(",
+        "docker_packages(",
+        "buildx_packages(",
+        "package_remove_spec(",
+        "package_is_registered(",
+        "install_gitrun_service_definitions(",
+        "start_gitrun_services()",
+        "stop_gitrun_services()",
+        "trusted_service_manager_binary(manager)",
+        "gitrun_platform::PackageManager::Apt",
+        "gitrun_platform::PackageManager::Dnf",
+        "gitrun_platform::PackageManager::Zypper",
+        "gitrun_platform::PackageManager::Pacman",
+        "gitrun_platform::PackageManager::Apk",
+        "gitrun_platform::PackageManager::Xbps",
+        "gitrun_platform::PackageManager::Emerge",
+        "docker_packages(manager: gitrun_platform::PackageManager)",
+        "buildx_packages(manager: gitrun_platform::PackageManager)",
+        'PackageManager::Dnf => &["moby-engine", "docker-compose"]',
+        "ServiceManager::Systemd",
+        "ServiceManager::OpenRc",
+        "ServiceManager::Runit",
+    )
+    missing = [item for item in required if item not in setup]
+    if missing:
+        errors.append(
+            "Setup must use native package/service manager lifecycle operations; "
+            "missing: " + ", ".join(missing)
+        )
+    if 'Command::new("/usr/bin/apt-get").args(["install"' in setup:
+        errors.append("Docker bootstrap must not invoke apt-get outside the Apt package-manager branch")
+    if '"-Syu"' in setup:
+        errors.append("Docker bootstrap must not trigger a full Arch system upgrade")
+
+    install_services = setup.split("fn install_gitrun_service_definitions", 1)[1].split("fn start_gitrun_services", 1)[0]
+    start_services = setup.split("fn start_gitrun_services", 1)[1].split("fn stop_gitrun_services", 1)[0]
+    if "ensure_runit_service_link(service)" in install_services:
+        errors.append("runit service links must not be enabled while setup is still writing configuration")
+    if "ensure_runit_service_link(service)" not in start_services:
+        errors.append("runit service links must be created only in the service-start phase")
+
+
+def check_updater_native_package_contract(errors: list[str]) -> None:
+    updater = (ROOT / "crates/gitrun-updater/src/lib.rs").read_text(encoding="utf-8")
+    required = (
+        "current_linux_package_manager()",
+        "linux_dependency_packages(",
+        "run_linux_package_command(",
+        "P::Apt",
+        "P::Dnf",
+        "P::Zypper",
+        "P::Pacman",
+        "P::Apk",
+        "P::Xbps",
+        "P::Emerge",
+        '(P::Dnf, "Docker") => &["moby-engine", "docker-compose", "docker-buildx"][..]',
+    )
+    missing = [item for item in required if item not in updater]
+    if missing:
+        errors.append(
+            "Dependency updates must use native Linux package managers; missing: "
+            + ", ".join(missing)
+        )
+    if '"-Syu"' in updater:
+        errors.append("Dependency updates must not trigger a full Arch system upgrade")
+
+
+def check_recovery_service_manager_contract(errors: list[str]) -> None:
+    recovery = (ROOT / "crates/gitrun-recovery/src/json_recovery.rs").read_text(encoding="utf-8")
+    required = (
+        "main_library_restore_mode",
+        "ServiceManager::Systemd",
+        "ServiceManager::OpenRc",
+        "ServiceManager::Runit",
+        "MainLibraryRestoreMode::DirectRoot",
+        "run_json_recovery_root_action(action.as_str())",
+    )
+    missing = [item for item in required if item not in recovery]
+    if missing:
+        errors.append(
+            "Main Library restore must route systemd, OpenRC, and runit explicitly; "
+            "missing: " + ", ".join(missing)
+        )
+
+
+def main() -> int:
+    errors: list[str] = []
+    known: list[str] = []
+    conditional: list[str] = []
+    files = tracked_files()
+
+    for relative in files:
+        path = Path(relative)
+        if path.suffix not in SCANNED_SUFFIXES and path.name != "Dockerfile":
+            continue
+        if relative in FILE_ALLOWLIST or relative.startswith(PREFIX_ALLOWLIST):
+            continue
+        content = read_text(ROOT / path)
+        if content is None:
+            continue
+
+        counts = {name: len(pattern.findall(content)) for name, pattern in PATTERNS.items()}
+        counts = {name: count for name, count in counts.items() if count}
+        if not counts:
+            continue
+
+        if relative in CONDITIONAL_RUNTIME_ALLOWLIST:
+            contract = CONDITIONAL_RUNTIME_ALLOWLIST[relative]
+            limits = {key: value for key, value in contract.items() if key != "description"}
+            for name, count in counts.items():
+                limit = limits.get(name, 0)
+                if count != limit:
+                    errors.append(
+                        f"{relative}: conditional integration {name} count changed "
+                        f"from the reviewed contract ({limit} -> {count})"
+                    )
+            conditional.append(
+                f"- `{relative}`: {contract['description']} "
+                f"({', '.join(f'{name}={count}' for name, count in counts.items())})"
+            )
+            continue
+
+        if relative in RUNTIME_BASELINE:
+            limits = RUNTIME_BASELINE[relative]
+            for name, count in counts.items():
+                limit = limits.get(name, 0)
+                if count > limit:
+                    errors.append(
+                        f"{relative}: {name} occurrences grew from the reviewed baseline "
+                        f"({limit} -> {count})"
+                    )
+            remaining = ", ".join(f"{name}={count}" for name, count in counts.items())
+            known.append(f"- `{relative}`: {remaining}")
+            continue
+
+        if relative in CONTEXT_ALLOWLIST:
+            known.append(f"- `{relative}`: {CONTEXT_ALLOWLIST[relative]}")
+            continue
+
+        errors.append(
+            f"{relative}: unclassified platform-specific command/path occurrence(s): "
+            + ", ".join(f"{name}={count}" for name, count in counts.items())
+        )
+
+    check_platform_catalog(errors)
+    check_release_package_boundaries(errors)
+    check_native_init_package_resources(errors)
+    check_dashboard_service_manager_contract(errors)
+    check_portable_privilege_helpers(errors)
+    check_setup_native_lifecycle_contract(errors)
+    check_updater_native_package_contract(errors)
+    check_recovery_service_manager_contract(errors)
+
+    summary = [
+        "# Multi-distro contract audit",
+        "",
+        "The release package matrix and platform detection catalog are checked on every run.",
+        "",
+        "## Explicitly scoped platform-specific contexts",
+        "",
+        "- Debian-based Dockerfiles are intentional container build environments.",
+        "- GitHub workflow package-manager commands provision the CI runner, not the installed product.",
+        "- DEB maintainer hooks are package-format-specific.",
+        "- The runner API package-install operation executes inside the pinned Debian runner image.",
+        "",
+        "## Conditional host-runtime integrations",
+        "",
+        "These references are intentionally limited to a service-manager-specific branch and are not classified as migration debt.",
+        "",
+        *(conditional or ["- No conditional host-runtime integrations found."]),
+        "",
+        "## Known host-runtime migration debt",
+        "",
+        "These reviewed legacy references remain and must be migrated to the shared platform layer. "
+        "This guard prevents their spread; it does not certify every package lifecycle, updater, recovery or runner workload across all targets.",
+        "",
+        *(known or ["- No known direct platform-specific references found."]),
+        "",
+    ]
+    summary_text = "\n".join(summary)
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with open(summary_path, "a", encoding="utf-8") as stream:
+            stream.write(summary_text)
+
+    print(summary_text)
+    if errors:
+        print("Multi-distro contract violations:", file=sys.stderr)
+        for error in errors:
+            print(f"- {error}", file=sys.stderr)
+        return 1
+    print("Multi-distro contract audit: PASS (conditional integrations and known runtime debt are reported separately)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+ <<< \"$xbps_files\"",
+        'grep -Fq "sv restart" packaging/xbps/INSTALL',
+        'grep -Fq "sv down" packaging/xbps/REMOVE',
         'install -m 0755 packaging/runit/gitrun/run "$xbps_stage/etc/sv/gitrun/run"',
         'install -m 0755 packaging/runit/gitrun/log/run "$xbps_stage/etc/sv/gitrun/log/run"',
         'install -m 0755 packaging/runit/gitrun-gsr/run "$xbps_stage/etc/sv/gitrun-gsr/run"',

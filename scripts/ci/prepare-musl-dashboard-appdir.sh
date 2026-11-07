@@ -92,7 +92,7 @@ bash -n "$tools_dir/lib4bin"
 
 rm -rf "$appdir"
 mkdir -p "$appdir"
-SHARUN="$tools_dir/sharun" bash "$tools_dir/lib4bin" \
+SHARUN="$tools_dir/sharun" bash -O extglob "$tools_dir/lib4bin" \
   --dst-dir "$appdir" \
   --with-sharun \
   --with-hooks \

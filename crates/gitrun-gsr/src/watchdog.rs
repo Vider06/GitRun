@@ -5,35 +5,53 @@
 //! PID-file reads fail explicitly on malformed, symlinked, non-regular or
 //! hard-linked files so a corrupted file cannot be mistaken for clean shutdown.
 
+#[cfg(not(any(kani, verus)))]
 use crate::events::{self, Severity};
+#[cfg(not(any(kani, verus)))]
 use std::io::Read;
+#[cfg(not(any(kani, verus)))]
 use std::path::Path;
+#[cfg(not(any(kani, verus)))]
 use std::process::Command;
+#[cfg(not(any(kani, verus)))]
 use std::time::Duration;
+#[cfg(verus)]
+use vstd::prelude::*;
 
-#[cfg(unix)]
+/// Whether a PID can be represented safely by the signed pid_t accepted by kill(2).
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(returns pid_is_representable(pid))
+)]
+const fn pid_is_representable(pid: u32) -> bool {
+    pid > 0 && pid <= 2_147_483_647
+}
+
+#[cfg(all(unix, not(any(kani, verus))))]
 extern "C" {
     #[link_name = "kill"]
     fn libc_kill(pid: i32, sig: i32) -> i32;
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(any(kani, verus))))]
 fn process_is_alive(pid: u32) -> bool {
     // Do not cast malformed PID-file values into negative pid_t values:
     // kill(-1, 0) checks process-group-wide permissions and can falsely make
     // a corrupt watchdog target look alive forever.
-    if pid == 0 || pid > i32::MAX as u32 {
+    if !pid_is_representable(pid) {
         return false;
     }
     let result = unsafe { libc_kill(pid as i32, 0) };
     result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(1) // EPERM: alive, just not ours
 }
 
-#[cfg(not(unix))]
+#[cfg(all(not(unix), not(any(kani, verus))))]
 fn process_is_alive(_pid: u32) -> bool {
     true
 }
 
+#[cfg(not(any(kani, verus)))]
 pub struct WatchConfig {
     /// Path to a file containing the watched process's PID as plain text —
     /// the watched process (e.g. `gitrun-autoscaler`) is responsible for
@@ -53,6 +71,7 @@ pub struct WatchConfig {
 /// Runs the watchdog loop until `should_stop` returns true. Blocking; the
 /// caller (GSR's `main.rs`) runs this on its own thread or as the entire
 /// process's main loop.
+#[cfg(not(any(kani, verus)))]
 pub fn run(config: &WatchConfig, should_stop: impl Fn() -> bool) {
     let mut last_known_pid: Option<u32> = None;
     let mut last_pid_file_error: Option<String> = None;
@@ -84,6 +103,7 @@ pub fn run(config: &WatchConfig, should_stop: impl Fn() -> bool) {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_pid(path: &Path) -> Result<Option<u32>, std::io::Error> {
     validate_pid_parent(path)?;
     let mut options = std::fs::OpenOptions::new();
@@ -127,6 +147,7 @@ fn read_pid(path: &Path) -> Result<Option<u32>, std::io::Error> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_pid_parent(path: &Path) -> Result<(), std::io::Error> {
     let parent = path
         .parent()
@@ -157,6 +178,7 @@ fn validate_pid_parent(path: &Path) -> Result<(), std::io::Error> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn parse_pid_contents(raw: &str) -> Result<u32, std::io::Error> {
     let pid = raw.trim().parse::<u32>().map_err(|_| {
         std::io::Error::new(
@@ -164,7 +186,7 @@ fn parse_pid_contents(raw: &str) -> Result<u32, std::io::Error> {
             "watchdog PID file is malformed",
         )
     })?;
-    if pid == 0 || pid > i32::MAX as u32 {
+    if !pid_is_representable(pid) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "watchdog PID file contains an out-of-range PID",
@@ -173,6 +195,7 @@ fn parse_pid_contents(raw: &str) -> Result<u32, std::io::Error> {
     Ok(pid)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn handle_pid_file_error(config: &WatchConfig, detail: &str) {
     let message = format!(
         "cannot verify {} process because PID file {} is invalid: {detail}",
@@ -189,6 +212,7 @@ fn handle_pid_file_error(config: &WatchConfig, detail: &str) {
     show_error(&message);
 }
 
+#[cfg(not(any(kani, verus)))]
 fn handle_crash(config: &WatchConfig, pid: u32) {
     let message = format!("{} (pid {pid}) exited unexpectedly", config.watched_name);
 
@@ -211,6 +235,7 @@ fn handle_crash(config: &WatchConfig, pid: u32) {
 /// Logging (above, in `handle_crash`) always happens regardless of whether
 /// this succeeds — per the operator's design ("shows the error graphically
 /// if it fails... otherwise falls back to terminal, and writes logs").
+#[cfg(not(any(kani, verus)))]
 fn show_error(message: &str) {
     if try_graphical_notification(message) {
         return;
@@ -224,6 +249,7 @@ fn show_error(message: &str) {
 /// available or the environment has no display/notification daemon (e.g. a
 /// headless server, which is a completely normal GitRun deployment target,
 /// not an error condition in itself).
+#[cfg(not(any(kani, verus)))]
 fn try_graphical_notification(message: &str) -> bool {
     Command::new("/usr/bin/notify-send")
         .arg("GitRun — process crashed")
@@ -233,7 +259,7 @@ fn try_graphical_notification(message: &str) -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(any(kani, verus))))]
 mod tests {
     use super::*;
 
@@ -332,3 +358,47 @@ mod tests {
         let _ = std::fs::remove_file(&events_path);
     }
 }
+
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::pid_is_representable;
+
+    /// Proves the PID conversion guard for every possible u32 input.
+    #[kani::proof]
+    fn pid_range_is_exact() {
+        let pid: u32 = kani::any();
+        assert!(pid_is_representable(pid) == (pid > 0 && pid <= 2_147_483_647));
+        assert!(!pid_is_representable(0));
+        assert!(pid_is_representable(1));
+        assert!(pid_is_representable(2_147_483_647));
+        assert!(!pid_is_representable(2_147_483_648));
+        assert!(!pid_is_representable(u32::MAX));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::pid_is_representable;
+    use vstd::prelude::*;
+
+    verus! {
+        /// Proves the exact signed pid_t domain accepted by watchdog production code.
+        proof fn pid_range_is_exact(pid: u32)
+            ensures
+                pid_is_representable(pid) == (pid > 0 && pid <= 2_147_483_647),
+        {
+            assert(!pid_is_representable(0));
+            assert(pid_is_representable(1));
+            assert(pid_is_representable(2_147_483_647));
+            assert(!pid_is_representable(2_147_483_648));
+            assert(!pid_is_representable(u32::MAX));
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

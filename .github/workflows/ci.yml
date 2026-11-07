@@ -1803,7 +1803,7 @@ jobs:
               "release workflow exposes a reusable workflow_call entry point": "  workflow_call:" in release and "certification_only:" in release,
               "CI runs the complete release workflow in certification-only mode": "uses: ./.github/workflows/release.yml" in ci and "certification_only: true" in ci,
               "release manifest signing is tested during certification": "inputs.certification_only || github.event_name == 'push'" in release and "Run updater tests against the aggregated manifest" in release,
-              "certification mode cannot publish release notes or assets": release.count("if: ${{ !inputs.certification_only }}") >= 2 and "name: Publish all release assets" in release,
+              "certification mode cannot publish release notes or assets": release.count("if: $" + "{{ !inputs.certification_only }}") >= 2 and "name: Publish all release assets" in release,
               "Server package replaces legacy Debian package": "conflicts: [gitrun]" in release and "replaces: [gitrun]" in release,
               "new CLI prefers the Server DEB target": 'artifact_for("linux-x86_64-server-deb")' in cli,
               "new CLI validates gitrun-server package identity": '"gitrun-server"' in cli and "trim() != expected_package" in cli,

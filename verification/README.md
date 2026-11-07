@@ -6,16 +6,22 @@ GitRun uses Kani for bit-precise model checking of selected pure Rust logic.
 
 The CI workflow also applies these complementary checks:
 
-- `cargo fmt --all -- --check` and per-file `rustfmt --check`, using each owning package's declared edition.
+- `cargo fmt --all -- --check` once in the existing `rust-lint` job. The source inventory does not rerun formatting for workspace files; it checks the standalone Kani entrypoint separately because it is outside the Cargo workspace.
 - Cargo workspace metadata validation and a fail-closed owner mapping for every tracked `.rs` file.
-- Workspace Clippy (`-D warnings`), documentation builds, and Cargo tests at package/target level. The Dashboard, Recovery and Management packages have dedicated build or headless validation paths where they are excluded from broad workspace commands.
-- `cargo audit` and `cargo deny` for advisory and dependency-policy analysis.
+- Workspace Clippy (`-D warnings`) and documentation builds run in the existing `rust-lint` job; Cargo tests run in their existing package/target jobs. The Dashboard, Recovery and Management packages have dedicated build or headless validation paths where they are excluded from broad workspace commands.
+- `cargo audit` and `cargo deny` run in the existing `audit-rust` job; formal verification does not repeat dependency analysis.
 - Miri runs the targeted pure updater regression test `canonical_premade_runner_source_is_immutable` from `crates/gitrun-updater/src/lib.rs`. It is not presented as whole-workspace Miri coverage.
 - The source inventory, Kani coverage and Miri coverage are separate artifacts. Files not covered by a Kani harness or the targeted Miri test remain explicitly `UNVERIFIED` or `NOT IN SCOPE`.
 
-Kani, Miri, Clippy, tests and dependency analysis answer different questions. The source inventory ensures every tracked Rust file is discovered, assigned to a real Cargo package (except the explicit standalone Kani harness), and parsed/formatted individually; Cargo target-level checks then type-check and test the packages and targets that own those files. Rust modules cannot generally be compiled independently of their parent crate because they rely on crate-level imports, macros, features and module visibility.
+Kani, Miri, Clippy, tests and dependency analysis answer different questions. The source inventory ensures every tracked Rust file is discovered and assigned to a real Cargo package (except the explicit standalone Kani harness). Formatting, Clippy, documentation, dependency analysis and Cargo tests remain in their existing dedicated jobs and are not duplicated by the inventory gate. Rust modules cannot generally be compiled independently of their parent crate because they rely on crate-level imports, macros, features and module visibility.
 
-Verus, Creusot and Flux remain future deductive/refinement-verification candidates: they require deliberate contracts and annotations, not a generic per-file switch, so they are not reported as active gates.
+## Second formal verification tool: Verus
+
+Verus is the planned second formal verification tool after Kani. Kani remains the bit-precise model checker for bounded execution properties, panic/overflow behavior, and selected low-level invariants. Verus will complement it with deductive proofs of mathematical invariants, state transitions, preconditions/postconditions, and functional correctness of critical algorithms.
+
+Verus is a planned tool, not an active passing CI gate yet. Integration is intentionally incremental and begins only after the Kani proof suite contains meaningful production invariants rather than only enum-domain checks. The first candidate areas are updater policy/state transitions, recovery invariants, and security-sensitive pure logic. Each Verus proof must state explicit contracts and map to production source; missing proofs remain `UNVERIFIED`, and a Verus job must fail closed on missing toolchain, missing required proofs, or failed proof obligations. Do not install Verus as a no-op or claim generic per-file verification: it verifies annotated specifications and implementations, not arbitrary Rust files automatically.
+
+The initial Verus adoption should use a separately pinned toolchain and a dedicated `verus-verification` job, with the same assurance vocabulary (`PROVEN`, `FAILED`, `UNVERIFIED`, `ERROR`, `NOT IN SCOPE`). It must not duplicate Clippy, `cargo audit`, `cargo deny`, or ordinary Cargo tests, which remain in their existing jobs.
 
 ## Required gate
 

@@ -49,12 +49,14 @@ The release workflow runs the same source proofs after its package matrices comp
 
 ## Per-file Rust source assurance
 
-The CI source-assurance gate inventories every tracked `.rs` file, including
+The source-assurance gate inventories every tracked `.rs` file, including
 test, build-script, example, benchmark, and verification sources. Each file
-must be tracked, have an owning Cargo package (or be an explicitly permitted
-verification entrypoint), and pass an individual rustfmt parse/format check
-with the repository toolchain. The generated inventory records the path,
-manifest, and source role; an unowned or malformed file fails the gate.
+must have an owning Cargo package (or be an explicitly permitted standalone
+verification entrypoint). Workspace files are formatted by the existing
+`rust-lint` job in CI and by the Release workflow's single workspace-format
+step; the standalone Kani entrypoint is checked individually because it is
+outside the workspace. The generated inventory records the path, manifest,
+and source role; an unowned file fails the gate.
 
 Package-level type checking, Clippy, documentation, and behavior tests remain
 Cargo target/package checks in their dedicated CI jobs. They are not falsely
@@ -69,12 +71,17 @@ them.
 
 ## Complementary assurance gates
 
-Kani is not the only Rust check. The normal CI pipeline also requires:
+Kani is not the only Rust check. The existing CI jobs already require:
 
-- `cargo fmt --check`, Clippy with `-D warnings`, and Rust documentation builds.
-- Workspace and headless-management tests, plus the updater, security, runtime,
-  scheduler, platform, service-manager, and release-contract regression suites.
-- `cargo audit` and `cargo deny` for advisory and dependency-policy checks.
+- `rust-lint`: `cargo fmt --all -- --check`, Clippy with `-D warnings`, and Rust documentation builds.
+- Dedicated test jobs: workspace and headless-management tests, plus updater,
+  security, runtime, scheduler, platform, service-manager, and release-contract
+  regression suites.
+- `audit-rust`: `cargo audit` and `cargo deny` for advisory and
+  dependency-policy checks.
+
+These checks remain in their existing jobs; the formal-verification and source
+inventory jobs do not rerun them.
 - Server and updater builds across x86_64/aarch64 and GNU/musl Linux targets.
 - Real Server package creation for all four target variants, plus independent
   GNU Desktop DEB/RPM/Arch package creation for x86_64 and ARM64.

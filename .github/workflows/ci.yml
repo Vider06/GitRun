@@ -9865,7 +9865,7 @@ jobs:
           detect_ok=false; if [ "$(res detect)" = success ]; then detect_ok=true; fi
           declare -A STATE LABEL SECS CACHE DEPS DEP_IDS WHY
           order=(); nfail=0; ncancel=0; nok=0; nblocked=0; nna=0
-          while IFS='|' read -r id label flag extra; do
+          while IFS='|' read -r id label flag _; do
             [ -n "$id" ] || continue
             order+=("$id"); LABEL[$id]="$label"
             r="$(res "$id")"; SECS[$id]="$(out "$id" secs)"; CACHE[$id]="$(out "$id" cache)"

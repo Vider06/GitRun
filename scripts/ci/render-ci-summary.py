@@ -87,10 +87,16 @@ def make_report():
     ("Rust per-file inventory + Kani","formal-verification"),("Targeted interpreter run","miri")]
     for label,jid in surfaces: lines.append("| "+label+" | "+jid+" | "+states.get(jid,"na").upper()+" |")
     lines += ["","Commit: "+os.environ.get("HEAD_SHA","")[:8]+" · ref: "+os.environ.get("REF_NAME","")+" · event: "+os.environ.get("EVENT","")+" · run #"+os.environ.get("ATTEMPT","")+" ("+os.environ.get("RUN_URL","")+")","",
-    str(counts["success"])+" passed · "+str(counts["failure"])+" failed · "+str(counts["blocked"])+" blocked · "+str(counts["na"])+" not applicable · "+str(counts["cancelled"])+" cancelled","","Pipeline map:"]
+    str(counts["success"])+" passed · "+str(counts["failure"])+" failed · "+str(counts["blocked"])+" blocked · "+str(counts["na"])+" not applicable · "+str(counts["cancelled"])+" cancelled","",chr(96)*3+"mermaid","flowchart LR"]
     for jid,label,_,deptext in jobs:
-        lines.append(jid+": "+label+" ["+states[jid].upper()+", "+fmt(times[jid])+"]")
-        for dep in deptext.split(): lines.append("  "+dep+" -> "+jid)
+        node=jid.replace("-","_")
+        lines.append("  "+node+'["'+label+"<br/>"+states[jid].upper()+" "+fmt(times[jid])+'"]:::'+states[jid])
+    lines.append('  verdict{{"'+heading+'"}}:::success' if verdict=="success" else '  verdict{{"'+heading+'"}}:::failure')
+    for jid,_,_,deptext in jobs:
+        node=jid.replace("-","_")
+        for dep in deptext.split(): lines.append("  "+dep.replace("-","_")+" --> "+node)
+        lines.append("  "+node+" --> verdict")
+    lines += ["  classDef success fill:#dafbe1,stroke:#1a7f37,color:#0a3622","  classDef failure fill:#ffebe9,stroke:#cf222e,color:#82071e","  classDef na fill:#f6f8fa,stroke:#8c959f,color:#57606a","  classDef blocked fill:#fff8c5,stroke:#bf8700,color:#633c01","  classDef cancelled fill:#eaeef2,stroke:#57606a,color:#24292f",chr(96)*3]
     lines += ["","| Status | Job | Time | Depends on | Cache | Note |","|---|---|---|---|---|---|"]
     for jid,label,_,deptext in jobs:
         value=states[jid]

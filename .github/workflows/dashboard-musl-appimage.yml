@@ -1,6 +1,16 @@
 name: Dashboard musl AppImage experiment
 
 on:
+  push:
+    branches:
+      - feat/musl-desktop-appimage
+    paths:
+      - ".github/workflows/dashboard-musl-appimage.yml"
+      - ".github/workflows/release.yml"
+      - "crates/gitrun-dashboard-tauri/**"
+      - "scripts/ci/prepare-musl-dashboard-appdir.sh"
+      - "scripts/ci/check-musl-dashboard-appdir.py"
+      - "docs/DESKTOP_MUSL_APPIMAGE.md"
   pull_request:
     paths:
       - ".github/workflows/dashboard-musl-appimage.yml"
@@ -73,7 +83,6 @@ jobs:
       NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-musl-appimage-npm
       APPIMAGE_TOOL_CARGO_HOME: ${{ github.workspace }}/.gitrun-appimagetool-cargo
       APPIMAGE_TOOL_TARGET_DIR: ${{ github.workspace }}/.gitrun-appimagetool-target
-      APPDIR: ${{ runner.temp }}/gitrun-dashboard-${{ matrix.distro }}-${{ matrix.target }}.AppDir
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -103,6 +112,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          appdir="$RUNNER_TEMP/gitrun-dashboard-$MUSL_DISTRO-$TARGET.AppDir"
+          container_appdir="/runner-temp/gitrun-dashboard-$MUSL_DISTRO-$TARGET.AppDir"
+          echo "APPDIR=$appdir" >> "$GITHUB_ENV"
           mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR" "$NPM_CONFIG_CACHE" "$APPIMAGE_TOOL_CARGO_HOME" "$APPIMAGE_TOOL_TARGET_DIR"
           docker run --rm --pull=always --platform "$DOCKER_PLATFORM" \
             -e TARGET="$TARGET" \
@@ -114,7 +126,7 @@ jobs:
             -e CARGO_TARGET_DIR="/workspace/.gitrun-musl-appimage-target-$TARGET" \
             -e CARGO_INCREMENTAL=0 \
             -e NPM_CONFIG_CACHE=/workspace/.gitrun-musl-appimage-npm \
-            -e APPDIR="/runner-temp/gitrun-dashboard-$MUSL_DISTRO-$TARGET.AppDir" \
+            -e APPDIR="$container_appdir" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -v "$RUNNER_TEMP:/runner-temp" \
             -w /workspace/crates/gitrun-dashboard-tauri \
@@ -176,7 +188,7 @@ jobs:
               bash /workspace/scripts/ci/prepare-musl-dashboard-appdir.sh \
                 "$binary" "$APPDIR" "$TARGET" "0.0.0-experimental"
             '
-          sudo chown -R "$(id -u):$(id -g)" "$CARGO_HOME" "$CARGO_TARGET_DIR" "$NPM_CONFIG_CACHE" "$APPIMAGE_TOOL_CARGO_HOME" "$APPIMAGE_TOOL_TARGET_DIR" "$APPDIR"
+          sudo chown -R "$(id -u):$(id -g)" "$CARGO_HOME" "$CARGO_TARGET_DIR" "$NPM_CONFIG_CACHE" "$APPIMAGE_TOOL_CARGO_HOME" "$APPIMAGE_TOOL_TARGET_DIR" "$appdir"
 
       - name: Verify staged musl AppDir
         run: |

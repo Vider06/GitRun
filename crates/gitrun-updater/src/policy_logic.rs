@@ -3,8 +3,8 @@
 #[cfg(verus)]
 use vstd::prelude::*;
 
-#[cfg_attr(verus, verus_verify)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(verus, verus_verify)]
 #[cfg_attr(
     all(not(kani), not(verus)),
     derive(serde::Serialize, serde::Deserialize)

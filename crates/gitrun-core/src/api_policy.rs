@@ -113,7 +113,8 @@ impl GitRunApi {
             | (Self::GitDispatchRun, GitRunOperation::Plan) => true,
             _ => false,
         }
-    }}
+    }
+}
 
 /// Validates the argument shape of one public Git*Run operation.
 ///

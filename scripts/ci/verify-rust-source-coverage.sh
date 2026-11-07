@@ -30,6 +30,9 @@ for file in "${rust_files[@]}"; do
       manifest="Cargo.toml (verification entrypoint)"
     fi
   fi
+  if [[ -n "$manifest" && "$manifest" != "Cargo.toml (verification entrypoint)" ]] && ! grep -q '^\[package\]' "$manifest"; then
+    manifest=""
+  fi
   if [[ -z "$manifest" ]]; then
     printf 'UNOWNED\t%s\n' "$file" | tee -a "$inventory" >&2
     failures=$((failures + 1))

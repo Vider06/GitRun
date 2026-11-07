@@ -1780,9 +1780,9 @@ jobs:
       - *logs
 
   formal-verification:
-    name: Formal Rust verification (Kani)
-    needs: [cargo-lock]
-    if: ${{ needs.cargo-lock.result == 'success' && needs.cargo-lock.outputs.rust == 'true' }}
+    name: Rust source assurance and formal verification
+    needs: [cargo-lock, rust-lint]
+    if: ${{ needs.cargo-lock.result == 'success' && needs.cargo-lock.outputs.rust == 'true' && needs.rust-lint.result == 'success' }}
     runs-on: *runner
     timeout-minutes: 60
     outputs: *job_outputs
@@ -1793,6 +1793,17 @@ jobs:
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:
           toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt
+      - name: Verify every tracked Rust source file
+        shell: bash
+        run: bash scripts/ci/verify-rust-source-coverage.sh
+      - name: Upload Rust source inventory
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rust-source-inventory
+          path: ${{ runner.temp }}/gitrun-rust-source-inventory.tsv
+          if-no-files-found: error
+          retention-days: 7
       - name: Install pinned Kani verifier
         shell: bash
         run: |
@@ -2679,7 +2690,7 @@ jobs:
           platform-compatibility|Linux platform and updater target contracts|rust|rust-lint
           multi-distro-contracts|Multi-distro portability contracts|rust|rust-lint
           release-contracts|Server, Desktop and migration release contracts|workflows|
-          formal-verification|Formal Rust verification (Kani)|rust|
+          formal-verification|Rust source assurance and formal verification|rust|rust-lint
           tauri|Tauri GUI|tauri|rust-lint frontend
           tauri-arm64|Tauri GUI native ARM64 build|tauri|rust-lint frontend
           tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend

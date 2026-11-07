@@ -10,6 +10,7 @@ GitRun uses Kani for bit-precise model checking of selected pure Rust logic.
 - Required harnesses:
   - `update_policy_acceptance_is_exact`
   - `release_type_wire_values_are_total`
+  - `update_policy_wire_values_are_total`
 
 Run locally after installing the pinned Kani release:
 

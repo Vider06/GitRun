@@ -2,6 +2,21 @@
 
 GitRun uses Kani for bit-precise model checking of selected pure Rust logic.
 
+## Complementary Rust checks
+
+The CI workflow also applies these complementary checks:
+
+- `cargo fmt --all -- --check` and per-file `rustfmt --check`, using each owning package's declared edition.
+- Cargo workspace metadata validation and a fail-closed owner mapping for every tracked `.rs` file.
+- Workspace Clippy (`-D warnings`), documentation builds, and Cargo tests at package/target level. The Dashboard, Recovery and Management packages have dedicated build or headless validation paths where they are excluded from broad workspace commands.
+- `cargo audit` and `cargo deny` for advisory and dependency-policy analysis.
+- Miri runs the targeted pure updater regression test `canonical_premade_runner_source_is_immutable` from `crates/gitrun-updater/src/lib.rs`. It is not presented as whole-workspace Miri coverage.
+- The source inventory, Kani coverage and Miri coverage are separate artifacts. Files not covered by a Kani harness or the targeted Miri test remain explicitly `UNVERIFIED` or `NOT IN SCOPE`.
+
+Kani, Miri, Clippy, tests and dependency analysis answer different questions. The source inventory ensures every tracked Rust file is discovered, assigned to a real Cargo package (except the explicit standalone Kani harness), and parsed/formatted individually; Cargo target-level checks then type-check and test the packages and targets that own those files. Rust modules cannot generally be compiled independently of their parent crate because they rely on crate-level imports, macros, features and module visibility.
+
+Verus, Creusot and Flux remain future deductive/refinement-verification candidates: they require deliberate contracts and annotations, not a generic per-file switch, so they are not reported as active gates.
+
 ## Required gate
 
 - Kani version: `0.68.0`

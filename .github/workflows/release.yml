@@ -1211,19 +1211,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-      - name: Install pinned Kani verifier
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo install --locked kani-verifier --version 0.68.0
-          cargo kani setup
-      - name: Prove required Rust invariants
-        shell: bash
-        run: bash scripts/ci/verify-rust-formal.sh
       - name: Download collected canonical inputs
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
@@ -1489,6 +1476,19 @@ jobs:
             digest="$(sha256sum "$package" | cut -d ' ' -f 1)"
             printf 'VERIFIED %s (%s bytes, sha256=%s)\n' "$name" "$(stat -c '%s' "$package")" "$digest"
           done
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Install pinned Kani verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install --locked kani-verifier --version 0.68.0
+          cargo kani setup
+      - name: Prove required Rust invariants
+        shell: bash
+        run: bash scripts/ci/verify-rust-formal.sh
       - name: Upload formally verified release payload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

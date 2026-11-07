@@ -24,7 +24,79 @@ finish_formal_report() {
 
   if [ -s "$inventory" ]; then
     printf 'SOURCE_FILE\tKANI_STATUS\tPACKAGE\tROLE\n' > "$coverage"
-    while IFS=$'\t' read -r file_state file manifest role; do
+    while IFS=
+      case "$status" in
+        PROVEN)
+          if [ "$file" = "$proof_source" ]; then file_status=PROVEN; else file_status=UNVERIFIED; fi
+          ;;
+        FAILED)
+          if [ "$file" = "$proof_source" ]; then file_status=FAILED; else file_status=UNVERIFIED; fi
+          ;;
+        UNVERIFIED) file_status=UNVERIFIED ;;
+        *) file_status=ERROR ;;
+      esac
+      printf '%s\t%s\t%s\t%s\n' "$file" "$file_status" "${manifest:-unknown}" "${role:-unknown}" >> "$coverage"
+    done < "$inventory"
+  fi
+
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    {
+      echo "### Kani proof coverage"
+      echo
+      echo "| Scope | Status |"
+      echo "|---|---|"
+      echo "| Updater release-policy proof harnesses | **$status** |"
+      echo "| Production source file with Kani properties | `$proof_source` |"
+      echo "| Other tracked Rust files | `UNVERIFIED` by Kani; checked by the per-file and Cargo gates |"
+      echo
+      echo "Kani status vocabulary: `PROVEN`, `FAILED`, `UNVERIFIED`, `ERROR`, `NOT IN SCOPE`."
+      echo
+    } >> "$GITHUB_STEP_SUMMARY"
+  fi
+  if [ "$rc" -ne 0 ]; then
+    echo "Kani formal verification status: $status (exit $rc)." >&2
+  fi
+  exit "$rc"
+}
+trap finish_formal_report EXIT
+
+if ! command -v kani >/dev/null 2>&1; then
+  echo "Kani is not installed; refusing to report formal verification as successful." >&2
+  exit 1
+fi
+
+kani_version="$(kani --version 2>&1)"
+if [[ "$kani_version" != *"$expected_kani_version"* ]]; then
+  echo "Unexpected Kani version: $kani_version (expected $expected_kani_version)." >&2
+  exit 1
+fi
+
+if ! test -s "$proof_source"; then
+  echo "Required Kani production proof source is missing: $proof_source" >&2
+  exit 1
+fi
+phase=coverage
+for harness in "${required_harnesses[@]}"; do
+  if ! grep -B1 -Fq "fn $harness()" "$proof_source" || ! grep -B1 -F "fn $harness()" "$proof_source" | grep -Fq "#[kani::proof]" ; then
+    echo "Required Kani proof harness is missing: $harness" >&2
+    exit 1
+  fi
+done
+
+proof_count="$(grep -Rho --include='*.rs' '#\[kani::proof\]' crates | wc -l | tr -d '[:space:]')"
+if [[ "$proof_count" -lt "${#required_harnesses[@]}" ]]; then
+  echo "Formal verification has too few proof harnesses: $proof_count." >&2
+  exit 1
+fi
+
+echo "Kani version: $kani_version"
+echo "Required proof harnesses: ${required_harnesses[*]}"
+echo "Total source proof annotations: $proof_count"
+phase=proof
+kani verification/kani/updater_policy.rs
+phase=complete
+\t' read -r file_state file manifest role; do
+      [ "$file_state" = FORMAT_OK ] || continue
       [ -n "$file" ] || continue
       case "$status" in
         PROVEN)
@@ -78,7 +150,7 @@ if ! test -s "$proof_source"; then
 fi
 phase=coverage
 for harness in "${required_harnesses[@]}"; do
-  if ! grep -Fq "fn $harness()" "$proof_source" || ! grep -Fq "#[kani::proof]" "$proof_source"; then
+  if ! grep -B1 -Fq "fn $harness()" "$proof_source" || ! grep -B1 -F "fn $harness()" "$proof_source" | grep -Fq "#[kani::proof]" ; then
     echo "Required Kani proof harness is missing: $harness" >&2
     exit 1
   fi

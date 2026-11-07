@@ -5,6 +5,7 @@ readonly expected_kani_version="0.68.0"
 readonly required_harnesses=(
   "update_policy_acceptance_is_exact"
   "release_type_wire_values_are_total"
+  "update_policy_wire_values_are_total"
 )
 
 if ! command -v kani >/dev/null 2>&1; then

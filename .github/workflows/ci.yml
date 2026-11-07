@@ -3029,7 +3029,8 @@ jobs:
         run: bash scripts/ci/install-verus.sh
       - name: Verify Verus toolchain and proof runner
         shell: bash
-        run: "${RUNNER_TEMP}/verus/installed/verus" verification/verus/smoke.rs
+        run: |
+          "${RUNNER_TEMP}/verus/installed/verus" verification/verus/smoke.rs
       - name: Enforce dual-verifier coverage for every tracked Rust file
         shell: bash
         run: python3 scripts/ci/verify-rust-dual-coverage.py

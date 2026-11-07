@@ -109,7 +109,7 @@ inventoried="$(grep -c '^INVENTORIED' "$inventory" || true)"
 
 cat "$inventory"
 if ((failures > 0)); then
-  echo "Rust source assurance failed: $failures file(s) are unowned or failed rustfmt." >&2
+  echo "Rust source inventory failed: $failures file(s) are unowned or the standalone verification entrypoint failed rustfmt." >&2
   exit 1
 fi
 echo "Rust source assurance passed for ${#rust_files[@]} tracked files."

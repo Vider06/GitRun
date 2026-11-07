@@ -475,97 +475,42 @@ impl PolicyMatrix {
 mod kani_verification {
     use super::{GitRunApi, GitRunOperation};
 
-    const APIS: [GitRunApi; 10] = [
-        GitRunApi::GitVaultRun,
-        GitRunApi::GitDockRun,
-        GitRunApi::GitSaveRun,
-        GitRunApi::GitRegisterRun,
-        GitRunApi::GitInstallRun,
-        GitRunApi::GitReadRun,
-        GitRunApi::GitWriteRun,
-        GitRunApi::GitVerifyRun,
-        GitRunApi::GitStatusRun,
-        GitRunApi::GitDispatchRun,
-    ];
-
-    const OPERATIONS: [GitRunOperation; 20] = [
-        GitRunOperation::Read,
-        GitRunOperation::Write,
-        GitRunOperation::Exists,
-        GitRunOperation::Delete,
-        GitRunOperation::List,
-        GitRunOperation::Connect,
-        GitRunOperation::Disconnect,
-        GitRunOperation::Execute,
-        GitRunOperation::Melt,
-        GitRunOperation::Mount,
-        GitRunOperation::Unmount,
-        GitRunOperation::File,
-        GitRunOperation::Logs,
-        GitRunOperation::Register,
-        GitRunOperation::Install,
-        GitRunOperation::Remove,
-        GitRunOperation::Update,
-        GitRunOperation::Verify,
-        GitRunOperation::Status,
-        GitRunOperation::Plan,
-    ];
-
-    // Rows follow APIS order; columns follow OPERATIONS order.
-    const EXPECTED: [[bool; 20]; 10] = [
-        [
-            true, true, true, true, true, false, false, false, false, false, false, false, false,
-            false, false, false, false, false, false, false,
-        ],
-        [
-            true, true, false, false, false, true, true, true, true, true, true, false, false,
-            false, false, false, false, false, false, false,
-        ],
-        [
-            false, false, false, false, false, false, false, false, false, false, false, true,
-            true, false, false, false, false, false, false, false,
-        ],
-        [
-            false, false, false, false, false, false, false, false, false, false, false, false,
-            false, true, false, false, false, false, false, false,
-        ],
-        [
-            false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, true, true, true, false, false, false,
-        ],
-        [
-            true, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, false, false, false, false, false, false,
-        ],
-        [
-            false, true, false, false, false, false, false, false, false, false, false, false,
-            false, false, false, false, false, false, false, false,
-        ],
-        [
-            false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, false, false, false, true, false, false,
-        ],
-        [
-            false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, false, false, false, false, true, false,
-        ],
-        [
-            false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, false, false, false, false, false, true,
-        ],
-    ];
-
-    /// Exhaustively compares all 200 API/operation pairs with the closed contract matrix.
+    /// Compares the production decision with the closed allowlist for all
+    /// symbolic API and operation variants, without loop-unwind assumptions.
     #[kani::proof]
     fn api_operation_matrix_matches_the_closed_contract() {
-        for api_index in 0..APIS.len() {
-            for operation_index in 0..OPERATIONS.len() {
-                assert!(
-                    APIS[api_index].supports_operation(OPERATIONS[operation_index])
-                        == EXPECTED[api_index][operation_index]
-                );
-            }
-        }
+        let api: GitRunApi = kani::any();
+        let operation: GitRunOperation = kani::any();
+
+        let expected = matches!(
+            (api, operation),
+            (GitRunApi::GitVaultRun, GitRunOperation::Read)
+                | (GitRunApi::GitVaultRun, GitRunOperation::Write)
+                | (GitRunApi::GitVaultRun, GitRunOperation::Exists)
+                | (GitRunApi::GitVaultRun, GitRunOperation::Delete)
+                | (GitRunApi::GitVaultRun, GitRunOperation::List)
+                | (GitRunApi::GitDockRun, GitRunOperation::Connect)
+                | (GitRunApi::GitDockRun, GitRunOperation::Disconnect)
+                | (GitRunApi::GitDockRun, GitRunOperation::Read)
+                | (GitRunApi::GitDockRun, GitRunOperation::Write)
+                | (GitRunApi::GitDockRun, GitRunOperation::Execute)
+                | (GitRunApi::GitDockRun, GitRunOperation::Melt)
+                | (GitRunApi::GitDockRun, GitRunOperation::Mount)
+                | (GitRunApi::GitDockRun, GitRunOperation::Unmount)
+                | (GitRunApi::GitSaveRun, GitRunOperation::File)
+                | (GitRunApi::GitSaveRun, GitRunOperation::Logs)
+                | (GitRunApi::GitRegisterRun, GitRunOperation::Register)
+                | (GitRunApi::GitInstallRun, GitRunOperation::Install)
+                | (GitRunApi::GitInstallRun, GitRunOperation::Remove)
+                | (GitRunApi::GitInstallRun, GitRunOperation::Update)
+                | (GitRunApi::GitReadRun, GitRunOperation::Read)
+                | (GitRunApi::GitWriteRun, GitRunOperation::Write)
+                | (GitRunApi::GitVerifyRun, GitRunOperation::Verify)
+                | (GitRunApi::GitStatusRun, GitRunOperation::Status)
+                | (GitRunApi::GitDispatchRun, GitRunOperation::Plan)
+        );
+
+        assert_eq!(api.supports_operation(operation), expected);
     }
 }
 

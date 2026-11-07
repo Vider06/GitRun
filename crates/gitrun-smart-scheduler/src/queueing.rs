@@ -232,8 +232,7 @@ pub fn plan_runner_floor(
             reason: "runner floor is already at the configured maximum",
         });
     }
-    let upper =
-        bounded_growth_upper(current_floor, max_additional_runners, max_runners);
+    let upper = bounded_growth_upper(current_floor, max_additional_runners, max_runners);
     for candidate in current_floor..=upper {
         if let Ok(estimate) = erlang_c(
             arrival_rate_per_second,

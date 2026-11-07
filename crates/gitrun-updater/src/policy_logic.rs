@@ -1,5 +1,9 @@
-//! Pure updater release-policy types shared by runtime code and Kani proofs.
+//! Pure updater release-policy types shared by runtime code and formal proofs.
 
+#[cfg(verus)]
+use vstd::prelude::*;
+
+#[cfg_attr(verus, verus_verify)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
     all(not(kani), not(verus)),
@@ -22,6 +26,7 @@ impl ReleaseType {
     }
 }
 
+#[cfg_attr(verus, verus_verify)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
     all(not(kani), not(verus)),
@@ -51,7 +56,9 @@ impl UpdatePolicy {
     pub fn accepts_release_type(self, release_type: ReleaseType) -> bool {
         match self {
             Self::SecurityOnly => release_type == ReleaseType::Security,
-            Self::SecurityFull => matches!(release_type, ReleaseType::Security | ReleaseType::Full),
+            Self::SecurityFull => {
+                release_type == ReleaseType::Security || release_type == ReleaseType::Full
+            },
             Self::SecurityFullPre => true,
         }
     }

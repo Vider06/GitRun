@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(verus)]
 use vstd::prelude::*;
 
+#[cfg(not(verus))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(all(not(kani), not(verus)), derive(Serialize, Deserialize))]
 pub enum RunnerState {
@@ -12,15 +13,20 @@ pub enum RunnerState {
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(verus), derive(Debug, Clone, PartialEq, Eq))]
 #[cfg_attr(all(not(kani), not(verus)), derive(Serialize, Deserialize))]
 pub struct Runner {
+    #[cfg(not(verus))]
     pub name: String,
+    #[cfg(not(verus))]
     pub repository: String,
+    #[cfg(not(verus))]
     pub state: RunnerState,
+    #[cfg(not(verus))]
     pub labels: Vec<String>,
 }
 
+#[cfg(not(verus))]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RunnerPool {
     runners: Vec<Runner>,
@@ -37,6 +43,7 @@ impl Runner {
     }
 }
 
+#[cfg(not(verus))]
 impl RunnerPool {
     pub fn new(runners: Vec<Runner>) -> Self {
         Self { runners }

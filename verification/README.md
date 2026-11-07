@@ -29,6 +29,8 @@ The current Kani proof targets are:
 - `cooldown_seconds_are_bounded` in
   `crates/gitrun-scheduler/src/backoff.rs`: the production Retry-After clamp
   never increases its input and never exceeds 86400 seconds.
+- `pid_range_is_exact` in `crates/gitrun-gsr/src/watchdog.rs`: the PID guard
+  accepts exactly the positive values representable by signed `pid_t`.
 - The standalone `verification/kani/updater_policy.rs` harness also proves
   representative allow/deny outcomes using the imported production policy.
 
@@ -55,7 +57,7 @@ Verus is pinned to `0.2026.11.02.8bf68ee` and installed by
 Rust toolchain (`1.99.0`).
 
 The toolchain smoke proof in `verification/verus/smoke.rs` remains separate
-from source coverage. Production Verus properties are now attached to four
+from source coverage. Production Verus properties are now attached to five
 small decision functions:
 
 - `UpdatePolicy::accepts_release_type` in
@@ -68,6 +70,8 @@ small decision functions:
   minimum/maximum bounds proved for every `u32` input.
 - `cap_cooldown_seconds` in `crates/gitrun-scheduler/src/backoff.rs`, with
   the 86400-second cap and exact behavior on either side of the boundary.
+- `pid_is_representable` in `crates/gitrun-gsr/src/watchdog.rs`, with the
+  exact interval accepted before a value can be converted to `pid_t`.
 
 The standalone updater-policy entrypoint also checks representative policy
 outcomes through its imported production module.
@@ -94,10 +98,10 @@ both verifier processes completed successfully for every mapped source; a
 smoke proof, compilation, inventory entry, or lint result cannot substitute.
 
 **Coverage at this PR revision:** the repository has 75 tracked Rust source
-files. Five rows have source-local Kani and Verus entrypoints: updater policy,
+files. Six rows have source-local Kani and Verus entrypoints: updater policy,
 its standalone verifier harness, the closed API-operation matrix, runner
-target bounds, and scheduler cooldown clamping. The remaining 70 rows are
-still `PLANNED`. These entries describe
+target bounds, scheduler cooldown clamping, and watchdog PID range validation.
+The remaining 69 rows are still `PLANNED`. These entries describe
 authored proof targets, not `PROVEN` results: both verifier processes must
 complete successfully before a source is reported as covered. The gate
 remains intentionally red until every tracked Rust file has a reviewed,

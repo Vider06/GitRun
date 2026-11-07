@@ -316,7 +316,7 @@ def check_native_init_package_resources(errors: list[str]) -> None:
         ".post-upgrade$",
         'install -m 0755 packaging/xbps/INSTALL "$xbps_stage/INSTALL"',
         'install -m 0755 packaging/xbps/REMOVE "$xbps_stage/REMOVE"',
-        'python3 scripts/ci/build-xbps-server-package.py \',
+        'python3 scripts/ci/build-xbps-server-package.py',
         'install -m 0755 packaging/runit/gitrun/run "$xbps_stage/etc/sv/gitrun/run"',
         'install -m 0755 packaging/runit/gitrun/log/run "$xbps_stage/etc/sv/gitrun/log/run"',
         'install -m 0755 packaging/runit/gitrun-gsr/run "$xbps_stage/etc/sv/gitrun-gsr/run"',

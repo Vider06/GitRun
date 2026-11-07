@@ -7326,10 +7326,11 @@ jobs:
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/server-packages"
-          cpu=x86_64
           case "$TARGET" in
-            aarch64-*) cpu=aarch64 ;;
-            x86_64-*) cpu=x86_64 ;;
+            x86_64-unknown-linux-gnu) cpu=x86_64 ;;
+            aarch64-unknown-linux-gnu) cpu=aarch64 ;;
+            x86_64-unknown-linux-musl) cpu=x86_64-musl ;;
+            aarch64-unknown-linux-musl) cpu=aarch64-musl ;;
             *) echo "Unsupported target architecture: $TARGET" >&2; exit 1 ;;
           esac
           test -s "$out/GitRun-Server-$VERSION-$TARGET-server.tar.gz"
@@ -7353,12 +7354,12 @@ jobs:
             grep -Fq 'usr/bin/gitrun' <<< "$arch_files"
             grep -Fq 'usr/lib/systemd/system/gitrun.service' <<< "$arch_files"
           else
-            apk="$out/GitRun-Server-$VERSION-linux-$cpu-musl-apk.apk"
+            apk="$out/GitRun-Server-$VERSION-linux-$cpu-apk.apk"
             apk_contents="$(tar -tzf "$apk")"
             grep -Fq '.PKGINFO' <<< "$apk_contents"
             apk_info="$(tar -xOzf "$apk" .PKGINFO)"
             grep -Fxq 'pkgname = gitrun-server' <<< "$apk_info"
-            grep -Fxq "pkgver = $VERSION_NUMBER" <<< "$apk_info"
+            grep -Eq "^pkgver = ${VERSION_NUMBER}([.-]|$)" <<< "$apk_info"
             grep -Fq 'etc/init.d/gitrun' <<< "$apk_contents"
             grep -Fq 'etc/init.d/gitrun-gsr' <<< "$apk_contents"
           fi

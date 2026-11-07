@@ -2533,7 +2533,7 @@ jobs:
     uses: ./.github/workflows/release.yml
     if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
     permissions:
-      contents: read
+      contents: write
     with:
       certification_only: true
     secrets:

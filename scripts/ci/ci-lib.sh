@@ -361,16 +361,32 @@ ci_diag() {
   # shellcheck source=/dev/null
   echo "image : $( (. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown}") ) | $(getconf GNU_LIBC_VERSION 2>/dev/null) | fingerprint $(ci_image_fp)"
   echo "kernel: $(uname -srm)  cpus: $(nproc 2>/dev/null || echo ?)  load: $(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"
-  df -h "$ws" "$RUNNER_TEMP" 2>/dev/null || true
-  df -i "$ws" 2>/dev/null || true
+  df -hT "$ws" "$RUNNER_TEMP" 2>/dev/null || true
+  df -i "$ws" "$RUNNER_TEMP" 2>/dev/null || true
   free -m 2>/dev/null || true
+  if [ -r /sys/fs/cgroup/memory.max ]; then
+    echo "cgroup memory: $(cat /sys/fs/cgroup/memory.current 2>/dev/null || echo unknown) / $(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo unknown) bytes"
+  elif [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+    echo "cgroup memory limit: $(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)"
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    if timeout 5s docker info >/dev/null 2>&1; then echo "docker daemon: available"; else echo "docker daemon: installed but unavailable"; fi
+  else
+    echo "docker daemon: not installed"
+  fi
   if [ "${CI_VERBOSE:-0}" = 1 ]; then echo "--- environment (secrets filtered) ---"; env | grep -viE 'token|secret|password|key' | sort; fi
   echo "::endgroup::"
   avail_kb="$(df -Pk "$ws" | awk 'NR==2{print $4}')"
+  temp_avail_kb="$(df -Pk "$RUNNER_TEMP" | awk 'NR==2{print $4}')"
   inode_pct="$(df -Pi "$ws" | awk 'NR==2{gsub("%","",$5); print $5}')"
   mem_mb="$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 99999)"
-  if [ "${avail_kb:-0}" -lt 1048576 ]; then ci_err "disk almost full on the runner: $((avail_kb / 1024)) MB free in $ws (need >= 1 GB). Clean _work/ and docker images on $RUNNER_NAME."; return 1; fi
-  if [ "${avail_kb:-0}" -lt 5242880 ]; then ci_warn "low disk space: $((avail_kb / 1024)) MB free on $RUNNER_NAME"; fi
+  if [ "${avail_kb:-0}" -lt 1048576 ] || [ "${temp_avail_kb:-0}" -lt 1048576 ]; then
+    ci_err "disk almost full on the runner: workspace=$((avail_kb / 1024)) MB, runner-temp=$((temp_avail_kb / 1024)) MB free (need >= 1 GB on both). Clean _work/ and Docker images on $RUNNER_NAME."
+    return 1
+  fi
+  if [ "${avail_kb:-0}" -lt 5242880 ] || [ "${temp_avail_kb:-0}" -lt 5242880 ]; then
+    ci_warn "low disk space on $RUNNER_NAME: workspace=$((avail_kb / 1024)) MB, runner-temp=$((temp_avail_kb / 1024)) MB"
+  fi
   if [ "${inode_pct:-0}" -ge 90 ]; then ci_warn "inodes ${inode_pct}% used on $RUNNER_NAME"; fi
   if [ "${mem_mb:-99999}" -lt 1500 ]; then ci_warn "low memory: ${mem_mb} MB available on $RUNNER_NAME"; fi
   return 0

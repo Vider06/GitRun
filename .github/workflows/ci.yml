@@ -3304,6 +3304,7 @@ jobs:
       - native-service-manager-contracts
       - platform-target-check
       - release-package-certification
+      - migration-package-certification
       - platform-compatibility
       - multi-distro-contracts
       - release-contracts
@@ -3373,6 +3374,7 @@ jobs:
           native-service-manager-contracts|OpenRC and runit service-manager contracts|native|
           platform-target-check|Server and updater Linux target matrix|rust|rust-build
           release-package-certification|Release Server package matrix|rust|platform-target-check
+          migration-package-certification|One-time legacy migration package|rust|platform-target-check
           platform-compatibility|Linux platform and updater target contracts|rust|rust-lint
           multi-distro-contracts|Multi-distro portability contracts|rust|rust-lint
           release-contracts|Server, Desktop and migration release contracts|workflows|
@@ -7701,6 +7703,133 @@ jobs:
       - *report
       - *logs
 
+
+  migration-package-certification:
+    name: Conditional legacy migration package certification
+    needs: [cargo-lock, rust-lint, platform-target-check]
+    if: ${{ needs.cargo-lock.outputs.rust == 'true' && needs.rust-lint.result == 'success' }}
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - name: Detect one-time migration release
+        id: migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_NUMBER="$(tr -d '[:space:]' < version.txt)"
+          VERSION="v$VERSION_NUMBER"
+          echo "VERSION_NUMBER=$VERSION_NUMBER" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          if [ "$VERSION" = v1.9.1 ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Migration package certification is required for $VERSION."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Migration package certification is not in scope for $VERSION."
+          fi
+      - name: Download new Server binary
+        if: steps.migration.outputs.enabled == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: server-build-x86_64-unknown-linux-gnu
+          path: canonical
+      - name: Restore canonical binary permissions
+        if: steps.migration.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          chmod 0755 canonical/gitrun
+          mv canonical/gitrun canonical/gitrun-x86_64-unknown-linux-gnu
+      - name: Checkout exact 1.8.23 packaging contract
+        if: steps.migration.outputs.enabled == 'true'
+        run: git clone --quiet --depth 1 --branch v1.8.23 "https://github.com/$GITHUB_REPOSITORY.git" "$RUNNER_TEMP/gitrun-v1.8.23-packaging"
+      - name: Assemble and validate legacy-layout migration package
+        if: steps.migration.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dpkg-dev imagemagick
+          test "$VERSION" = v1.9.1
+          binary="$GITHUB_WORKSPACE/canonical/gitrun-x86_64-unknown-linux-gnu"
+          test -x "$binary"
+          root="$RUNNER_TEMP/legacy-deb-root"
+          out="$RUNNER_TEMP/migration-package"
+          rm -rf "$root" "$out"
+          mkdir -p "$root/DEBIAN" "$root/usr/bin" "$root/usr/libexec/gitrun" \
+            "$root/usr/share/gitrun" "$root/usr/share/doc/gitrun" "$root/usr/share/applications" "$out"
+          cat > "$root/DEBIAN/control" <<CONTROL
+          Package: gitrun
+          Version: $VERSION_NUMBER
+          Section: devel
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Vider06
+          Description: GitRun self-hosted GitHub Actions runner manager
+           One-time migration package for existing GitRun 1.8.23 installations.
+          CONTROL
+          install -m 0755 "$binary" "$root/usr/bin/gitrun"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/scripts/reinstall-latest.sh" "$root/usr/libexec/gitrun/reinstall-latest.sh"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/scripts/uninstall.sh" "$root/usr/libexec/gitrun/uninstall.sh"
+          install -m 0755 packaging/gitrun-migration-prerm "$root/DEBIAN/prerm"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/packaging/gitrun-postinst" "$root/DEBIAN/postinst"
+          sh -n "$root/DEBIAN/prerm"
+          sh -n "$root/DEBIAN/postinst"
+          install -m 0644 version.txt "$root/usr/share/gitrun/version.txt"
+          install -m 0644 LICENSE "$root/usr/share/doc/gitrun/LICENSE"
+          install -m 0644 README.md "$root/usr/share/doc/gitrun/README.md"
+          install -m 0644 config/config.example.env "$root/usr/share/doc/gitrun/config.example.env"
+          install -m 0644 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/packaging/gitrun.desktop" "$root/usr/share/applications/gitrun.desktop"
+          for size in 32 64 128 256 512; do
+            source="$RUNNER_TEMP/gitrun-v1.8.23-packaging/assets/gitrun-icon-$size.png"
+            destination="$root/usr/share/icons/hicolor/${size}x${size}/apps/gitrun.png"
+            test -s "$source"
+            mkdir -p "$(dirname "$destination")"
+            convert "$source" -alpha on -define png:color-type=6 "PNG32:$destination"
+          done
+          artifact="GitRun-$VERSION-linux-x86_64-deb.deb"
+          dpkg-deb --build --root-owner-group "$root" "$out/$artifact" >/dev/null
+          test "$(dpkg-deb -f "$out/$artifact" Package)" = gitrun
+          test "$(dpkg-deb -f "$out/$artifact" Version)" = "$VERSION_NUMBER"
+          control_inspect="$RUNNER_TEMP/migration-control-inspect"
+          dpkg-deb -e "$out/$artifact" "$control_inspect"
+          sh -n "$control_inspect/prerm"
+          grep -Fq 'in-favour' "$control_inspect/prerm"
+          grep -Fq 'gitrun-server' "$control_inspect/prerm"
+          mock_bin="$RUNNER_TEMP/migration-prerm-mock"
+          mock_log="$RUNNER_TEMP/migration-prerm-systemctl.log"
+          mkdir -p "$mock_bin"
+          cat > "$mock_bin/systemctl" <<'MOCK'
+          #!/bin/sh
+          printf '%s\n' "$*" >> "$GITRUN_MIGRATION_SYSTEMCTL_LOG"
+          MOCK
+          chmod 0755 "$mock_bin/systemctl"
+          : > "$mock_log"
+          PATH="$mock_bin:$PATH" GITRUN_MIGRATION_SYSTEMCTL_LOG="$mock_log" \
+            "$control_inspect/prerm" remove in-favour gitrun-server "$VERSION_NUMBER"
+          test ! -s "$mock_log"
+          PATH="$mock_bin:$PATH" GITRUN_MIGRATION_SYSTEMCTL_LOG="$mock_log" \
+            "$control_inspect/prerm" remove
+          grep -Fq 'disable --now gitrun-gsr.service gitrun.service' "$mock_log"
+          dpkg-deb -x "$out/$artifact" "$RUNNER_TEMP/legacy-package-inspect"
+          test -x "$RUNNER_TEMP/legacy-package-inspect/usr/bin/gitrun"
+          test -x "$RUNNER_TEMP/legacy-package-inspect/usr/libexec/gitrun/reinstall-latest.sh"
+          sha256sum "$out/$artifact" > "$out/SHA256SUMS"
+      - name: Upload certified legacy migration package
+        if: steps.migration.outputs.enabled == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-migration-deb-linux-x86_64
+          path: ${{ runner.temp }}/migration-package/*
+          if-no-files-found: error
+          retention-days: 1
+      - *report
+      - *logs
 
   # ───────────────────────────────────────────── Linux platform contracts ──
   platform-compatibility:

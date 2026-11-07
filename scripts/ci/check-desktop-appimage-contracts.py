@@ -60,9 +60,6 @@ def main() -> int:
 
     packager_markers = (
         'SHARUN_VERSION="v0.8.1"',
-        ("SHARUN_COMMIT=", "b1ef744989533d8b", "1b4327b647fb315a", "42765ab9"),
-        ("18d970f56eca2c52", "7ffd3993b161b6bc", "340055129db14b39", "4a77cb67d8bbfff9"),
-        ("36a0d16e9d6085e0", "f11a3e3f76727a0a", "14aee44ef8e626a7", "6a99555f4da541dc"),
         "--with-sharun",
         "--with-hooks",
         "shared/lib/lib.path",

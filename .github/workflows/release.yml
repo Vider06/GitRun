@@ -8,25 +8,10 @@ on:
         description: "Release version (for example v1.9.1)"
         required: true
         type: string
-  workflow_call:
-    inputs:
-      server_packages_only:
-        description: "Build and package the Server target matrix without running Desktop or release publishing jobs."
-        required: false
-        type: boolean
-        default: false
-      version:
-        description: "Optional release version; defaults to version.txt."
-        required: false
-        type: string
-        default: ""
-    secrets:
-      GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64:
-        required: false
 permissions:
   contents: write
 concurrency:
-  group: gitrun-release-${{ github.ref }}-${{ inputs.version || github.event.inputs.version || github.ref_name }}
+  group: gitrun-release-${{ github.ref }}-${{ github.event.inputs.version || github.ref_name }}
   cancel-in-progress: false
 env:
   RUST_VERSION: "1.99.0"
@@ -62,29 +47,16 @@ jobs:
       - name: Resolve version and synchronize Markdown markers
         id: version
         env:
-          RELEASE_VERSION_INPUT: ${{ inputs.version || github.event.inputs.version }}
-          SERVER_PACKAGES_ONLY: ${{ inputs.server_packages_only }}
+          RELEASE_VERSION: ${{ github.event.inputs.version || github.ref_name }}
           MIGRATION_RELEASE_ENABLED: ${{ vars.GITRUN_ENABLE_MIGRATION_RELEASE }}
-          MIGRATION_RELEASE_ALLOWED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$SERVER_PACKAGES_ONLY" != "true" ]]; then
-            echo "Refusing release workflow invocation for pull requests unless Server package certification is enabled." >&2
-            exit 1
-          fi
-          version="${RELEASE_VERSION_INPUT:-}"
-          if [ -z "$version" ]; then
-            if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-              version="$GITHUB_REF_NAME"
-            else
-              version="v$(tr -d '[:space:]' < version.txt)"
-            fi
-          fi
+          version="$RELEASE_VERSION"
           [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
           number="${version#v}"
           test "$(tr -d '[:space:]' < version.txt)" = "$number"
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
             test "$(git rev-parse "$version^{commit}")" = "$GITHUB_SHA"
           fi
           python3 scripts/sync-markdown-version.py --version "$number"
@@ -92,7 +64,7 @@ jobs:
           python3 scripts/check-version-consistency.py
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "version_number=$number" >> "$GITHUB_OUTPUT"
-          if [ "$number" = "1.9.1" ] && [ "$MIGRATION_RELEASE_ENABLED" = "true" ] && [ "$MIGRATION_RELEASE_ALLOWED" = "true" ]; then
+          if [ "$number" = "1.9.1" ] && [ "$MIGRATION_RELEASE_ENABLED" = "true" ]; then
             migration_release=true
           else
             migration_release=false
@@ -272,7 +244,6 @@ jobs:
   build-dashboard:
     name: Independent GitRun Desktop · ${{ matrix.target }}
     needs: prepare
-    if: ${{ !inputs.server_packages_only }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     permissions:
@@ -539,13 +510,10 @@ jobs:
   collect:
     name: Collect canonical target builds
     needs: [prepare, build-server, build-dashboard]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.build-server.result == 'success' && (inputs.server_packages_only || needs.build-dashboard.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
-    env:
-      SERVER_PACKAGES_ONLY: ${{ inputs.server_packages_only }}
     steps:
       - name: Download immutable build outputs
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
@@ -566,12 +534,10 @@ jobs:
             test -x "$binary"
             test -s "$archive"
           done
-          if [[ "$SERVER_PACKAGES_ONLY" != "true" ]]; then
-            test -s "canonical-inputs/GitRun-Desktop-${{ needs.prepare.outputs.version }}-linux-x86_64.AppImage"
-            test -s "canonical-inputs/GitRun-Desktop-${{ needs.prepare.outputs.version }}-linux-aarch64.AppImage"
-            test -s "canonical-inputs/GitRun-Desktop-${{ needs.prepare.outputs.version }}-x86_64-unknown-linux-musl.bin"
-            test -s "canonical-inputs/GitRun-Desktop-${{ needs.prepare.outputs.version }}-aarch64-unknown-linux-musl.bin"
-          fi
+          test -s "canonical-inputs/GitRun-Desktop-${{ needs.prepare.outputs.version }}-linux-x86_64.AppImage"
+          test -s "canonical-inputs/GitRun-Desktop-${{ needs.prepare.outputs.version }}-linux-aarch64.AppImage"
+          test -s "canonical-inputs/GitRun-Desktop-${{ needs.prepare.outputs.version }}-x86_64-unknown-linux-musl.bin"
+          test -s "canonical-inputs/GitRun-Desktop-${{ needs.prepare.outputs.version }}-aarch64-unknown-linux-musl.bin"
           test -s canonical-inputs/library.zip
           test -s canonical-inputs/cargo-metadata.json
           test -s canonical-inputs/sbom.spdx.json
@@ -886,7 +852,6 @@ jobs:
   package-dashboard:
     name: Package independent Desktop · ${{ matrix.target }}
     needs: [prepare, collect]
-    if: ${{ !inputs.server_packages_only }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
@@ -1126,7 +1091,7 @@ jobs:
   migration-package:
     name: Build optional compatibility package
     needs: [prepare, collect]
-    if: ${{ !inputs.server_packages_only && needs.prepare.outputs.migration_release == 'true' }}
+    if: needs.prepare.outputs.migration_release == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -1229,10 +1194,10 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  validate:
-    name: Validate collected package matrix
+  formal-verification:
+    name: Formal verification and package certification
     needs: [prepare, collect, package-server, package-dashboard, migration-package]
-    if: ${{ !inputs.server_packages_only && always() && needs.prepare.result == 'success' && needs.collect.result == 'success' && needs.package-server.result == 'success' && needs.package-dashboard.result == 'success' && (needs.migration-package.result == 'success' || (needs.prepare.outputs.migration_release != 'true' && needs.migration-package.result == 'skipped')) }}
+    if: ${{ always() && needs.prepare.result == 'success' && needs.collect.result == 'success' && needs.package-server.result == 'success' && needs.package-dashboard.result == 'success' && (needs.migration-package.result == 'success' || (needs.prepare.outputs.migration_release != 'true' && needs.migration-package.result == 'skipped')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -1246,6 +1211,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Install pinned Kani verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install --locked kani-verifier --version 0.68.0
+          cargo kani setup
+      - name: Prove required Rust invariants
+        shell: bash
+        run: bash scripts/ci/verify-rust-formal.sh
       - name: Download collected canonical inputs
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
@@ -1478,18 +1452,51 @@ jobs:
           done
 
           (cd "$root" && sha256sum -- * > SHA256SUMS && sha256sum -c SHA256SUMS)
-      - name: Upload validated release payload
+      - name: Audit every release package individually
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/release-assets"
+          mapfile -d '' -t packages < <(find "$root" -maxdepth 1 -type f -name 'GitRun-*' -print0 | sort -z)
+          if (("${#packages[@]}" == 0)); then
+            echo "No release packages were available for individual verification." >&2
+            exit 1
+          fi
+          for package in "${packages[@]}"; do
+            test -s "$package"
+            name="${package##*/}"
+            case "$name" in
+              *.deb) dpkg-deb --info "$package" >/dev/null ;;
+              *.rpm) rpm -qp "$package" >/dev/null ;;
+              *.pkg.tar.zst) tar --zstd -tf "$package" >/dev/null ;;
+              *.apk) tar -tzf "$package" >/dev/null ;;
+              *.xbps) tar -tJf "$package" >/dev/null ;;
+              *-server.tar.gz) tar -tzf "$package" >/dev/null ;;
+              *-server.tar.zst) tar --zstd -tf "$package" >/dev/null ;;
+              *.AppImage|*.bin)
+                test -x "$package"
+                file "$package" >/dev/null
+                ;;
+              *)
+                echo "Unrecognized release package format: $name" >&2
+                exit 1
+                ;;
+            esac
+            digest="$(sha256sum "$package" | cut -d ' ' -f 1)"
+            printf 'VERIFIED %s (%s bytes, sha256=%s)\n' "$name" "$(stat -c '%s' "$package")" "$digest"
+          done
+      - name: Upload formally verified release payload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: validated-release-assets
+          name: formally-verified-release-assets
           path: release-assets/*
           if-no-files-found: error
           retention-days: 3
 
   sign:
     name: Sign manifest and verify updater
-    needs: [prepare, validate]
-    if: ${{ !inputs.server_packages_only && (github.event_name == 'push' || github.ref == 'refs/heads/main') }}
+    needs: [prepare, formal-verification]
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -1506,7 +1513,7 @@ jobs:
       - name: Download validated release payload
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
-          name: validated-release-assets
+          name: formally-verified-release-assets
           path: release-assets
       - name: Install release manifest tools
         run: |
@@ -1698,7 +1705,7 @@ jobs:
   release:
     name: Publish validated release
     needs: [prepare, sign]
-    if: ${{ !inputs.server_packages_only && (github.event_name == 'push' || github.ref == 'refs/heads/main') }}
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:

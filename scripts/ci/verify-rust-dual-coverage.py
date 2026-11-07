@@ -139,7 +139,9 @@ def main() -> int:
                 plan_status,
             ) = (value.strip() for value in row)
             if not proof_scope or not kani_obligations or not verus_obligations:
-                errors.append(f"Manifest line {line}: proof scope and both verifier obligations are required.")
+                errors.append(
+                    f"Manifest line {line}: proof scope and both verifier obligations are required."
+                )
             if plan_status not in {"PLANNED", "IMPLEMENTED"}:
                 errors.append(
                     f"Manifest line {line}: STATUS must be PLANNED or IMPLEMENTED, got {plan_status!r}."
@@ -147,7 +149,14 @@ def main() -> int:
             if source in rows:
                 errors.append(f"Duplicate source mapping: {source}")
                 continue
-            rows[source] = (kani_name, verus_name, proof_scope, kani_obligations, verus_obligations, plan_status)
+            rows[source] = (
+                kani_name,
+                verus_name,
+                proof_scope,
+                kani_obligations,
+                verus_obligations,
+                plan_status,
+            )
 
     for stale in sorted(set(rows) - sources):
         errors.append(f"Manifest contains a non-tracked or stale Rust source: {stale}")
@@ -163,7 +172,9 @@ def main() -> int:
         if source not in sources:
             continue
         if mapping[5] == "PLANNED":
-            errors.append(f"UNVERIFIED: Kani and Verus proof implementation is still PLANNED for {source}")
+            errors.append(
+                f"UNVERIFIED: Kani and Verus proof implementation is still PLANNED for {source}"
+            )
             continue
         for tool, name, used in (
             ("KANI", kani_name, kani_used),

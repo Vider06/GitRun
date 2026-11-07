@@ -134,10 +134,6 @@ def main() -> int:
     verus_used: set[str] = set()
     ready: list[tuple[str, str, str]] = []
 
-    # Do not publish READY as a coverage status. Readiness is only a preflight
-    # property; no source is PROVEN until both verifier processes return zero.
-    unverified = {source: ["UNVERIFIED", "UNVERIFIED"] for source in sources}
-
     for source, (kani_name, verus_name) in sorted(rows.items()):
         if source not in sources:
             continue

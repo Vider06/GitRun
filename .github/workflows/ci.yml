@@ -2565,7 +2565,7 @@ jobs:
     uses: ./.github/workflows/release.yml
     if: ${{ needs.cargo-lock.result == 'success' && needs.cargo-lock.outputs.rust == 'true' && (github.event_name != 'push' || github.ref == 'refs/heads/main') }}
     permissions:
-      contents: read
+      contents: write
     with:
       server_packages_only: true
 

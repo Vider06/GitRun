@@ -424,3 +424,35 @@ mod tests {
         assert!(selected.is_empty());
     }
 }
+
+#[cfg(kani)]
+mod verification {
+    use super::*;
+
+    /// Exhaustively proves the updater policy's release-type allowlist.
+    #[kani::proof]
+    fn update_policy_acceptance_is_exact() {
+        let policy: UpdatePolicy = kani::any();
+        let release_type: ReleaseType = kani::any();
+        let expected = match (policy, release_type) {
+            (UpdatePolicy::SecurityOnly, ReleaseType::Security) => true,
+            (UpdatePolicy::SecurityOnly, _) => false,
+            (UpdatePolicy::SecurityFull, ReleaseType::Security | ReleaseType::Full) => true,
+            (UpdatePolicy::SecurityFull, ReleaseType::Pre) => false,
+            (UpdatePolicy::SecurityFullPre, _) => true,
+        };
+        assert_eq!(policy.accepts_release_type(release_type), expected);
+    }
+
+    /// Proves that every representable release type has a stable wire value.
+    #[kani::proof]
+    fn release_type_wire_values_are_total() {
+        let release_type: ReleaseType = kani::any();
+        let value = release_type.as_str();
+        match release_type {
+            ReleaseType::Pre => assert!(value == "pre"),
+            ReleaseType::Full => assert!(value == "full"),
+            ReleaseType::Security => assert!(value == "security"),
+        }
+    }
+}

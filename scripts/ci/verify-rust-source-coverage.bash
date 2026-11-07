@@ -6,7 +6,22 @@ readonly summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
 
 command -v git >/dev/null
 command -v rustfmt >/dev/null
+command -v cargo >/dev/null
 test -f Cargo.toml
+
+metadata="$(mktemp)"
+package_manifests="$(mktemp)"
+trap 'rm -f "$metadata" "$package_manifests"' EXIT
+cargo metadata --locked --no-deps --format-version 1 > "$metadata"
+python3 - "$metadata" > "$package_manifests" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+metadata = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+for package in metadata["packages"]:
+    print(f"{Path(package['manifest_path']).resolve()}\t{package['name']}")
+PY
 
 mapfile -d '' -t rust_files < <(git ls-files -z -- '*.rs' | sort -zu)
 if (("${#rust_files[@]}" == 0)); then
@@ -30,8 +45,16 @@ for file in "${rust_files[@]}"; do
       manifest="Cargo.toml (verification entrypoint)"
     fi
   fi
-  if [[ -n "$manifest" && "$manifest" != "Cargo.toml (verification entrypoint)" ]] && ! grep -q '^\[package\]' "$manifest"; then
-    manifest=""
+  if [[ -n "$manifest" && "$manifest" != "Cargo.toml (verification entrypoint)" ]]; then
+    if ! grep -q '^\[package\]' "$manifest"; then
+      manifest=""
+    else
+      manifest_abs="$(realpath "$manifest")"
+      package_name="$(awk -F '\\t' -v path="$manifest_abs" '$1 == path { print $2; exit }' "$package_manifests")"
+      if [[ -z "$package_name" ]]; then manifest=""; fi
+    fi
+  else
+    package_name="verification"
   fi
   if [[ -z "$manifest" ]]; then
     printf 'UNOWNED\t%s\n' "$file" | tee -a "$inventory" >&2
@@ -39,7 +62,12 @@ for file in "${rust_files[@]}"; do
     continue
   fi
 
-  if format_output="$(rustfmt --check --edition 2021 "$file" 2>&1)"; then
+  edition=2021
+  if [[ "$manifest" != "Cargo.toml (verification entrypoint)" ]]; then
+    declared_edition="$(sed -n 's/^edition[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" | head -n 1)"
+    edition="${declared_edition:-2021}"
+  fi
+  if format_output="$(rustfmt --check --edition "$edition" "$file" 2>&1)"; then
     :
   else
     printf 'FORMAT_FAILED\t%s\t%s\n' "$file" "$manifest" | tee -a "$inventory" >&2
@@ -70,7 +98,7 @@ formatted="$(grep -c '^FORMAT_OK' "$inventory" || true)"
   echo "| Files passing individual rustfmt parse/format | $formatted |"
   echo "| Unowned or formatting failures | $failures |"
   echo
-  echo "Every tracked `.rs` file is inventoried. Type-checking, Clippy and tests are enforced at Cargo package/target level by dedicated jobs."
+  echo "Every tracked `.rs` file is mapped to a real Cargo workspace package (or the explicit Kani verification entrypoint), parsed/formatted individually using its package edition, and included in package/target-level Cargo checks."
   echo
 } >> "$summary"
 

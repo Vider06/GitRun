@@ -51,7 +51,7 @@ def source_closure(entrypoint: Path) -> tuple[set[str], str]:
 
     visit(entrypoint)
     names = {path.relative_to(root).as_posix() for path in visited}
-    return names, "\\n".join(contents)
+    return names, "\n".join(contents)
 
 
 def main() -> int:
@@ -107,21 +107,22 @@ def main() -> int:
                 errors.append(f"{tool} entrypoint reused; require a per-file proof: {name}")
                 continue
             used.add(name)
-            imported, proof_sources = source_closure(entrypoint)
+            imported, _ = source_closure(entrypoint)
             if source not in imported:
                 errors.append(
                     f"{tool} entrypoint {name} does not include {source} "
                     "through a repository-local #[path] module"
                 )
                 continue
-            if tool == "KANI" and not KANI_PROOF.search(proof_sources):
+            source_content = (ROOT / source).read_text(encoding="utf-8")
+            if tool == "KANI" and not KANI_PROOF.search(source_content):
                 errors.append(
-                    f"KANI source closure for {name} has no #[kani::proof] harness"
+                    f"Mapped source {source} contains no #[kani::proof] harness"
                 )
                 continue
-            if tool == "VERUS" and not VERUS_MODULE.search(proof_sources):
+            if tool == "VERUS" and not VERUS_MODULE.search(source_content):
                 errors.append(
-                    f"VERUS source closure for {name} has no verus! verification module"
+                    f"Mapped source {source} contains no verus! verification module"
                 )
                 continue
             ready.append((source, tool, name))

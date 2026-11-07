@@ -1770,6 +1770,7 @@ jobs:
           from pathlib import Path
 
           release = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+          ci = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
           cli = Path("crates/gitrun-cli/src/main.rs").read_text(encoding="utf-8")
           release_job = release.rsplit("  release:", 1)[1]
           release_steps = [
@@ -1799,6 +1800,10 @@ jobs:
               "no post-publication migration rollback remains": "Revert failed migration verification to prerelease" not in release and "make_latest=false" not in release,
               "new releases are initially prereleases": "<!-- GITRUN_RELEASE_TYPE: pre -->" in release and 'gh release edit "$VERSION"' in release and 'gh release create "$VERSION"' in release and release.count("--prerelease") >= 2,
               "new Server package identity": "name: gitrun-server" in release and "GitRun-Server-$VERSION-" in release,
+              "release workflow exposes a reusable workflow_call entry point": "  workflow_call:" in release and "certification_only:" in release,
+              "CI runs the complete release workflow in certification-only mode": "uses: ./.github/workflows/release.yml" in ci and "certification_only: true" in ci,
+              "release manifest signing is tested during certification": "inputs.certification_only || github.event_name == 'push'" in release and "Run updater tests against the aggregated manifest" in release,
+              "certification mode cannot publish release notes or assets": release.count("if: ${{ !inputs.certification_only }}") >= 2 and "name: Publish all release assets" in release,
               "Server package replaces legacy Debian package": "conflicts: [gitrun]" in release and "replaces: [gitrun]" in release,
               "new CLI prefers the Server DEB target": 'artifact_for("linux-x86_64-server-deb")' in cli,
               "new CLI validates gitrun-server package identity": '"gitrun-server"' in cli and "trim() != expected_package" in cli,
@@ -2522,6 +2527,16 @@ jobs:
       - *logs
 
   # ───────────────────────────────────────────────────────────── summary ──
+  release-certification:
+    name: Full release artifact certification
+    uses: ./.github/workflows/release.yml
+    if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: write
+    with:
+      certification_only: true
+    secrets: inherit
+
   summary:
     name: Verification summary
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (always()) }}
@@ -2550,6 +2565,7 @@ jobs:
       - platform-compatibility
       - multi-distro-contracts
       - release-contracts
+      - release-certification
       - tauri
       - tauri-arm64
       - tauri-recovery
@@ -2613,6 +2629,7 @@ jobs:
           platform-compatibility|Linux platform and updater target contracts|rust|rust-lint
           multi-distro-contracts|Multi-distro portability contracts|rust|rust-lint
           release-contracts|Server, Desktop and migration release contracts|workflows|
+          release-certification|Full release artifact certification|always|
           tauri|Tauri GUI|tauri|rust-lint frontend
           tauri-arm64|Tauri GUI native ARM64 build|tauri|rust-lint frontend
           tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend
@@ -2627,7 +2644,7 @@ jobs:
             order+=("$id"); LABEL[$id]="$label"
             r="$(res "$id")"; SECS[$id]="$(out "$id" secs)"; CACHE[$id]="$(out "$id" cache)"
             case "$id" in
-              variables-verification) DEP_IDS[$id]="" ;;
+              variables-verification|release-certification) DEP_IDS[$id]="" ;;
               environment|detect) DEP_IDS[$id]="variables-verification" ;;
               cargo-lock) DEP_IDS[$id]="detect" ;;
               *) DEP_IDS[$id]="cargo-lock${extra:+ $extra}" ;;

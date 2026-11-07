@@ -26,3 +26,6 @@ tauri-build = { version = "2", features = [] }
 name = "gitrun-recovery"
 path = "src/main.rs"
 required-features = ["desktop"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(verus)'] }

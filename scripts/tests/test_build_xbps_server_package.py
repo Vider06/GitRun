@@ -87,9 +87,17 @@ class XbpsServerPackageTests(unittest.TestCase):
                     (repository / "gitrun-server-1.9.1_1.x86_64.xbps").is_file()
                 )
                 return SimpleNamespace(returncode=0, stdout="glibc\n", stderr="")
-            if command[0] == self.args.query and "-f" in command:
+            if command[0] == self.args.query and "--property=install-script" in command:
                 return SimpleNamespace(
-                    returncode=0, stdout="INSTALL\nREMOVE\n", stderr=""
+                    returncode=0,
+                    stdout="case $ACTION in post) sv restart gitrun ;; esac\n",
+                    stderr="",
+                )
+            if command[0] == self.args.query and "--property=remove-script" in command:
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout="case $ACTION in pre) sv down gitrun ;; esac\n",
+                    stderr="",
                 )
             self.fail(f"Unexpected XBPS command: {command}")
 
@@ -102,9 +110,15 @@ class XbpsServerPackageTests(unittest.TestCase):
         )
         self.assertTrue(result.is_file())
         self.assertEqual(len(list(self.output.glob("*.xbps"))), 1)
-        self.assertEqual(
-            [Path(call[0]).name for call in calls if Path(call[0]).name == "xbps-query"],
-            ["xbps-query", "xbps-query"],
+        property_queries = [
+            call for call in calls if Path(call[0]).name == "xbps-query"
+        ]
+        self.assertEqual(len(property_queries), 3)
+        self.assertTrue(
+            any("--property=install-script" in call for call in property_queries)
+        )
+        self.assertTrue(
+            any("--property=remove-script" in call for call in property_queries)
         )
 
     def test_rejects_missing_lifecycle_hooks(self) -> None:

@@ -11,6 +11,7 @@ use std::{
 };
 use thiserror::Error;
 
+pub mod policy_logic;
 pub mod release_policy;
 pub mod state;
 pub use release_policy::{

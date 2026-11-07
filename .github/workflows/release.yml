@@ -1499,19 +1499,16 @@ jobs:
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:
           toolchain: ${{ env.RUST_VERSION }}
-      - name: Install pinned Kani verifier
+      - name: Install pinned Kani and Verus verifiers
         shell: bash
         run: |
           set -euo pipefail
           cargo install --locked kani-verifier --version 0.68.0
           cargo kani setup
+          bash scripts/ci/install-verus.sh
       - name: Prove required Rust invariants
         shell: bash
         run: bash scripts/ci/verify-rust-formal.sh
-      - name: Install pinned Verus verifier
-        shell: bash
-        run: |
-          bash scripts/ci/install-verus.sh
       - name: Verify Verus toolchain and proof runner
         shell: bash
         run: "${RUNNER_TEMP}/verus/installed/verus" verification/verus/smoke.rs

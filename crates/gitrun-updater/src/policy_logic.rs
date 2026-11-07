@@ -76,4 +76,16 @@ mod verification {
             ReleaseType::Security => assert!(value == "security"),
         }
     }
+    /// Proves that every update policy has a stable wire value.
+    #[kani::proof]
+    fn update_policy_wire_values_are_total() {
+        let policy: UpdatePolicy = kani::any();
+        let value = policy.as_str();
+        match policy {
+            UpdatePolicy::SecurityOnly => assert!(value == "security_only"),
+            UpdatePolicy::SecurityFull => assert!(value == "security_full"),
+            UpdatePolicy::SecurityFullPre => assert!(value == "security_full_pre"),
+        }
+    }
+
 }

@@ -1510,7 +1510,8 @@ jobs:
         run: bash scripts/ci/verify-rust-formal.sh
       - name: Install pinned Verus verifier
         shell: bash
-        run: bash scripts/ci/install-verus.sh
+        run: |
+          bash scripts/ci/install-verus.sh
       - name: Verify Verus toolchain and proof runner
         shell: bash
         run: "${RUNNER_TEMP}/verus/installed/verus" verification/verus/smoke.rs

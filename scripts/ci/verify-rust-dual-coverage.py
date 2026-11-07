@@ -19,6 +19,7 @@ EXPECTED_HEADER = [
     "VERUS_ENTRYPOINT",
     "PROOF_SCOPE",
     "KANI_OBLIGATIONS",
+    "KANI_CASES",
     "VERUS_OBLIGATIONS",
     "STATUS",
 ]
@@ -135,12 +136,13 @@ def main() -> int:
                 verus_name,
                 proof_scope,
                 kani_obligations,
+                kani_cases,
                 verus_obligations,
                 plan_status,
             ) = (value.strip() for value in row)
-            if not proof_scope or not kani_obligations or not verus_obligations:
+            if not all((proof_scope, kani_obligations, kani_cases, verus_obligations)):
                 errors.append(
-                    f"Manifest line {line}: proof scope and both verifier obligations are required."
+                    f"Manifest line {line}: proof scope, Kani obligations/cases, and Verus obligations are required."
                 )
             if plan_status not in {"PLANNED", "IMPLEMENTED"}:
                 errors.append(
@@ -154,6 +156,7 @@ def main() -> int:
                 verus_name,
                 proof_scope,
                 kani_obligations,
+                kani_cases,
                 verus_obligations,
                 plan_status,
             )
@@ -171,7 +174,7 @@ def main() -> int:
         kani_name, verus_name = mapping[:2]
         if source not in sources:
             continue
-        if mapping[5] == "PLANNED":
+        if mapping[6] == "PLANNED":
             errors.append(
                 f"UNVERIFIED: Kani and Verus proof implementation is still PLANNED for {source}"
             )

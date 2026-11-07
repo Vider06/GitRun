@@ -121,6 +121,42 @@ class XbpsServerPackageTests(unittest.TestCase):
             any("--property=remove-script" in call for call in property_queries)
         )
 
+    def test_rejects_package_without_remove_script_metadata(self) -> None:
+        def fake_run(command, *, cwd, env, **kwargs):
+            repository = Path(cwd)
+            if command[0] == self.args.create:
+                (repository / "gitrun-server-1.9.1_1.x86_64.xbps").write_bytes(
+                    b"xbps archive"
+                )
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            if command[0] == "tar":
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout="".join(f"{entry}\n" for entry in (
+                        "./usr/libexec/gitrun/gitrun-service",
+                        "./etc/sv/gitrun/run",
+                        "./etc/sv/gitrun/log/run",
+                        "./etc/sv/gitrun-gsr/run",
+                        "./etc/sv/gitrun-gsr/log/run",
+                    )),
+                    stderr="",
+                )
+            if command[0] == self.args.rindex:
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            if command[0] == self.args.query and "-x" in command:
+                return SimpleNamespace(returncode=0, stdout="glibc\n", stderr="")
+            if command[0] == self.args.query and "--property=install-script" in command:
+                return SimpleNamespace(
+                    returncode=0, stdout="sv restart gitrun\n", stderr=""
+                )
+            if command[0] == self.args.query and "--property=remove-script" in command:
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            self.fail(f"Unexpected XBPS command: {command}")
+
+        with patch.object(XBPS_BUILDER.subprocess, "run", side_effect=fake_run):
+            with self.assertRaisesRegex(RuntimeError, "remove-script property"):
+                XBPS_BUILDER.build_server_package(self.args)
+
     def test_rejects_missing_lifecycle_hooks(self) -> None:
         self.install_hook.write_text("echo install\n", encoding="utf-8")
         with patch.object(

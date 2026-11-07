@@ -359,7 +359,6 @@ mod tests {
     }
 }
 
-
 #[cfg(kani)]
 mod kani_verification {
     use super::pid_is_representable;

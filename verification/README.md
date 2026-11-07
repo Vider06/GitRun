@@ -36,6 +36,9 @@ The current Kani proof targets are:
 - `growth_ceiling_is_bounded_and_saturating` in
   `crates/gitrun-smart-scheduler/src/queueing.rs`: predictive runner growth
   is bounded by both saturating addition and the configured maximum.
+- `recovery_action_names_are_total_and_exact` in
+  `crates/gitrun-recovery/src/json_recovery.rs`: each privileged recovery
+  action has exactly one supported command spelling.
 - The standalone `verification/kani/updater_policy.rs` harness also proves
   representative allow/deny outcomes using the imported production policy.
 
@@ -62,7 +65,7 @@ Verus is pinned to `0.2026.11.02.8bf68ee` and installed by
 Rust toolchain (`1.99.0`).
 
 The toolchain smoke proof in `verification/verus/smoke.rs` remains separate
-from source coverage. Production Verus properties are now attached to six
+from source coverage. Production Verus properties are now attached to seven
 small decision functions:
 
 - `UpdatePolicy::accepts_release_type` in
@@ -80,6 +83,9 @@ small decision functions:
 - `bounded_growth_upper` in
   `crates/gitrun-smart-scheduler/src/queueing.rs`, with overflow-safe growth
   and the operator-configured runner ceiling.
+- `JsonRecoveryAction::as_str` in
+  `crates/gitrun-recovery/src/json_recovery.rs`, with exact command names
+  for all three recovery actions.
 
 The standalone updater-policy entrypoint also checks representative policy
 outcomes through its imported production module.
@@ -106,10 +112,11 @@ both verifier processes completed successfully for every mapped source; a
 smoke proof, compilation, inventory entry, or lint result cannot substitute.
 
 **Coverage at this PR revision:** the repository has 75 tracked Rust source
-files. Seven rows have source-local Kani and Verus entrypoints: updater policy,
+files. Eight rows have source-local Kani and Verus entrypoints: updater policy,
 its standalone verifier harness, the closed API-operation matrix, runner
-target bounds, scheduler cooldown clamping, watchdog PID range validation, and
-Kitty queue growth bounds. The remaining 68 rows are still `PLANNED`. These
+target bounds, scheduler cooldown clamping, watchdog PID range validation,
+Kitty queue growth bounds, and JSON recovery action encoding. The remaining
+67 rows are still `PLANNED`. These
 entries describe authored proof targets, not `PROVEN` results: both verifier
 processes must complete successfully before a source is reported as covered. The gate
 remains intentionally red until every tracked Rust file has a reviewed,

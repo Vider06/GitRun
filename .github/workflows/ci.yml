@@ -7,6 +7,7 @@ name: GitRun CI
 #                                                       └─ rust-lint
 #    rust-lint ─► rust-test ─► rust-build ─► platform-target-check ─► Server packages
 #        ├─ formal-verification (per-file Rust inventory + Kani) · Miri
+#        ├─ release-inputs ─► all package matrices ─► exact Release asset assembly
 #        ├─ security-hardening · gsr-watchdog · runtime-contracts · platform-compatibility
 #        └─ + frontend ─► Tauri GNU/musl builds ─► Desktop package matrices
 #    everything ─► summary (PR comment + Mermaid map) ─► cache-gc (push only)
@@ -2712,37 +2713,37 @@ jobs:
       - *checkout
       - *boot
       - name: Download certified Server packages
-        uses: actions/download-artifact@37930e030ddbb5b0abf93d22962f4752f3646cd9
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           pattern: ci-server-packages-*
           path: all-assets/server
           merge-multiple: true
       - name: Download certified GNU Desktop packages and AppImages
-        uses: actions/download-artifact@37930e030ddbb5b0abf93d22962f4752f3646cd9
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           pattern: ci-dashboard-gnu-packages-*
           path: all-assets/desktop-gnu
           merge-multiple: true
       - name: Download certified musl Desktop executables
-        uses: actions/download-artifact@37930e030ddbb5b0abf93d22962f4752f3646cd9
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           pattern: ci-dashboard-musl-build-*
           path: all-assets/desktop-musl-build
           merge-multiple: true
       - name: Download certified musl Desktop packages
-        uses: actions/download-artifact@37930e030ddbb5b0abf93d22962f4752f3646cd9
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           pattern: ci-dashboard-musl-packages-*
           path: all-assets/desktop-musl-packages
           merge-multiple: true
       - name: Download exact shared Release inputs
-        uses: actions/download-artifact@37930e030ddbb5b0abf93d22962f4752f3646cd9
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: ci-release-common
           path: all-assets/common
       - name: Download conditional migration package
         if: env.MIGRATION_RELEASE == 'true'
-        uses: actions/download-artifact@37930e030ddbb5b0abf93d22962f4752f3646cd9
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: ci-migration-deb-linux-x86_64
           path: all-assets/migration
@@ -3847,6 +3848,8 @@ jobs:
       - platform-target-check
       - release-package-certification
       - migration-package-certification
+      - release-inputs-certification
+      - release-asset-assembly-certification
       - platform-compatibility
       - multi-distro-contracts
       - release-contracts
@@ -3918,6 +3921,8 @@ jobs:
           platform-target-check|Server and updater Linux target matrix|rust|rust-build
           release-package-certification|Release Server package matrix|rust|platform-target-check
           migration-package-certification|One-time legacy migration package|rust|platform-target-check
+          release-inputs-certification|Release metadata and shared inputs|rust|
+          release-asset-assembly-certification|Final Release asset assembly and exact inventory|rust|release-inputs-certification release-package-certification migration-package-certification release-dashboard-package-certification release-dashboard-musl-build-certification release-dashboard-musl-package-certification formal-verification miri
           platform-compatibility|Linux platform and updater target contracts|rust|rust-lint
           multi-distro-contracts|Multi-distro portability contracts|rust|rust-lint
           release-contracts|Server, Desktop and migration release contracts|workflows|
@@ -3944,9 +3949,12 @@ jobs:
               environment|detect) DEP_IDS[$id]="variables-verification" ;;
               cargo-lock) DEP_IDS[$id]="detect environment" ;;
               ci-selftest|repository|workflows|shell|powershell|frontend|audit-node|rust-lint|systemd-verify|native-service-manager-contracts|python-quality|release-contracts|audit-rust|docker) DEP_IDS[$id]="cargo-lock" ;;
-              security-hardening|gsr-watchdog|runtime-contracts|platform-compatibility|multi-distro-contracts|formal-verification|miri|rust-test|tauri|tauri-arm64|tauri-recovery) DEP_IDS[$id]="cargo-lock rust-lint" ;;
+              security-hardening|gsr-watchdog|runtime-contracts|platform-compatibility|multi-distro-contracts|formal-verification|miri|rust-test) DEP_IDS[$id]="cargo-lock rust-lint" ;;
+              tauri|tauri-arm64|tauri-recovery) DEP_IDS[$id]="cargo-lock rust-lint frontend" ;;
               platform-target-check) DEP_IDS[$id]="cargo-lock rust-build" ;;
               release-package-certification|migration-package-certification) DEP_IDS[$id]="cargo-lock rust-lint platform-target-check" ;;
+              release-inputs-certification) DEP_IDS[$id]="cargo-lock" ;;
+              release-asset-assembly-certification) DEP_IDS[$id]="release-inputs-certification release-package-certification migration-package-certification release-dashboard-package-certification release-dashboard-musl-build-certification release-dashboard-musl-package-certification formal-verification miri" ;;
               release-dashboard-package-certification) DEP_IDS[$id]="tauri tauri-arm64" ;;
               release-dashboard-musl-build-certification) DEP_IDS[$id]="cargo-lock rust-lint frontend" ;;
               release-dashboard-musl-package-certification) DEP_IDS[$id]="release-dashboard-musl-build-certification" ;;
@@ -3991,6 +3999,8 @@ jobs:
             echo "| Release surface | Required CI gate(s) | Result |"
             echo "|---|---|---|"
             printf '| Server GNU/musl × x86_64/ARM64 packages | `release-package-certification` | %s |\n' "$(icon "${STATE[release-package-certification]}")"
+            printf '| Release metadata, library archive, SBOM and provenance | `release-inputs-certification` | %s |\n' "$(icon "${STATE[release-inputs-certification]}")"
+            printf '| Exact combined Release asset set and checksums | `release-asset-assembly-certification` | %s |\n' "$(icon "${STATE[release-asset-assembly-certification]}")"
             printf '| Legacy migration DEB (1.9.1 only) | `migration-package-certification` | %s |\n' "$(icon "${STATE[migration-package-certification]}")"
             printf '| Desktop GNU DEB/RPM/Arch × x86_64/ARM64 | `release-dashboard-package-certification` | %s |\n' "$(icon "${STATE[release-dashboard-package-certification]}")"
             printf '| Desktop musl build × x86_64/ARM64 | `release-dashboard-musl-build-certification` | %s |\n' "$(icon "${STATE[release-dashboard-musl-build-certification]}")"
@@ -4032,6 +4042,9 @@ jobs:
               case "${STATE[$id]}" in blocked) note="blocked by ${WHY[$id]}" ;; na) note="not applicable" ;; fail) note="${WHY[$id]:-}" ;; esac
               if [ "$id" = platform-target-check ]; then
                 note="${note:+$note; }each target publishes an independent job report"
+              fi
+              if [ "$id" = migration-package-certification ] && [ "$(out "$id" migration_release)" != true ]; then
+                note="${note:+$note; }not applicable: this is not an enabled 1.9.1 migration release"
               fi
               echo "| $(icon "${STATE[$id]}") | \`$id\` — ${LABEL[$id]} | $(dur "${SECS[$id]}") | ${DEPS[$id]} | ${CACHE[$id]:-–} | $note |"
             done

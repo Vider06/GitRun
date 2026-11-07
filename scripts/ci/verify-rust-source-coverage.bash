@@ -39,8 +39,11 @@ for file in "${rust_files[@]}"; do
     continue
   fi
 
-  if ! rustfmt --check --edition 2021 "$file" >/dev/null 2>&1; then
+  if format_output="$(rustfmt --check --edition 2021 "$file" 2>&1)"; then
+    :
+  else
     printf 'FORMAT_FAILED\t%s\t%s\n' "$file" "$manifest" | tee -a "$inventory" >&2
+    printf '%s\n' "$format_output" >&2
     failures=$((failures + 1))
     continue
   fi

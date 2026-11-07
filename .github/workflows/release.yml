@@ -1225,7 +1225,7 @@ jobs:
         with:
           name: release-rust-source-inventory
           path: ${{ runner.temp }}/gitrun-rust-source-inventory.tsv
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 7
       - name: Download collected canonical inputs
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131

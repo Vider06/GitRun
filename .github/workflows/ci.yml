@@ -1669,11 +1669,9 @@ jobs:
           - target: aarch64-unknown-linux-gnu
             xbps_static_arch: x86_64
           - target: x86_64-unknown-linux-musl
-            runner: ubuntu-24.04
             xbps_static_arch: x86_64
           - target: aarch64-unknown-linux-musl
-            runner: ubuntu-24.04-arm
-            xbps_static_arch: aarch64
+            xbps_static_arch: x86_64
     env:
       TARGET: ${{ matrix.target }}
       XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}
@@ -1966,6 +1964,8 @@ jobs:
           esac
           test -s "$out/GitRun-Server-$VERSION-$TARGET-server.tar.gz"
           test -s "$out/GitRun-Server-$VERSION-$TARGET-server.tar.zst"
+          tar -tzf "$out/GitRun-Server-$VERSION-$TARGET-server.tar.gz" | grep -Fq 'usr/bin/gitrun'
+          tar --zstd -tf "$out/GitRun-Server-$VERSION-$TARGET-server.tar.zst" | grep -Fq 'usr/bin/gitrun'
           test -s "$out/GitRun-Server-$VERSION-linux-$cpu-xbps.xbps"
           if [[ "$TARGET" == *-gnu ]]; then
             deb="$out/GitRun-Server-$VERSION-linux-$cpu-deb.deb"

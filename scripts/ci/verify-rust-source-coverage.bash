@@ -5,7 +5,6 @@ readonly inventory="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-rust-source-inventory
 readonly summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
 
 command -v git >/dev/null
-command -v rustfmt >/dev/null
 command -v cargo >/dev/null
 test -f Cargo.toml
 
@@ -50,7 +49,7 @@ for file in "${rust_files[@]}"; do
       manifest=""
     else
       manifest_abs="$(realpath "$manifest")"
-      package_name="$(awk -F '\\t' -v path="$manifest_abs" '$1 == path { print $2; exit }' "$package_manifests")"
+      package_name="$(awk -F '\t' -v path="$manifest_abs" '$1 == path { print $2; exit }' "$package_manifests")"
       if [[ -z "$package_name" ]]; then manifest=""; fi
     fi
   else
@@ -67,13 +66,19 @@ for file in "${rust_files[@]}"; do
     declared_edition="$(sed -n 's/^edition[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$manifest" | head -n 1)"
     edition="${declared_edition:-2021}"
   fi
-  if format_output="$(rustfmt --check --edition "$edition" "$file" 2>&1)"; then
-    :
-  else
-    printf 'FORMAT_FAILED\t%s\t%s\n' "$file" "$manifest" | tee -a "$inventory" >&2
-    printf '%s\n' "$format_output" >&2
-    failures=$((failures + 1))
-    continue
+  if [[ "$manifest" == "Cargo.toml (verification entrypoint)" ]]; then
+    if ! command -v rustfmt >/dev/null 2>&1; then
+      echo "rustfmt is required to validate the standalone Kani entrypoint." >&2
+      exit 1
+    fi
+    if format_output="$(rustfmt --check --edition "$edition" "$file" 2>&1)"; then
+      :
+    else
+      printf 'FORMAT_FAILED\t%s\t%s\n' "$file" "$manifest" | tee -a "$inventory" >&2
+      printf '%s\n' "$format_output" >&2
+      failures=$((failures + 1))
+      continue
+    fi
   fi
 
   case "$file" in
@@ -85,20 +90,20 @@ for file in "${rust_files[@]}"; do
     verification/*) role=verification-harness ;;
     *) role=module ;;
   esac
-  printf 'FORMAT_OK\t%s\t%s\t%s\n' "$file" "$manifest" "$role" >> "$inventory"
+  printf 'INVENTORIED\t%s\t%s\t%s\n' "$file" "$manifest" "$role" >> "$inventory"
 done
 
-formatted="$(grep -c '^FORMAT_OK' "$inventory" || true)"
+inventoried="$(grep -c '^INVENTORIED' "$inventory" || true)"
 {
   echo "### Per-file Rust source assurance"
   echo
   echo "| Metric | Result |"
   echo "|---|---:|"
   echo "| Tracked Rust files discovered | ${#rust_files[@]} |"
-  echo "| Files passing individual rustfmt parse/format | $formatted |"
+  echo "| Files mapped to Cargo package / standalone verification entrypoint | $inventoried |"
   echo "| Unowned or formatting failures | $failures |"
   echo
-  echo "Every tracked `.rs` file is mapped to a real Cargo workspace package (or the explicit Kani verification entrypoint), parsed/formatted individually using its package edition, and included in package/target-level Cargo checks."
+  echo "Every tracked `.rs` file is mapped to a real Cargo workspace package (or the explicit Kani verification entrypoint). Workspace formatting is checked once by the CI rust-lint job; the standalone Kani entrypoint is checked individually here. Cargo type-checking, Clippy and tests run at package/target level in their existing jobs."
   echo
 } >> "$summary"
 

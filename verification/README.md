@@ -17,7 +17,7 @@ Kani, Miri, Clippy, tests and dependency analysis answer different questions. Th
 
 ## Second formal verification tool: Verus
 
-Verus is now installed and invoked as the second formal verifier in both CI and Release. The verifier version is pinned to `0.2026.11.02.8bf68ee`; each workflow runs a toolchain smoke proof to detect missing binaries, incompatible runtime dependencies, or a broken installation. This smoke proof is not counted as production-source coverage.
+Verus is now installed and invoked as the second formal verifier in both CI and Release. The verifier version is pinned to `0.2026.11.02.8bf68ee` and its required Rust toolchain (`1.99.1`, including `rustc-dev` and `llvm-tools`) is installed without changing GitRun's primary `1.99.0` toolchain; each workflow runs a toolchain smoke proof to detect missing binaries, incompatible runtime dependencies, or a broken installation. This smoke proof is not counted as production-source coverage.
 
 Kani remains the bit-precise model checker; Verus supplies deductive proofs with explicit preconditions, postconditions, and invariants. They are independent gates and neither substitutes for the other. The dual-coverage gate requires a proof-map row for every tracked `.rs` file and fails closed on missing, duplicate, stale, or incomplete mappings. A source is not `PROVEN` merely because it was inventoried, formatted, compiled, linted, or included in a smoke proof.
 

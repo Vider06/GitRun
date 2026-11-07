@@ -11,6 +11,9 @@ readonly download="$base/$archive"
 command -v curl >/dev/null
 command -v unzip >/dev/null
 command -v rustup >/dev/null
+# Verus is built against this exact rustc commit; the repository's main CI
+# toolchain is intentionally left unchanged.
+rustup toolchain install 1.99.1 --profile minimal --component rustc-dev --component llvm-tools
 rm -rf "$root" "$download"
 curl --fail --location --retry 3 --proto '=https' --tlsv1.2 "$url" --output "$download"
 mkdir -p "$root"

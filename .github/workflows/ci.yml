@@ -1895,62 +1895,21 @@ jobs:
           xbps_rindex="$xbps_root/usr/bin/xbps-rindex"
           xbps_query="$xbps_root/usr/bin/xbps-query"
           test -x "$xbps_create" && test -x "$xbps_rindex" && test -x "$xbps_query"
-          export XBPS_ARCH="$xbps_arch"
-          (cd "$out" && "$xbps_create" -A "$xbps_arch" -n "gitrun-server-${VERSION_NUMBER}_1" \
-            -D "$xbps_dep" -H https://github.com/Vider06/GitRun \
-            -l Apache-2.0 -m Vider06 -s "GitRun headless server" "$xbps_stage")
-          xbps_file="$(find "$out" -maxdepth 1 -type f -name 'gitrun-*.xbps' -print -quit)"
-          test -n "$xbps_file"
-          test -s "$xbps_file"
-          xbps_contents="$(tar -tf "$xbps_file")"
-          for required in \
-            ./usr/libexec/gitrun/gitrun-service \
-            ./etc/sv/gitrun/run ./etc/sv/gitrun/log/run \
-            ./etc/sv/gitrun-gsr/run ./etc/sv/gitrun-gsr/log/run; do
-            grep -Fqx "$required" <<< "$xbps_contents" || {
-              echo "XBPS package is missing runit resource: $required" >&2
-              exit 1
-            }
-          done
-          if grep -Eq '^\./(etc|usr/lib)/systemd/' <<< "$xbps_contents"; then
-            echo "XBPS package must contain runit resources, not systemd units" >&2
-            exit 1
-          fi
-          mv "$xbps_file" "$out/GitRun-Server-$VERSION-linux-$cpu-xbps.xbps"
-          # Indexing the local repository parses the XBPS archive and validates its metadata.
-          "$xbps_rindex" -a "$out"/*.xbps
-          package_id="gitrun-server-${VERSION_NUMBER}_1"
-          server_deps="$("$xbps_query" -R --repository="$out" -x "$package_id")" || {
-            echo "XBPS repository dependency query failed for $package_id ($xbps_arch)." >&2
-            "$xbps_query" -R --repository="$out" -S "$package_id" || true
-            exit 1
-          }
-          if ! grep -Fq "$xbps_dep" <<< "$server_deps"; then
-            echo "XBPS dependency contract failed for $package_id: expected '$xbps_dep', received '$server_deps'." >&2
-            exit 1
-          fi
-          xbps_files="$("$xbps_query" -R --repository="$out" -f "$package_id")" || {
-            echo "XBPS package file-list query failed for $package_id ($xbps_arch)." >&2
-            exit 1
-          }
-          if ! grep -Eq '(^|/)INSTALL$' <<< "$xbps_files"; then
-            echo "XBPS package $package_id is missing its INSTALL lifecycle hook." >&2
-            exit 1
-          fi
-          if ! grep -Eq '(^|/)REMOVE$' <<< "$xbps_files"; then
-            echo "XBPS package $package_id is missing its REMOVE lifecycle hook." >&2
-            exit 1
-          fi
-          if ! grep -Fq "sv restart" packaging/xbps/INSTALL; then
-            echo "XBPS INSTALL hook for $package_id does not restart already-active runit services on upgrade." >&2
-            exit 1
-          fi
-          if ! grep -Fq "sv down" packaging/xbps/REMOVE; then
-            echo "XBPS REMOVE hook for $package_id does not stop runit services before removal." >&2
-            exit 1
-          fi
-          test "$(find "$out" -maxdepth 1 -type f -name '*.xbps' | wc -l)" -eq 1
-          test "$(find "$out" -maxdepth 1 -type f | wc -l)" -ge 3
+          python3 scripts/ci/build-xbps-server-package.py \
+            --output "$out" \
+            --stage "$xbps_stage" \
+            --repository "$RUNNER_TEMP/xbps-repository" \
+            --create "$xbps_create" \
+            --rindex "$xbps_rindex" \
+            --query "$xbps_query" \
+            --architecture "$xbps_arch" \
+            --dependency "$xbps_dep" \
+            --package-id "gitrun-server-${VERSION_NUMBER}_1" \
+            --version "$VERSION" \
+            --cpu "$cpu" \
+            --install-hook packaging/xbps/INSTALL \
+            --remove-hook packaging/xbps/REMOVE
+
       - name: Audit every Server package output
         shell: bash
         run: |

@@ -183,7 +183,6 @@ mod tests {
     }
 }
 
-
 #[cfg(kani)]
 mod kani_verification {
     use super::{cap_cooldown_seconds, MAX_COOLDOWN_SECONDS};

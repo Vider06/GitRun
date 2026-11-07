@@ -1,6 +1,10 @@
+#[cfg(all(not(kani), not(verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(verus)]
+use vstd::prelude::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(not(kani), not(verus)), derive(Serialize, Deserialize))]
 pub enum RunnerState {
     Offline,
     Idle,
@@ -8,7 +12,8 @@ pub enum RunnerState {
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(not(kani), not(verus)), derive(Serialize, Deserialize))]
 pub struct Runner {
     pub name: String,
     pub repository: String,
@@ -22,6 +27,11 @@ pub struct RunnerPool {
 }
 
 impl Runner {
+    #[cfg_attr(verus, verus_verify(dual_spec, open))]
+    #[cfg_attr(
+        verus,
+        verus_spec(returns Runner::desired_count(minimum, maximum, busy, queued))
+    )]
     pub fn desired_count(minimum: u32, maximum: u32, busy: u32, queued: u32) -> u32 {
         minimum.max(busy.saturating_add(queued)).min(maximum)
     }
@@ -112,3 +122,49 @@ mod tests {
         assert!(!pool.mark_state("missing", RunnerState::Busy));
     }
 }
+
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::Runner;
+
+    /// Proves the desired runner count is clamped between the bounds.
+    #[kani::proof]
+    fn desired_count_respects_bounds_for_all_u32_inputs() {
+        let minimum: u32 = kani::any();
+        let maximum: u32 = kani::any();
+        let busy: u32 = kani::any();
+        let queued: u32 = kani::any();
+
+        let desired = Runner::desired_count(minimum, maximum, busy, queued);
+        assert!(desired <= maximum);
+        assert!(desired >= minimum.min(maximum));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::Runner;
+    use vstd::prelude::*;
+
+    verus! {
+        /// Verifies both clamping guarantees over the full u32 input domain.
+        proof fn desired_count_respects_bounds(
+            minimum: u32,
+            maximum: u32,
+            busy: u32,
+            queued: u32,
+        )
+            ensures
+                Runner::desired_count(minimum, maximum, busy, queued) <= maximum,
+                Runner::desired_count(minimum, maximum, busy, queued) >= minimum.min(maximum),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

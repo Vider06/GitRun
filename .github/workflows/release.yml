@@ -1211,6 +1211,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
       - name: Install pinned Kani verifier
         shell: bash
         run: |
@@ -1273,7 +1277,7 @@ jobs:
           set -euo pipefail
           sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq zstd unzip zip rpm
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq zstd unzip zip rpm file
       - name: Verify required artifacts and create checksums
         shell: bash
         run: |

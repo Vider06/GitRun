@@ -45,3 +45,34 @@ not every Rust file.
 The source inventory is uploaded as a CI artifact. New tracked Rust files are
 discovered automatically, so a stale hand-maintained file count cannot hide
 them.
+
+## Complementary assurance gates
+
+Kani is not the only Rust check. The normal CI pipeline also requires:
+
+- `cargo fmt --check`, Clippy with `-D warnings`, and Rust documentation builds.
+- Workspace and headless-management tests, plus the updater, security, runtime,
+  scheduler, platform, service-manager, and release-contract regression suites.
+- `cargo audit` and `cargo deny` for advisory and dependency-policy checks.
+- Server and updater builds across x86_64/aarch64 and GNU/musl Linux targets.
+- Real Server package creation for all four target variants, plus independent
+  GNU Desktop DEB/RPM/Arch package creation for x86_64 and ARM64 in CI.
+- Release-side package inspection after all package matrices and before signing.
+
+## Formal coverage status vocabulary
+
+- `PROVEN`: the declared Kani harness completed successfully.
+- `FAILED`: a declared proof assertion or Kani proof run failed.
+- `UNVERIFIED`: the Rust file is covered by source/Cargo gates but has no
+  declared Kani property yet.
+- `ERROR`: the verifier, toolchain, or proof setup could not run reliably.
+- `NOT IN SCOPE`: the item is not a Rust source property represented by the
+  current formal model.
+
+The per-file Kani coverage artifact intentionally marks only
+`crates/gitrun-updater/src/policy_logic.rs` as `PROVEN`; other Rust files stay
+`UNVERIFIED` until meaningful properties are added. This avoids claiming that
+three updater-policy harnesses formally prove the entire repository.
+Verus remains a planned next-stage verifier; it is not reported as active until
+production properties can be proved rather than duplicated in a disconnected
+model.

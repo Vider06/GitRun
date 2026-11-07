@@ -277,8 +277,8 @@ pub fn validate_arguments(
     Ok(())
 }
 /// Closed set of operation verbs understood by the GitRun APIs.
-#[cfg_attr(verus, verus_verify)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(verus, verus_verify)]
 #[cfg_attr(
     not(any(kani, verus)),
     derive(PartialOrd, Ord, Hash, Serialize, Deserialize)

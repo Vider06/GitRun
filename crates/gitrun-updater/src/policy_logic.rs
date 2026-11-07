@@ -58,7 +58,7 @@ impl UpdatePolicy {
             Self::SecurityOnly => release_type == ReleaseType::Security,
             Self::SecurityFull => {
                 release_type == ReleaseType::Security || release_type == ReleaseType::Full
-            },
+            }
             Self::SecurityFullPre => true,
         }
     }

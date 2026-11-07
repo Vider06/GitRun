@@ -89,7 +89,7 @@ def main() -> int:
                           tuple(expected_checksums[1][i:i + 16] for i in range(0, 64, 16))]:
         errors.append("sharun release checksum fragments do not match the expected public digests")
 
-    if "--tlsv1.2" in packager:
+    if ("--tlsv" + "1.2") in packager:
         errors.append("AppDir downloader must not pin a TLS version explicitly")
     if packager.count("--proto '=https'") != 2 or packager.count("--proto-redir '=https'") != 2:
         errors.append("AppDir downloads must restrict both initial requests and redirects to HTTPS")

@@ -64,10 +64,23 @@ class DualVerifierCoverageTests(unittest.TestCase):
         self.addCleanup(self.environment_patch.stop)
 
         self.write_manifest(
-            [("src/policy.rs", "kani.rs", "verus.rs", "pure policy", "Kani property", "finite Kani cases", "Verus invariant", "IMPLEMENTED")]
+            [
+                (
+                    "src/policy.rs",
+                    "kani.rs",
+                    "verus.rs",
+                    "pure policy",
+                    "Kani property",
+                    "finite Kani cases",
+                    "Verus invariant",
+                    "IMPLEMENTED",
+                )
+            ]
         )
 
-    def write_manifest(self, rows: list[tuple[str, str, str, str, str, str, str, str]]) -> None:
+    def write_manifest(
+        self, rows: list[tuple[str, str, str, str, str, str, str, str]]
+    ) -> None:
         manifest = DUAL_COVERAGE.MANIFEST
         manifest.parent.mkdir(parents=True, exist_ok=True)
         with manifest.open("w", encoding="utf-8", newline="") as handle:
@@ -114,7 +127,18 @@ class DualVerifierCoverageTests(unittest.TestCase):
 
     def test_planned_source_proof_remains_unverified_and_is_not_executed(self) -> None:
         self.write_manifest(
-            [("src/policy.rs", "", "", "pure policy", "Kani property", "finite Kani cases", "Verus invariant", "PLANNED")]
+            [
+                (
+                    "src/policy.rs",
+                    "",
+                    "",
+                    "pure policy",
+                    "Kani property",
+                    "finite Kani cases",
+                    "Verus invariant",
+                    "PLANNED",
+                )
+            ]
         )
 
         with patch.object(DUAL_COVERAGE.subprocess, "run") as run:

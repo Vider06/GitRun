@@ -112,15 +112,25 @@ def main() -> int:
                     "through a repository-local #[path] module"
                 )
                 continue
-            source_content = (ROOT / source).read_text(encoding="utf-8")
-            if tool == "KANI" and not KANI_PROOF.search(source_content):
+            # Proof annotations may live in a dedicated harness or in a
+            # production module imported by that harness. Inspect the complete
+            # repository-local closure, not only the mapped source file.
+            closure_sources = [
+                (ROOT / imported_source).read_text(encoding="utf-8")
+                for imported_source in sorted(imported)
+            ]
+            if tool == "KANI" and not any(
+                KANI_PROOF.search(text) for text in closure_sources
+            ):
                 errors.append(
-                    f"Mapped source {source} contains no #[kani::proof] harness"
+                    f"KANI closure for {source} contains no #[kani::proof] harness"
                 )
                 continue
-            if tool == "VERUS" and not VERUS_MODULE.search(source_content):
+            if tool == "VERUS" and not any(
+                VERUS_MODULE.search(text) for text in closure_sources
+            ):
                 errors.append(
-                    f"Mapped source {source} contains no verus! verification module"
+                    f"VERUS closure for {source} contains no verus! verification module"
                 )
                 continue
             ready.append((source, tool, name))

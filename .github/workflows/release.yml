@@ -8,10 +8,22 @@ on:
         description: "Release version (for example v1.9.1)"
         required: true
         type: string
+  workflow_call:
+    inputs:
+      certification_only:
+        description: "Build and validate the complete release without publishing a GitHub release."
+        required: false
+        type: boolean
+        default: false
+      version:
+        description: "Optional release version; defaults to version.txt."
+        required: false
+        type: string
+        default: ""
 permissions:
   contents: write
 concurrency:
-  group: gitrun-release-${{ github.ref }}-${{ github.event.inputs.version || github.ref_name }}
+  group: gitrun-release-${{ github.ref }}-${{ inputs.version || github.event.inputs.version || github.ref_name }}
   cancel-in-progress: false
 env:
   RUST_VERSION: "1.99.0"
@@ -47,16 +59,24 @@ jobs:
       - name: Resolve version and synchronize Markdown markers
         id: version
         env:
-          RELEASE_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+          RELEASE_VERSION_INPUT: ${{ inputs.version || github.event.inputs.version }}
           MIGRATION_RELEASE_ENABLED: ${{ vars.GITRUN_ENABLE_MIGRATION_RELEASE }}
+          MIGRATION_RELEASE_ALLOWED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         shell: bash
         run: |
           set -euo pipefail
-          version="$RELEASE_VERSION"
+          version="${RELEASE_VERSION_INPUT:-}"
+          if [ -z "$version" ]; then
+            if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+              version="$GITHUB_REF_NAME"
+            else
+              version="v$(tr -d '[:space:]' < version.txt)"
+            fi
+          fi
           [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
           number="${version#v}"
           test "$(tr -d '[:space:]' < version.txt)" = "$number"
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             test "$(git rev-parse "$version^{commit}")" = "$GITHUB_SHA"
           fi
           python3 scripts/sync-markdown-version.py --version "$number"
@@ -64,7 +84,7 @@ jobs:
           python3 scripts/check-version-consistency.py
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "version_number=$number" >> "$GITHUB_OUTPUT"
-          if [ "$number" = "1.9.1" ] && [ "$MIGRATION_RELEASE_ENABLED" = "true" ]; then
+          if [ "$number" = "1.9.1" ] && [ "$MIGRATION_RELEASE_ENABLED" = "true" ] && [ "$MIGRATION_RELEASE_ALLOWED" = "true" ]; then
             migration_release=true
           else
             migration_release=false
@@ -809,12 +829,34 @@ jobs:
           mv "$xbps_file" "$out/GitRun-Server-$VERSION-linux-$cpu-xbps.xbps"
           # Indexing the local repository parses the XBPS archive and validates its metadata.
           "$xbps_rindex" -a "$out"/*.xbps
-          server_deps="$("$xbps_query" -R --repository="$out" -x "gitrun-server-${VERSION_NUMBER}_1")"
-          grep -Fq "$xbps_dep" <<< "$server_deps"
-          install_script="$("$xbps_query" -R --repository="$out" -p install-script -S "gitrun-server-${VERSION_NUMBER}_1")"
-          remove_script="$("$xbps_query" -R --repository="$out" -p remove-script -S "gitrun-server-${VERSION_NUMBER}_1")"
-          grep -Fq "sv restart" <<< "$install_script"
-          grep -Fq "sv down" <<< "$remove_script"
+          package_id="gitrun-server-${VERSION_NUMBER}_1"
+          server_deps="$("$xbps_query" -R --repository="$out" -x "$package_id")" || {
+            echo "XBPS repository dependency query failed for $package_id ($xbps_arch)." >&2
+            "$xbps_query" -R --repository="$out" -S "$package_id" || true
+            exit 1
+          }
+          if ! grep -Fq "$xbps_dep" <<< "$server_deps"; then
+            echo "XBPS dependency contract failed for $package_id: expected '$xbps_dep', received '$server_deps'." >&2
+            exit 1
+          fi
+          install_script="$("$xbps_query" -R --repository="$out" -p install-script -S "$package_id")" || {
+            echo "XBPS install-script metadata query failed for $package_id ($xbps_arch)." >&2
+            exit 1
+          }
+          remove_script="$("$xbps_query" -R --repository="$out" -p remove-script -S "$package_id")" || {
+            echo "XBPS remove-script metadata query failed for $package_id ($xbps_arch)." >&2
+            exit 1
+          }
+          if ! grep -Fq "sv restart" <<< "$install_script"; then
+            echo "XBPS install script for $package_id does not restart already-active runit services on upgrade." >&2
+            printf '%s\\n' "$install_script" >&2
+            exit 1
+          fi
+          if ! grep -Fq "sv down" <<< "$remove_script"; then
+            echo "XBPS remove script for $package_id does not stop runit services before removal." >&2
+            printf '%s\\n' "$remove_script" >&2
+            exit 1
+          fi
           test "$(find "$out" -maxdepth 1 -type f -name '*.xbps' | wc -l)" -eq 1
           test "$(find "$out" -maxdepth 1 -type f | wc -l)" -ge 3
       - name: Upload immutable target packages
@@ -1430,7 +1472,7 @@ jobs:
   sign:
     name: Sign manifest and verify updater
     needs: [prepare, validate]
-    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    if: ${{ inputs.certification_only || github.event_name == 'push' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -1578,25 +1620,36 @@ jobs:
         env:
           GITRUN_UPDATE_SIGNING_KEY_ID: ${{ vars.GITRUN_UPDATE_SIGNING_KEY_ID }}
           GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64 }}
+          ALLOW_EPHEMERAL_SIGNING_KEY: ${{ inputs.certification_only && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
           ROOT: ${{ github.workspace }}/release-assets
         run: |
           set -euo pipefail
-          test -n "$GITRUN_UPDATE_SIGNING_KEY_ID"
-          test -n "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64"
           key="$RUNNER_TEMP/key.der"; public="$RUNNER_TEMP/public.der"; payload="$RUNNER_TEMP/payload.json"; sigfile="$RUNNER_TEMP/manifest.sig"
-          trap 'rm -f "$key" "$public" "$payload" "$sigfile"' EXIT
-          printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
+          trap 'rm -f "$key" "$public" "$payload" "$sigfile" "$RUNNER_TEMP/ci-signing-key.pem"' EXIT
+          signing_key_id="${GITRUN_UPDATE_SIGNING_KEY_ID:-}"
+          if [[ -n "${GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64:-}" ]]; then
+            test -n "$signing_key_id"
+            printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
+          else
+            if [[ "$ALLOW_EPHEMERAL_SIGNING_KEY" != "true" ]]; then
+              echo "Release signing key is unavailable; refusing to certify a trusted release run without the production key." >&2
+              exit 1
+            fi
+            signing_key_id="ci-ephemeral"
+            openssl genpkey -algorithm ED25519 -out "$RUNNER_TEMP/ci-signing-key.pem"
+            openssl pkey -in "$RUNNER_TEMP/ci-signing-key.pem" -outform DER -out "$key"
+          fi
           chmod 600 "$key"
           openssl pkey -inform DER -in "$key" -pubout -outform DER -out "$public"
           public_hex="$(tail -c 32 "$public" | od -An -v -tx1 | tr -d '[:space:]')"
           echo "GITRUN_UPDATE_PUBLIC_KEY_HEX=$public_hex" >> "$GITHUB_ENV"
-          echo "GITRUN_UPDATE_PUBLIC_KEY_ID=$GITRUN_UPDATE_SIGNING_KEY_ID" >> "$GITHUB_ENV"
+          echo "GITRUN_UPDATE_PUBLIC_KEY_ID=$signing_key_id" >> "$GITHUB_ENV"
           jq -S -c '. | del(.signature, .signature_key_id)' "$ROOT/release-manifest.json" | tr -d '\n' > "$payload"
           openssl pkeyutl -sign -rawin -inkey "$key" -keyform DER -in "$payload" -out "$sigfile"
           openssl pkeyutl -verify -rawin -pubin -inkey "$public" -keyform DER -in "$payload" -sigfile "$sigfile"
           signature="$(od -An -v -tx1 "$sigfile" | tr -d '[:space:]')"
           test "${#signature}" -eq 128
-          jq --arg sig "$signature" --arg key_id "$GITRUN_UPDATE_SIGNING_KEY_ID" \
+          jq --arg sig "$signature" --arg key_id "$signing_key_id" \
             '. + {signature:$sig,signature_key_id:$key_id}' "$ROOT/release-manifest.json" > "$ROOT/manifest.tmp"
           mv "$ROOT/manifest.tmp" "$ROOT/release-manifest.json"
       - name: Run updater tests against the aggregated manifest
@@ -1628,7 +1681,7 @@ jobs:
   release:
     name: Publish validated release
     needs: [prepare, sign]
-    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    if: ${{ inputs.certification_only || github.event_name == 'push' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -2020,6 +2073,7 @@ jobs:
           test "$(/usr/local/bin/gitrun --version --gitrun)" = "GitRun $VERSION_NUMBER"
 
       - name: Generate professional release notes
+        if: ${{ !inputs.certification_only }}
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -2293,6 +2347,7 @@ jobs:
           PY
           echo "NOTES_FILE=$notes" >> "$GITHUB_ENV"
       - name: Publish all release assets
+        if: ${{ !inputs.certification_only }}
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}

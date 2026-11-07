@@ -5,13 +5,18 @@
 //! GSR consumes this model to decide whether an invocation may reach GitRun's
 //! internal execution engine.
 
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(verus)]
+use vstd::prelude::*;
 
 /// Parse a public boolean modifier using the canonical API spelling.
 /// This deliberately rejects mixed-case and alternate representations so
 /// authorization and the execution backend cannot interpret one value
 /// differently.
+#[cfg(not(any(kani, verus)))]
 pub fn parse_boolean_argument(value: &str) -> Option<bool> {
     match value {
         "true" => Some(true),
@@ -24,7 +29,9 @@ pub fn parse_boolean_argument(value: &str) -> Option<bool> {
 ///
 /// Adding a new API is an explicit source-level change so the security
 /// surface cannot grow accidentally through configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(verus, verus_verify)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(any(kani, verus)), derive(PartialOrd, Ord, Hash, Serialize, Deserialize))]
 pub enum GitRunApi {
     GitVaultRun,
     GitDockRun,
@@ -40,6 +47,7 @@ pub enum GitRunApi {
 }
 
 impl GitRunApi {
+    #[cfg(not(any(kani, verus)))]
     pub const ALL: [Self; 10] = [
         Self::GitVaultRun,
         Self::GitDockRun,
@@ -53,6 +61,7 @@ impl GitRunApi {
         Self::GitDispatchRun,
     ];
 
+    #[cfg(not(any(kani, verus)))]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::GitVaultRun => "GitVaultRun",
@@ -71,41 +80,40 @@ impl GitRunApi {
     /// Returns true only for an operation that is part of this API's
     /// explicitly defined contract. Policy configuration cannot create a new
     /// API/operation pairing by accident.
+    #[cfg_attr(verus, verus_verify(dual_spec, open))]
+    #[cfg_attr(
+        verus,
+        verus_spec(returns self.supports_operation(operation))
+    )]
     pub const fn supports_operation(self, operation: GitRunOperation) -> bool {
-        match self {
-            Self::GitVaultRun => matches!(
-                operation,
-                GitRunOperation::Read
-                    | GitRunOperation::Write
-                    | GitRunOperation::Exists
-                    | GitRunOperation::Delete
-                    | GitRunOperation::List
-            ),
-            Self::GitDockRun => matches!(
-                operation,
-                GitRunOperation::Connect
-                    | GitRunOperation::Disconnect
-                    | GitRunOperation::Read
-                    | GitRunOperation::Write
-                    | GitRunOperation::Execute
-                    | GitRunOperation::Melt
-                    | GitRunOperation::Mount
-                    | GitRunOperation::Unmount
-            ),
-            Self::GitSaveRun => matches!(operation, GitRunOperation::File | GitRunOperation::Logs),
-            Self::GitRegisterRun => matches!(operation, GitRunOperation::Register),
-            Self::GitInstallRun => matches!(
-                operation,
-                GitRunOperation::Install | GitRunOperation::Remove | GitRunOperation::Update
-            ),
-            Self::GitReadRun => matches!(operation, GitRunOperation::Read),
-            Self::GitWriteRun => matches!(operation, GitRunOperation::Write),
-            Self::GitVerifyRun => matches!(operation, GitRunOperation::Verify),
-            Self::GitStatusRun => matches!(operation, GitRunOperation::Status),
-            Self::GitDispatchRun => matches!(operation, GitRunOperation::Plan),
+        match (self, operation) {
+            (Self::GitVaultRun, GitRunOperation::Read)
+            | (Self::GitVaultRun, GitRunOperation::Write)
+            | (Self::GitVaultRun, GitRunOperation::Exists)
+            | (Self::GitVaultRun, GitRunOperation::Delete)
+            | (Self::GitVaultRun, GitRunOperation::List)
+            | (Self::GitDockRun, GitRunOperation::Connect)
+            | (Self::GitDockRun, GitRunOperation::Disconnect)
+            | (Self::GitDockRun, GitRunOperation::Read)
+            | (Self::GitDockRun, GitRunOperation::Write)
+            | (Self::GitDockRun, GitRunOperation::Execute)
+            | (Self::GitDockRun, GitRunOperation::Melt)
+            | (Self::GitDockRun, GitRunOperation::Mount)
+            | (Self::GitDockRun, GitRunOperation::Unmount)
+            | (Self::GitSaveRun, GitRunOperation::File)
+            | (Self::GitSaveRun, GitRunOperation::Logs)
+            | (Self::GitRegisterRun, GitRunOperation::Register)
+            | (Self::GitInstallRun, GitRunOperation::Install)
+            | (Self::GitInstallRun, GitRunOperation::Remove)
+            | (Self::GitInstallRun, GitRunOperation::Update)
+            | (Self::GitReadRun, GitRunOperation::Read)
+            | (Self::GitWriteRun, GitRunOperation::Write)
+            | (Self::GitVerifyRun, GitRunOperation::Verify)
+            | (Self::GitStatusRun, GitRunOperation::Status)
+            | (Self::GitDispatchRun, GitRunOperation::Plan) => true,
+            _ => false,
         }
-    }
-}
+    }}
 
 /// Validates the argument shape of one public Git*Run operation.
 ///
@@ -116,6 +124,7 @@ impl GitRunApi {
 ///
 /// Keeping both sets in one contract prevents validation from silently accepting
 /// an argument shape that the execution backend cannot consume.
+#[cfg(not(any(kani, verus)))]
 fn argument_contract(
     api: GitRunApi,
     operation: GitRunOperation,
@@ -173,6 +182,7 @@ fn argument_contract(
 /// The internal request representation uses a string map, but the public
 /// surface is still closed: unknown keys and missing required values are
 /// rejected here before a request can be authorized or executed.
+#[cfg(not(any(kani, verus)))]
 pub fn validate_arguments(
     api: GitRunApi,
     operation: GitRunOperation,
@@ -263,7 +273,9 @@ pub fn validate_arguments(
     Ok(())
 }
 /// Closed set of operation verbs understood by the GitRun APIs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[cfg_attr(verus, verus_verify)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(any(kani, verus)), derive(PartialOrd, Ord, Hash, Serialize, Deserialize))]
 pub enum GitRunOperation {
     Read,
     Write,
@@ -289,6 +301,7 @@ pub enum GitRunOperation {
 }
 
 impl GitRunOperation {
+    #[cfg(not(any(kani, verus)))]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Read => "read",
@@ -318,11 +331,13 @@ impl GitRunOperation {
 /// Policy for one API. An API may be disabled completely or restricted to an
 /// explicit subset of its known operations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct ApiPolicy {
     pub enabled: bool,
     pub allowed_operations: BTreeSet<GitRunOperation>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl ApiPolicy {
     pub fn disabled() -> Self {
         Self {
@@ -356,6 +371,7 @@ impl ApiPolicy {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Default for ApiPolicy {
     fn default() -> Self {
         Self::disabled()
@@ -365,16 +381,19 @@ impl Default for ApiPolicy {
 /// Complete API policy matrix. Missing entries are intentionally treated as
 /// disabled by allows, which makes configuration fail closed.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct PolicyMatrix {
     pub apis: BTreeMap<GitRunApi, ApiPolicy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct PolicyLintIssue {
     pub path: String,
     pub message: String,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl PolicyMatrix {
     pub fn secure_default() -> Self {
         Self::default()
@@ -445,7 +464,307 @@ impl PolicyMatrix {
     }
 }
 
-#[cfg(test)]
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{GitRunApi, GitRunOperation};
+
+    const APIS: [GitRunApi; 10] = [
+        GitRunApi::GitVaultRun,
+        GitRunApi::GitDockRun,
+        GitRunApi::GitSaveRun,
+        GitRunApi::GitRegisterRun,
+        GitRunApi::GitInstallRun,
+        GitRunApi::GitReadRun,
+        GitRunApi::GitWriteRun,
+        GitRunApi::GitVerifyRun,
+        GitRunApi::GitStatusRun,
+        GitRunApi::GitDispatchRun,
+    ];
+
+    const OPERATIONS: [GitRunOperation; 20] = [
+        GitRunOperation::Read,
+        GitRunOperation::Write,
+        GitRunOperation::Exists,
+        GitRunOperation::Delete,
+        GitRunOperation::List,
+        GitRunOperation::Connect,
+        GitRunOperation::Disconnect,
+        GitRunOperation::Execute,
+        GitRunOperation::Melt,
+        GitRunOperation::Mount,
+        GitRunOperation::Unmount,
+        GitRunOperation::File,
+        GitRunOperation::Logs,
+        GitRunOperation::Register,
+        GitRunOperation::Install,
+        GitRunOperation::Remove,
+        GitRunOperation::Update,
+        GitRunOperation::Verify,
+        GitRunOperation::Status,
+        GitRunOperation::Plan,
+    ];
+
+    // Rows follow APIS order; columns follow OPERATIONS order.
+    const EXPECTED: [[bool; 20]; 10] = [
+        [true, true, true, true, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+        [true, true, false, false, false, true, true, true, true, true, true, false, false, false, false, false, false, false, false, false],
+        [false, false, false, false, false, false, false, false, false, false, false, true, true, false, false, false, false, false, false, false],
+        [false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false, false, false, false, false],
+        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, true, true, false, false, false],
+        [true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+        [false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false],
+        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false, false],
+        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true, false],
+        [false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true],
+    ];
+
+    /// Exhaustively compares all 200 API/operation pairs with the closed contract matrix.
+    #[kani::proof]
+    fn api_operation_matrix_matches_the_closed_contract() {
+        for api_index in 0..APIS.len() {
+            for operation_index in 0..OPERATIONS.len() {
+                assert!(
+                    APIS[api_index].supports_operation(OPERATIONS[operation_index])
+                        == EXPECTED[api_index][operation_index]
+                );
+            }
+        }
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{GitRunApi, GitRunOperation};
+    use vstd::prelude::*;
+
+    verus! {
+        /// Verifies every positive API/operation contract pair against production logic.
+        proof fn every_supported_pair_is_allowed() {
+            assert(GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Read));
+            assert(GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Write));
+            assert(GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Exists));
+            assert(GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Delete));
+            assert(GitRunApi::GitVaultRun.supports_operation(GitRunOperation::List));
+            assert(GitRunApi::GitDockRun.supports_operation(GitRunOperation::Connect));
+            assert(GitRunApi::GitDockRun.supports_operation(GitRunOperation::Disconnect));
+            assert(GitRunApi::GitDockRun.supports_operation(GitRunOperation::Read));
+            assert(GitRunApi::GitDockRun.supports_operation(GitRunOperation::Write));
+            assert(GitRunApi::GitDockRun.supports_operation(GitRunOperation::Execute));
+            assert(GitRunApi::GitDockRun.supports_operation(GitRunOperation::Melt));
+            assert(GitRunApi::GitDockRun.supports_operation(GitRunOperation::Mount));
+            assert(GitRunApi::GitDockRun.supports_operation(GitRunOperation::Unmount));
+            assert(GitRunApi::GitSaveRun.supports_operation(GitRunOperation::File));
+            assert(GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Logs));
+            assert(GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Register));
+            assert(GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Install));
+            assert(GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Remove));
+            assert(GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Update));
+            assert(GitRunApi::GitReadRun.supports_operation(GitRunOperation::Read));
+            assert(GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Write));
+            assert(GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Verify));
+            assert(GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Status));
+            assert(GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Plan));
+        }
+
+        /// Verifies every other API/operation combination is denied by production logic.
+        proof fn every_unsupported_pair_is_denied() {
+            assert(!GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Connect));
+            assert(!GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Disconnect));
+            assert(!GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Execute));
+            assert(!GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Melt));
+            assert(!GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Mount));
+            assert(!GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Unmount));
+            assert(!GitRunApi::GitVaultRun.supports_operation(GitRunOperation::File));
+            assert(!GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Logs));
+            assert(!GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Register));
+            assert(!GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Install));
+            assert(!GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Remove));
+            assert(!GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Update));
+            assert(!GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Verify));
+            assert(!GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Status));
+            assert(!GitRunApi::GitVaultRun.supports_operation(GitRunOperation::Plan));
+
+            assert(!GitRunApi::GitDockRun.supports_operation(GitRunOperation::Exists));
+            assert(!GitRunApi::GitDockRun.supports_operation(GitRunOperation::Delete));
+            assert(!GitRunApi::GitDockRun.supports_operation(GitRunOperation::List));
+            assert(!GitRunApi::GitDockRun.supports_operation(GitRunOperation::File));
+            assert(!GitRunApi::GitDockRun.supports_operation(GitRunOperation::Logs));
+            assert(!GitRunApi::GitDockRun.supports_operation(GitRunOperation::Register));
+            assert(!GitRunApi::GitDockRun.supports_operation(GitRunOperation::Install));
+            assert(!GitRunApi::GitDockRun.supports_operation(GitRunOperation::Remove));
+            assert(!GitRunApi::GitDockRun.supports_operation(GitRunOperation::Update));
+            assert(!GitRunApi::GitDockRun.supports_operation(GitRunOperation::Verify));
+            assert(!GitRunApi::GitDockRun.supports_operation(GitRunOperation::Status));
+            assert(!GitRunApi::GitDockRun.supports_operation(GitRunOperation::Plan));
+
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Read));
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Write));
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Exists));
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Delete));
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::List));
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Connect));
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Disconnect));
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Execute));
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Melt));
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Mount));
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Unmount));
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Register));
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Install));
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Remove));
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Update));
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Verify));
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Status));
+            assert(!GitRunApi::GitSaveRun.supports_operation(GitRunOperation::Plan));
+
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Read));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Write));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Exists));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Delete));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::List));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Connect));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Disconnect));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Execute));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Melt));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Mount));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Unmount));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::File));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Logs));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Install));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Remove));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Update));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Verify));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Status));
+            assert(!GitRunApi::GitRegisterRun.supports_operation(GitRunOperation::Plan));
+
+            assert(!GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Read));
+            assert(!GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Write));
+            assert(!GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Exists));
+            assert(!GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Delete));
+            assert(!GitRunApi::GitInstallRun.supports_operation(GitRunOperation::List));
+            assert(!GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Connect));
+            assert(!GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Disconnect));
+            assert(!GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Execute));
+            assert(!GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Melt));
+            assert(!GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Mount));
+            assert(!GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Unmount));
+            assert(!GitRunApi::GitInstallRun.supports_operation(GitRunOperation::File));
+            assert(!GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Logs));
+            assert(!GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Register));
+            assert(!GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Verify));
+            assert(!GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Status));
+            assert(!GitRunApi::GitInstallRun.supports_operation(GitRunOperation::Plan));
+
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::Write));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::Exists));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::Delete));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::List));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::Connect));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::Disconnect));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::Execute));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::Melt));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::Mount));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::Unmount));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::File));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::Logs));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::Register));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::Install));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::Remove));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::Update));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::Verify));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::Status));
+            assert(!GitRunApi::GitReadRun.supports_operation(GitRunOperation::Plan));
+
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Read));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Exists));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Delete));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::List));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Connect));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Disconnect));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Execute));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Melt));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Mount));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Unmount));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::File));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Logs));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Register));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Install));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Remove));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Update));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Verify));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Status));
+            assert(!GitRunApi::GitWriteRun.supports_operation(GitRunOperation::Plan));
+
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Read));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Write));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Exists));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Delete));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::List));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Connect));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Disconnect));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Execute));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Melt));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Mount));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Unmount));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::File));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Logs));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Register));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Install));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Remove));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Update));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Status));
+            assert(!GitRunApi::GitVerifyRun.supports_operation(GitRunOperation::Plan));
+
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Read));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Write));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Exists));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Delete));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::List));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Connect));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Disconnect));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Execute));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Melt));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Mount));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Unmount));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::File));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Logs));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Register));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Install));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Remove));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Update));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Verify));
+            assert(!GitRunApi::GitStatusRun.supports_operation(GitRunOperation::Plan));
+
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Read));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Write));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Exists));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Delete));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::List));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Connect));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Disconnect));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Execute));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Melt));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Mount));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Unmount));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::File));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Logs));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Register));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Install));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Remove));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Update));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Verify));
+            assert(!GitRunApi::GitDispatchRun.supports_operation(GitRunOperation::Status));
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}
+
+#[cfg(all(test, not(any(kani, verus))))]
 mod tests {
     use super::*;
 

@@ -332,15 +332,32 @@ def check_native_init_package_resources(errors: list[str]) -> None:
         if marker not in release:
             errors.append(f"release packaging is missing native-init integration: {marker}")
 
-    apk_override = (
-        release.split("            apk:\n", 1)[1].split("            archlinux:\n", 1)[0]
-        if "            apk:\n" in release and "            archlinux:\n" in release
+    nfpm_marker = 'cat > "$RUNNER_TEMP/nfpm.yaml" <<NFPM'
+    nfpm_source = (
+        release.split(nfpm_marker, 1)[1].split("\n          NFPM", 1)[0]
+        if nfpm_marker in release and "\n          NFPM" in release.split(nfpm_marker, 1)[1]
         else ""
     )
-    if "preremove:" in apk_override:
-        errors.append("nFPM APK overrides do not support an APK-specific preremove key; use the generic preremove hook")
-    if "postupgrade: packaging/apk-post-upgrade" not in apk_override:
-        errors.append("APK post-upgrade hook must use the APK-specific postupgrade field")
+    nfpm_config = re.sub(r"(?m)^ {10}", "", nfpm_source)
+    apk_section = re.search(r"(?ms)^apk:\n(.*?)(?=^[^ \t]|\Z)", nfpm_config)
+    if not apk_section or not re.search(
+        r"(?m)^  scripts:\n    postupgrade: packaging/apk-post-upgrade$",
+        apk_section.group(0),
+    ):
+        errors.append("APK post-upgrade hook must use the dedicated top-level APK scripts section")
+
+    overrides = re.search(r"(?ms)^overrides:\n(.*)\Z", nfpm_config)
+    apk_override = (
+        re.search(r"(?ms)^  apk:\n(.*?)(?=^  [A-Za-z0-9_-]+:|\Z)", overrides.group(1))
+        if overrides
+        else None
+    )
+    if not apk_override or not re.search(r"(?m)^    depends: \[musl\]$", apk_override.group(0)):
+        errors.append("APK musl dependency must remain under overrides.apk")
+    if apk_override and "scripts:" in apk_override.group(0):
+        errors.append("APK lifecycle scripts must not be nested under overrides.apk")
+    if apk_override and "preremove:" in apk_override.group(0):
+        errors.append("nFPM APK overrides must not contain a preremove hook; use the generic preremove hook")
 
     if "init-neutral" in release:
         errors.append("native APK/XBPS packages must not be described as init-neutral")

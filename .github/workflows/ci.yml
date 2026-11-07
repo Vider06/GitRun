@@ -1765,6 +1765,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/ci/check-updater-release-policy.py
+          python3 scripts/ci/check-desktop-appimage-contracts.py
           python3 - <<'PY'
           from pathlib import Path
 

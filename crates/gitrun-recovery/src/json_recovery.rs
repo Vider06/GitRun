@@ -208,6 +208,7 @@ fn transient_unit_journal(unit_name: &str) -> Option<String> {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[cfg(not(any(kani, verus)))]
 fn restore_main_library_via_transient_unit() -> Result<JsonRecoveryReport, String> {
     Err("Main Library restore through the system service is supported only on Linux".into())
 }

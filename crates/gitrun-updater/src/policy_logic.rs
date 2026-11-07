@@ -1,8 +1,8 @@
 //! Pure updater release-policy types shared by runtime code and Kani proofs.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(kani), derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(not(kani), serde(rename_all = "snake_case"))]
+#[cfg_attr(all(not(kani), not(verus)), derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(all(not(kani), not(verus)), serde(rename_all = "snake_case"))]
 pub enum ReleaseType {
     Pre,
     Full,
@@ -20,8 +20,8 @@ impl ReleaseType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(kani), derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(not(kani), serde(rename_all = "snake_case"))]
+#[cfg_attr(all(not(kani), not(verus)), derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(all(not(kani), not(verus)), serde(rename_all = "snake_case"))]
 pub enum UpdatePolicy {
     SecurityOnly,
     SecurityFull,
@@ -37,6 +37,11 @@ impl UpdatePolicy {
         }
     }
 
+    #[cfg_attr(verus, verus_verify(dual_spec, open))]
+    #[cfg_attr(
+        verus,
+        verus_spec(returns self.accepts_release_type(release_type))
+    )]
     pub fn accepts_release_type(self, release_type: ReleaseType) -> bool {
         match self {
             Self::SecurityOnly => release_type == ReleaseType::Security,
@@ -85,3 +90,33 @@ mod verification {
         assert!(UpdatePolicy::SecurityFullPre.as_str() == "security_full_pre");
     }
 }
+
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{ReleaseType, UpdatePolicy};
+    use vstd::prelude::*;
+
+    verus! {
+        /// Verifies the release allowlist against the actual production function body.
+        proof fn update_policy_acceptance_is_exact() {
+            assert(!UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Pre));
+            assert(!UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Full));
+            assert!(UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Security));
+
+            assert(!UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Pre));
+            assert!(UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Full));
+            assert!(UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Security));
+
+            assert!(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Pre));
+            assert!(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Full));
+            assert!(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Security));
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

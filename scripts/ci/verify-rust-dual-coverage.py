@@ -15,6 +15,8 @@ MANIFEST = ROOT / "verification/source-proof-map.tsv"
 REPORT = Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "gitrun-dual-verifier-coverage.tsv"
 EXPECTED_HEADER = ["SOURCE_FILE", "KANI_ENTRYPOINT", "VERUS_ENTRYPOINT"]
 PATH_ATTRIBUTE = re.compile(r'#\s*\[\s*path\s*=\s*"([^"]+)"\s*\]')
+KANI_PROOF = re.compile(r"#\s*\[\s*kani\s*::\s*proof\s*\]")
+VERUS_MODULE = re.compile(r"\bverus\s*!")
 
 
 def tracked_sources() -> set[str]:
@@ -27,14 +29,29 @@ def tracked_sources() -> set[str]:
     return {item.decode() for item in result.stdout.split(b"\0") if item}
 
 
-def imported_sources(entrypoint: Path) -> set[str]:
-    imports = set()
-    for imported in PATH_ATTRIBUTE.findall(entrypoint.read_text(encoding="utf-8")):
+def source_closure(entrypoint: Path) -> tuple[set[str], str]:
+    """Return all repository-local path modules reachable from an entrypoint."""
+    root = ROOT.resolve()
+    visited: set[Path] = set()
+    contents: list[str] = []
+
+    def visit(path: Path) -> None:
+        resolved = path.resolve()
         try:
-            imports.add((entrypoint.parent / imported).resolve().relative_to(ROOT.resolve()).as_posix())
+            resolved.relative_to(root)
         except ValueError:
-            continue
-    return imports
+            return
+        if resolved in visited or not resolved.is_file():
+            return
+        visited.add(resolved)
+        source = resolved.read_text(encoding="utf-8")
+        contents.append(source)
+        for imported in PATH_ATTRIBUTE.findall(source):
+            visit(resolved.parent / imported)
+
+    visit(entrypoint)
+    names = {path.relative_to(root).as_posix() for path in visited}
+    return names, "\\n".join(contents)
 
 
 def main() -> int:
@@ -90,15 +107,22 @@ def main() -> int:
                 errors.append(f"{tool} entrypoint reused; require a per-file proof: {name}")
                 continue
             used.add(name)
-            if source not in imported_sources(entrypoint):
-                errors.append(f"{tool} entrypoint {name} does not directly #[path]-import {source}")
+            imported, proof_sources = source_closure(entrypoint)
+            if source not in imported:
+                errors.append(
+                    f"{tool} entrypoint {name} does not include {source} "
+                    "through a repository-local #[path] module"
+                )
                 continue
-            content = entrypoint.read_text(encoding="utf-8")
-            if tool == "KANI" and "#[kani::proof]" not in content:
-                errors.append(f"KANI entrypoint {name} has no #[kani::proof] harness")
+            if tool == "KANI" and not KANI_PROOF.search(proof_sources):
+                errors.append(
+                    f"KANI source closure for {name} has no #[kani::proof] harness"
+                )
                 continue
-            if tool == "VERUS" and "verus!" not in content:
-                errors.append(f"VERUS entrypoint {name} has no verus! verification module")
+            if tool == "VERUS" and not VERUS_MODULE.search(proof_sources):
+                errors.append(
+                    f"VERUS source closure for {name} has no verus! verification module"
+                )
                 continue
             ready.append((source, tool, name))
             statuses[source][index] = "READY"

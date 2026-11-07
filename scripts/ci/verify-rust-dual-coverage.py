@@ -69,6 +69,8 @@ def write_summary(
         status: sum(pair.count(status) for pair in statuses.values())
         for status in ("PROVEN", "FAILED", "UNVERIFIED", "ERROR")
     }
+    kani_proven = sum(pair[0] == "PROVEN" for pair in statuses.values())
+    verus_proven = sum(pair[1] == "PROVEN" for pair in statuses.values())
     fully_proven = sum(pair == ["PROVEN", "PROVEN"] for pair in statuses.values())
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if not summary:

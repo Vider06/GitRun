@@ -3166,7 +3166,7 @@ jobs:
     name: Tauri GUI build and package · ARM64
     needs: [cargo-lock, rust-lint, frontend]
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success') }}
-    runs-on: ubuntu-22.04-arm
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     permissions:
       contents: read

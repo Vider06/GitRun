@@ -142,21 +142,36 @@ def build_server_package(args: argparse.Namespace) -> Path:
             f"'{args.dependency}', received '{dependencies.strip()}'."
         )
 
-    files = run_capture(
+    install_script = run_capture(
         [
             args.query,
             "-R",
             f"--repository={repository}",
-            "-f",
+            "--property=install-script",
             package_id,
         ],
         cwd=repository,
         env=environment,
     )
-    file_entries = files.splitlines()
-    for hook in ("INSTALL", "REMOVE"):
-        if not any(entry.rstrip("/").endswith(f"/{hook}") or entry == hook for entry in file_entries):
-            raise RuntimeError(f"XBPS package {package_id} is missing its {hook} lifecycle hook")
+    remove_script = run_capture(
+        [
+            args.query,
+            "-R",
+            f"--repository={repository}",
+            "--property=remove-script",
+            package_id,
+        ],
+        cwd=repository,
+        env=environment,
+    )
+    if "sv restart" not in install_script:
+        raise RuntimeError(
+            f"XBPS package {package_id} has no install-script property with the runit upgrade restart"
+        )
+    if "sv down" not in remove_script:
+        raise RuntimeError(
+            f"XBPS package {package_id} has no remove-script property with the runit shutdown"
+        )
 
     final_path = output / f"GitRun-Server-{args.version}-linux-{args.cpu}-xbps.xbps"
     shutil.copy2(archive, final_path)

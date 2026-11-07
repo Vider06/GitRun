@@ -12,23 +12,9 @@ const MAX_RELEASE_PAGES: usize = 100;
 // Signed release classification begins with 1.9.1; older tags have no typed trust metadata.
 const MIN_CLASSIFIED_RELEASE_VERSION: &str = "1.9.1";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReleaseType {
-    Pre,
-    Full,
-    Security,
-}
+pub use super::policy_logic::{ReleaseType, UpdatePolicy};
 
 impl ReleaseType {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Pre => "pre",
-            Self::Full => "full",
-            Self::Security => "security",
-        }
-    }
-
     pub fn from_release_body(body: &str) -> Result<Self, UpdateError> {
         let mut found = None;
         for line in body.lines().map(str::trim) {
@@ -61,32 +47,6 @@ impl ReleaseType {
                 "release description is missing its GitRun release type marker".into(),
             )
         })
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum UpdatePolicy {
-    SecurityOnly,
-    SecurityFull,
-    SecurityFullPre,
-}
-
-impl UpdatePolicy {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::SecurityOnly => "security_only",
-            Self::SecurityFull => "security_full",
-            Self::SecurityFullPre => "security_full_pre",
-        }
-    }
-
-    pub fn accepts_release_type(self, release_type: ReleaseType) -> bool {
-        match self {
-            Self::SecurityOnly => release_type == ReleaseType::Security,
-            Self::SecurityFull => matches!(release_type, ReleaseType::Security | ReleaseType::Full),
-            Self::SecurityFullPre => true,
-        }
     }
 }
 

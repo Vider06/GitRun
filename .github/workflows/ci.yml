@@ -5,9 +5,11 @@ name: GitRun CI
 #    variables-verification ─┬─► environment
 #                            └─► detect ─► cargo-lock ─┬─ static checks · audits · Docker · systemd
 #                                                       └─ rust-lint
-#    rust-lint ─► rust-test ─► rust-build ─► platform-target-check
+#    rust-lint ─► rust-test ─► rust-build ─► platform-target-check ─► Server packages
+#        ├─ formal-verification (per-file Rust inventory + Kani) · Miri
+#        ├─ release-inputs ─► all package matrices ─► exact Release asset assembly
 #        ├─ security-hardening · gsr-watchdog · runtime-contracts · platform-compatibility
-#        └─ + frontend ─► tauri · tauri-recovery
+#        └─ + frontend ─► Tauri GNU/musl builds ─► Desktop package matrices
 #    everything ─► summary (PR comment + Mermaid map) ─► cache-gc (push only)
 #
 #  Cache namespace:  gitrun-<epoch>-<os>-<arch>-<kind>-<details>-<hash>
@@ -250,6 +252,7 @@ jobs:
     timeout-minutes: 60
     outputs:
       rust: ${{ steps.detect.outputs.rust }}
+      python: ${{ steps.detect.outputs.python }}
 
       docker: ${{ steps.detect.outputs.docker }}
       dockerfiles: ${{ steps.detect.outputs.dockerfiles }}
@@ -281,6 +284,7 @@ jobs:
           flag() { if has "$1"; then echo true; else echo false; fi; }
 
           rust="$(flag '^Cargo\.toml$')"
+          python="$(flag '\.py$')"
 
           powershell="$(flag '\.ps1$')"
           node="$(flag '(^|/)package\.json$')"
@@ -307,14 +311,14 @@ jobs:
             if changed="$(git diff --name-only HEAD^1 HEAD 2>/dev/null)" && [ -n "$changed" ]; then
               if ! grep -Evq '^(docs/|LICENSE|CODEOWNERS|\.github/(ISSUE_TEMPLATE|PULL_REQUEST_TEMPLATE)/)|\.(md|mdx|txt|rst)$' <<<"$changed"; then
                 docs_only=true
-                rust=false; node=false; tauri=false; docker=false
-                ci_note "docs-only pull request: Rust, Node, Tauri and Docker jobs are skipped (use full_run to force)"
+                rust=false; python=false; node=false; tauri=false; docker=false
+                ci_note "docs-only pull request: Rust, Python, Node, Tauri and Docker jobs are skipped (use full_run to force)"
               fi
             fi
           fi
 
           {
-            echo "rust=$rust"; echo "powershell=$powershell"; echo "node=$node"
+            echo "rust=$rust"; echo "python=$python"; echo "powershell=$powershell"; echo "node=$node"
             echo "shell=$shell"; echo "workflows=$workflows"; echo "dockerfiles=$dockerfiles"
             echo "docker=$docker"; echo "tauri=$tauri"; echo "docs_only=$docs_only"
           } >> "$GITHUB_OUTPUT"
@@ -322,7 +326,7 @@ jobs:
           {
             echo "### 🔎 Detected components"; echo
             echo "| Component | Active |"; echo "|---|---|"
-            for k in rust powershell node shell workflows dockerfiles docker tauri docs_only; do
+            for k in rust python powershell node shell workflows dockerfiles docker tauri docs_only; do
               v="${!k}"; if [ "$v" = true ]; then echo "| $k | ✅ |"; else echo "| $k | – |"; fi
             done
             echo
@@ -339,6 +343,7 @@ jobs:
     timeout-minutes: 60
     outputs:
       rust: ${{ needs.detect.outputs.rust }}
+      python: ${{ needs.detect.outputs.python }}
 
       docker: ${{ needs.detect.outputs.docker }}
       dockerfiles: ${{ needs.detect.outputs.dockerfiles }}
@@ -1611,6 +1616,13 @@ jobs:
             esac
           }
           ci_run "Build and validate server + updater ($TARGET)" build_target
+      - name: Upload server executable for package certification
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: server-build-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/gitrun
+          if-no-files-found: error
+          retention-days: 1
       - name: Save target-specific Cargo cache
         id: target-cache-save
         if: success() && steps.target-cache.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
@@ -1639,6 +1651,1178 @@ jobs:
       - *logs
 
   # ───────────────────────────────────────────── Linux platform contracts ──
+  release-package-certification:
+    name: Release Server package certification · ${{ matrix.target }}
+    needs: [cargo-lock, rust-lint, platform-target-check]
+    if: ${{ needs.cargo-lock.outputs.rust == 'true' && needs.rust-lint.result == 'success' }}
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs: *job_outputs
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            xbps_static_arch: x86_64
+          - target: aarch64-unknown-linux-gnu
+            xbps_static_arch: x86_64
+          - target: x86_64-unknown-linux-musl
+            xbps_static_arch: x86_64
+          - target: aarch64-unknown-linux-musl
+            xbps_static_arch: x86_64
+    env:
+      TARGET: ${{ matrix.target }}
+      XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}
+    steps:
+      - *checkout
+      - *boot
+      - name: Set package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_NUMBER="$(tr -d '[:space:]' < version.txt)"
+          test -n "$VERSION_NUMBER"
+          VERSION="v$VERSION_NUMBER"
+          {
+            echo "VERSION_NUMBER=$VERSION_NUMBER"
+            echo "VERSION=$VERSION"
+          } >> "$GITHUB_ENV"
+      - name: Download target executable built by CI
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: server-build-${{ matrix.target }}
+          path: canonical
+      - name: Restore canonical binary permissions and target name
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s canonical/gitrun
+          chmod 0755 canonical/gitrun
+          mv canonical/gitrun "canonical/gitrun-$TARGET"
+      - name: Synchronize Markdown source-version markers
+        run: |
+          set -euo pipefail
+          python3 scripts/sync-markdown-version.py --version "$VERSION_NUMBER"
+          python3 scripts/sync-markdown-version.py --check --version "$VERSION_NUMBER"
+      - name: Set up pinned Go toolchain for nFPM
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.26.10"
+          check-latest: false
+          cache: false
+      - name: Create TAR.ZST, DEB, RPM, APK, Arch and XBPS packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/server-packages"
+          stage="$RUNNER_TEMP/server-stage"
+          binary="$GITHUB_WORKSPACE/canonical/gitrun-$TARGET"
+          rm -rf "$out" "$stage"
+          mkdir -p "$out" "$stage/usr/bin" "$stage/usr/share/gitrun" "$stage/usr/share/doc/gitrun"
+          test -x "$binary"
+          install -m 0755 "$binary" "$stage/usr/bin/gitrun"
+          install -m 0644 version.txt "$stage/usr/share/gitrun/version.txt"
+          install -m 0644 LICENSE README.md config/config.example.env "$stage/usr/share/doc/gitrun/"
+          tar -C "$stage" -czf "$out/GitRun-Server-$VERSION-$TARGET-server.tar.gz" .
+          tar --zstd -C "$stage" -cf "$out/GitRun-Server-$VERSION-$TARGET-server.tar.zst" .
+          package_stage="$RUNNER_TEMP/package-stage"
+          rm -rf "$package_stage"
+          cp -a "$stage" "$package_stage"
+          unit_contents=""
+          init_contents=""
+          # GNU packages carry systemd units. Alpine APK ships OpenRC definitions;
+          # Void XBPS ships runit definitions. GitRun setup owns enable/start and
+          # creates only the runit supervision links after runtime configuration.
+          if [[ "$TARGET" == *-gnu ]]; then
+            mkdir -p "$package_stage/usr/lib/systemd/system"
+            for unit in gitrun.service gitrun-gsr.service gitrun-control.service; do
+              sed 's#/usr/local/bin/gitrun#/usr/bin/gitrun#g' "systemd/$unit" > "$package_stage/usr/lib/systemd/system/$unit"
+            done
+            grep -Fq 'ExecStart=/usr/bin/gitrun scheduler' "$package_stage/usr/lib/systemd/system/gitrun.service"
+            grep -Fq 'ExecStart=/usr/bin/gitrun gsr-watchdog' "$package_stage/usr/lib/systemd/system/gitrun-gsr.service"
+            grep -Fq 'ExecStart=/usr/bin/gitrun control-manager' "$package_stage/usr/lib/systemd/system/gitrun-control.service"
+            unit_contents="$(cat <<YAML
+            - src: $package_stage/usr/lib/systemd/system/gitrun.service
+              dst: /usr/lib/systemd/system/gitrun.service
+            - src: $package_stage/usr/lib/systemd/system/gitrun-gsr.service
+              dst: /usr/lib/systemd/system/gitrun-gsr.service
+            - src: $package_stage/usr/lib/systemd/system/gitrun-control.service
+              dst: /usr/lib/systemd/system/gitrun-control.service
+          YAML
+          )"
+          elif [[ "$TARGET" == *-musl ]]; then
+            mkdir -p "$package_stage/etc/init.d" "$package_stage/usr/libexec/gitrun"
+            install -m 0755 packaging/gitrun-service "$package_stage/usr/libexec/gitrun/gitrun-service"
+            install -m 0755 packaging/openrc/gitrun "$package_stage/etc/init.d/gitrun"
+            install -m 0755 packaging/openrc/gitrun-gsr "$package_stage/etc/init.d/gitrun-gsr"
+            init_contents="$(cat <<YAML
+            - src: $package_stage/usr/libexec/gitrun/gitrun-service
+              dst: /usr/libexec/gitrun/gitrun-service
+              file_info:
+                mode: 0755
+            - src: $package_stage/etc/init.d/gitrun
+              dst: /etc/init.d/gitrun
+              file_info:
+                mode: 0755
+            - src: $package_stage/etc/init.d/gitrun-gsr
+              dst: /etc/init.d/gitrun-gsr
+              file_info:
+                mode: 0755
+          YAML
+          )"
+          fi
+
+          case "$TARGET" in
+            x86_64-unknown-linux-gnu) arch=amd64; formats="deb rpm archlinux"; xbps_arch=x86_64; xbps_dep=glibc; base_dep=libc6; cpu=x86_64 ;;
+            aarch64-unknown-linux-gnu) arch=arm64; formats="deb rpm archlinux"; xbps_arch=aarch64; xbps_dep=glibc; base_dep=libc6; cpu=aarch64 ;;
+            x86_64-unknown-linux-musl) arch=amd64; formats="apk"; xbps_arch=x86_64-musl; xbps_dep=musl; base_dep=musl; cpu=x86_64-musl ;;
+            aarch64-unknown-linux-musl) arch=arm64; formats="apk"; xbps_arch=aarch64-musl; xbps_dep=musl; base_dep=musl; cpu=aarch64-musl ;;
+            *) echo "Unsupported package target: $TARGET" >&2; exit 1 ;;
+          esac
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm zstd
+          command -v go >/dev/null
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          cat > "$RUNNER_TEMP/nfpm.yaml" <<NFPM
+          name: gitrun-server
+          arch: $arch
+          platform: linux
+          version: $VERSION_NUMBER
+          maintainer: Vider06
+          description: GitRun headless server, scheduler, runner manager and recovery CLI
+          license: Apache-2.0
+          contents:
+            - src: $package_stage/usr/bin/gitrun
+              dst: /usr/bin/gitrun
+            - src: $package_stage/usr/share/gitrun/version.txt
+              dst: /usr/share/gitrun/version.txt
+            - src: $package_stage/usr/share/doc/gitrun/LICENSE
+              dst: /usr/share/doc/gitrun/LICENSE
+            - src: $package_stage/usr/share/doc/gitrun/README.md
+              dst: /usr/share/doc/gitrun/README.md
+            - src: $package_stage/usr/share/doc/gitrun/config.example.env
+              dst: /usr/share/doc/gitrun/config.example.env
+          $unit_contents
+          $init_contents
+          depends: [$base_dep]
+          # nFPM's generic preremove hook maps to APK pre-deinstall.
+          scripts:
+            preremove: packaging/apk-pre-remove
+          # APK lifecycle scripts use nFPM's dedicated top-level APK section.
+          apk:
+            scripts:
+              postupgrade: packaging/apk-post-upgrade
+          overrides:
+            deb:
+              depends: [libc6, policykit-1]
+              conflicts: [gitrun]
+              replaces: [gitrun]
+              # Debian maintainer scripts use dpkg-specific arguments.
+              # Keep them in the Debian override, not the Deb-only metadata block.
+              scripts:
+                postinstall: packaging/gitrun-postinst
+                preremove: packaging/gitrun-prerm
+            rpm:
+              depends: [glibc, polkit]
+            apk:
+              depends: [musl]
+            archlinux:
+              depends: [glibc, polkit]
+          NFPM
+          for format in $formats; do
+            nfpm package --config "$RUNNER_TEMP/nfpm.yaml" --packager "$format" --target "$out"
+            case "$format" in
+              deb) ext=deb; suffix=deb ;;
+              rpm) ext=rpm; suffix=rpm ;;
+              apk) ext=apk; suffix=apk ;;
+              archlinux) ext=pkg.tar.zst; suffix=arch ;;
+            esac
+            produced="$(find "$out" -maxdepth 1 -type f -name "gitrun*.$ext" -print -quit)"
+            test -n "$produced"
+            if [[ "$format" == "apk" ]]; then
+              apk_contents="$(tar -tzf "$produced")"
+              for required in \
+                usr/libexec/gitrun/gitrun-service \
+                etc/init.d/gitrun etc/init.d/gitrun-gsr; do
+                grep -Fqx "$required" <<< "$apk_contents" || {
+                  echo "APK package is missing OpenRC resource: $required" >&2
+                  exit 1
+                }
+              done
+              grep -Eq '(^|/)\.pre-deinstall$' <<< "$apk_contents" || {
+                echo "APK package is missing its pre-deinstall service cleanup hook" >&2
+                exit 1
+              }
+              grep -Eq '(^|/)\.post-upgrade$' <<< "$apk_contents" || {
+                echo "APK package is missing its post-upgrade service restart hook" >&2
+                exit 1
+              }
+              if grep -Eq '(^|/)(etc|usr/lib)/systemd/' <<< "$apk_contents"; then
+                echo "APK package must contain OpenRC resources, not systemd units" >&2
+                exit 1
+              fi
+            fi
+            mv "$produced" "$out/GitRun-Server-$VERSION-linux-$cpu-$suffix.$ext"
+          done
+
+          # XBPS is used by Void Linux, whose default init system is runit.
+          # Build its archive from the neutral stage, never the systemd-enabled
+          # package stage shared by DEB, RPM and Arch.
+          xbps_stage="$RUNNER_TEMP/xbps-stage"
+          rm -rf "$xbps_stage"
+          cp -a "$stage" "$xbps_stage"
+          mkdir -p "$xbps_stage/usr/libexec/gitrun" \
+            "$xbps_stage/etc/sv/gitrun/log" "$xbps_stage/etc/sv/gitrun-gsr/log"
+          install -m 0755 packaging/gitrun-service "$xbps_stage/usr/libexec/gitrun/gitrun-service"
+          install -m 0755 packaging/xbps/INSTALL "$xbps_stage/INSTALL"
+          install -m 0755 packaging/xbps/REMOVE "$xbps_stage/REMOVE"
+          install -m 0755 packaging/runit/gitrun/run "$xbps_stage/etc/sv/gitrun/run"
+          install -m 0755 packaging/runit/gitrun/log/run "$xbps_stage/etc/sv/gitrun/log/run"
+          install -m 0755 packaging/runit/gitrun-gsr/run "$xbps_stage/etc/sv/gitrun-gsr/run"
+          install -m 0755 packaging/runit/gitrun-gsr/log/run "$xbps_stage/etc/sv/gitrun-gsr/log/run"
+          xbps_root="$RUNNER_TEMP/xbps"
+          mkdir -p "$xbps_root"
+          curl --fail --silent --show-error --location \
+            "https://repo-default.voidlinux.org/static/xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz" \
+            -o "$RUNNER_TEMP/xbps-static.tar.xz"
+          tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
+          xbps_create="$xbps_root/usr/bin/xbps-create"
+          xbps_rindex="$xbps_root/usr/bin/xbps-rindex"
+          xbps_query="$xbps_root/usr/bin/xbps-query"
+          test -x "$xbps_create" && test -x "$xbps_rindex" && test -x "$xbps_query"
+          export XBPS_ARCH="$xbps_arch"
+          (cd "$out" && "$xbps_create" -A "$xbps_arch" -n "gitrun-server-${VERSION_NUMBER}_1" \
+            -D "$xbps_dep" -H https://github.com/Vider06/GitRun \
+            -l Apache-2.0 -m Vider06 -s "GitRun headless server" "$xbps_stage")
+          xbps_file="$(find "$out" -maxdepth 1 -type f -name 'gitrun-*.xbps' -print -quit)"
+          test -n "$xbps_file"
+          test -s "$xbps_file"
+          xbps_contents="$(tar -tf "$xbps_file")"
+          for required in \
+            ./usr/libexec/gitrun/gitrun-service \
+            ./etc/sv/gitrun/run ./etc/sv/gitrun/log/run \
+            ./etc/sv/gitrun-gsr/run ./etc/sv/gitrun-gsr/log/run; do
+            grep -Fqx "$required" <<< "$xbps_contents" || {
+              echo "XBPS package is missing runit resource: $required" >&2
+              exit 1
+            }
+          done
+          if grep -Eq '^\./(etc|usr/lib)/systemd/' <<< "$xbps_contents"; then
+            echo "XBPS package must contain runit resources, not systemd units" >&2
+            exit 1
+          fi
+          mv "$xbps_file" "$out/GitRun-Server-$VERSION-linux-$cpu-xbps.xbps"
+          # Indexing the local repository parses the XBPS archive and validates its metadata.
+          "$xbps_rindex" -a "$out"/*.xbps
+          package_id="gitrun-server-${VERSION_NUMBER}_1"
+          server_deps="$("$xbps_query" -R --repository="$out" -x "$package_id")" || {
+            echo "XBPS repository dependency query failed for $package_id ($xbps_arch)." >&2
+            "$xbps_query" -R --repository="$out" -S "$package_id" || true
+            exit 1
+          }
+          if ! grep -Fq "$xbps_dep" <<< "$server_deps"; then
+            echo "XBPS dependency contract failed for $package_id: expected '$xbps_dep', received '$server_deps'." >&2
+            exit 1
+          fi
+          xbps_files="$("$xbps_query" -R --repository="$out" -f "$package_id")" || {
+            echo "XBPS package file-list query failed for $package_id ($xbps_arch)." >&2
+            exit 1
+          }
+          if ! grep -Eq '(^|/)INSTALL$' <<< "$xbps_files"; then
+            echo "XBPS package $package_id is missing its INSTALL lifecycle hook." >&2
+            exit 1
+          fi
+          if ! grep -Eq '(^|/)REMOVE$' <<< "$xbps_files"; then
+            echo "XBPS package $package_id is missing its REMOVE lifecycle hook." >&2
+            exit 1
+          fi
+          if ! grep -Fq "sv restart" packaging/xbps/INSTALL; then
+            echo "XBPS INSTALL hook for $package_id does not restart already-active runit services on upgrade." >&2
+            exit 1
+          fi
+          if ! grep -Fq "sv down" packaging/xbps/REMOVE; then
+            echo "XBPS REMOVE hook for $package_id does not stop runit services before removal." >&2
+            exit 1
+          fi
+          test "$(find "$out" -maxdepth 1 -type f -name '*.xbps' | wc -l)" -eq 1
+          test "$(find "$out" -maxdepth 1 -type f | wc -l)" -ge 3
+      - name: Audit every Server package output
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/server-packages"
+          case "$TARGET" in
+            x86_64-unknown-linux-gnu) cpu=x86_64 ;;
+            aarch64-unknown-linux-gnu) cpu=aarch64 ;;
+            x86_64-unknown-linux-musl) cpu=x86_64-musl ;;
+            aarch64-unknown-linux-musl) cpu=aarch64-musl ;;
+            *) echo "Unsupported target architecture: $TARGET" >&2; exit 1 ;;
+          esac
+          test -s "$out/GitRun-Server-$VERSION-$TARGET-server.tar.gz"
+          test -s "$out/GitRun-Server-$VERSION-$TARGET-server.tar.zst"
+          tar -tzf "$out/GitRun-Server-$VERSION-$TARGET-server.tar.gz" | grep -Fq 'usr/bin/gitrun'
+          tar --zstd -tf "$out/GitRun-Server-$VERSION-$TARGET-server.tar.zst" | grep -Fq 'usr/bin/gitrun'
+          test -s "$out/GitRun-Server-$VERSION-linux-$cpu-xbps.xbps"
+          if [[ "$TARGET" == *-gnu ]]; then
+            deb="$out/GitRun-Server-$VERSION-linux-$cpu-deb.deb"
+            rpm_file="$out/GitRun-Server-$VERSION-linux-$cpu-rpm.rpm"
+            arch="$out/GitRun-Server-$VERSION-linux-$cpu-arch.pkg.tar.zst"
+            test "$(dpkg-deb -f "$deb" Package)" = gitrun-server
+            test "$(dpkg-deb -f "$deb" Version)" = "$VERSION_NUMBER"
+            test "$(dpkg-deb -f "$deb" Conflicts)" = gitrun
+            test "$(dpkg-deb -f "$deb" Replaces)" = gitrun
+            rpm -qp --queryformat '%{NAME} %{VERSION}' "$rpm_file" | grep -Fx "gitrun-server $VERSION_NUMBER"
+            rpm_files="$(rpm -qpl "$rpm_file")"
+            grep -Fxq /usr/bin/gitrun <<< "$rpm_files"
+            arch_info="$(tar --zstd -xOf "$arch" .PKGINFO)"
+            grep -Fq 'pkgname = gitrun-server' <<< "$arch_info"
+            grep -Fq "pkgver = ${VERSION_NUMBER}-1" <<< "$arch_info"
+            arch_files="$(tar --zstd -tf "$arch")"
+            grep -Fq 'usr/bin/gitrun' <<< "$arch_files"
+            grep -Fq 'usr/lib/systemd/system/gitrun.service' <<< "$arch_files"
+          else
+            apk="$out/GitRun-Server-$VERSION-linux-$cpu-apk.apk"
+            apk_contents="$(tar -tzf "$apk")"
+            grep -Fq '.PKGINFO' <<< "$apk_contents"
+            apk_info="$(tar -xOzf "$apk" .PKGINFO)"
+            grep -Fq 'pkgname = gitrun-server' <<< "$apk_info"
+            grep -Eq "^pkgver = ${VERSION_NUMBER}([.-]|$)" <<< "$apk_info"
+            grep -Fq 'etc/init.d/gitrun' <<< "$apk_contents"
+            grep -Fq 'etc/init.d/gitrun-gsr' <<< "$apk_contents"
+          fi
+          xbps="$out/GitRun-Server-$VERSION-linux-$cpu-xbps.xbps"
+          xbps_contents="$(tar -tf "$xbps")"
+          grep -Fq './usr/bin/gitrun' <<< "$xbps_contents"
+          sha256sum "$out"/* > "$out/SHA256SUMS"
+          echo "Audited every generated Server package for $TARGET."
+      - name: Upload immutable target packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-server-packages-${{ matrix.target }}
+          path: ${{ runner.temp }}/server-packages/*
+          if-no-files-found: error
+          retention-days: 1
+      - *report
+      - *logs
+
+
+  migration-package-certification:
+    name: Conditional legacy migration package certification
+    needs: [cargo-lock, rust-lint, platform-target-check]
+    if: ${{ needs.cargo-lock.outputs.rust == 'true' && needs.rust-lint.result == 'success' }}
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      secs: ${{ steps.report.outputs.secs }}
+      cache: ${{ steps.report.outputs.cache }}
+      errors: ${{ steps.report.outputs.errors }}
+      migration_release: ${{ steps.migration.outputs.enabled }}
+    steps:
+      - *checkout
+      - *boot
+      - name: Detect one-time migration release
+        id: migration
+        env:
+          MIGRATION_RELEASE_ENABLED: ${{ vars.GITRUN_ENABLE_MIGRATION_RELEASE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_NUMBER="$(tr -d '[:space:]' < version.txt)"
+          VERSION="v$VERSION_NUMBER"
+          {
+            echo "VERSION_NUMBER=$VERSION_NUMBER"
+            echo "VERSION=$VERSION"
+          } >> "$GITHUB_ENV"
+          if [ "$VERSION" = v1.9.1 ] && [ "$MIGRATION_RELEASE_ENABLED" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Migration package not applicable to $VERSION."
+          fi
+      - name: Download new Server binary
+        if: steps.migration.outputs.enabled == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: server-build-x86_64-unknown-linux-gnu
+          path: canonical
+      - name: Restore canonical binary permissions
+        if: steps.migration.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          chmod 0755 canonical/gitrun
+          mv canonical/gitrun canonical/gitrun-x86_64-unknown-linux-gnu
+      - name: Checkout exact 1.8.23 packaging contract
+        if: steps.migration.outputs.enabled == 'true'
+        run: git clone --quiet --depth 1 --branch v1.8.23 "https://github.com/$GITHUB_REPOSITORY.git" "$RUNNER_TEMP/gitrun-v1.8.23-packaging"
+      - name: Assemble legacy-layout migration package
+        if: steps.migration.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dpkg-dev imagemagick
+          test "$VERSION" = v1.9.1
+          binary="$GITHUB_WORKSPACE/canonical/gitrun-x86_64-unknown-linux-gnu"
+          test -x "$binary"
+          root="$RUNNER_TEMP/legacy-deb-root"
+          out="$RUNNER_TEMP/migration-package"
+          rm -rf "$root" "$out"
+          mkdir -p "$root/DEBIAN" "$root/usr/bin" "$root/usr/libexec/gitrun" \
+            "$root/usr/share/gitrun" "$root/usr/share/doc/gitrun" "$root/usr/share/applications" "$out"
+          cat > "$root/DEBIAN/control" <<CONTROL
+          Package: gitrun
+          Version: $VERSION_NUMBER
+          Section: devel
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Vider06
+          Description: GitRun self-hosted GitHub Actions runner manager
+           One-time migration package for existing GitRun 1.8.23 installations.
+          CONTROL
+          install -m 0755 "$binary" "$root/usr/bin/gitrun"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/scripts/reinstall-latest.sh" "$root/usr/libexec/gitrun/reinstall-latest.sh"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/scripts/uninstall.sh" "$root/usr/libexec/gitrun/uninstall.sh"
+          install -m 0755 packaging/gitrun-migration-prerm "$root/DEBIAN/prerm"
+          install -m 0755 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/packaging/gitrun-postinst" "$root/DEBIAN/postinst"
+          sh -n "$root/DEBIAN/prerm"
+          sh -n "$root/DEBIAN/postinst"
+          install -m 0644 version.txt "$root/usr/share/gitrun/version.txt"
+          install -m 0644 LICENSE "$root/usr/share/doc/gitrun/LICENSE"
+          install -m 0644 README.md "$root/usr/share/doc/gitrun/README.md"
+          install -m 0644 config/config.example.env "$root/usr/share/doc/gitrun/config.example.env"
+          install -m 0644 "$RUNNER_TEMP/gitrun-v1.8.23-packaging/packaging/gitrun.desktop" "$root/usr/share/applications/gitrun.desktop"
+          for size in 32 64 128 256 512; do
+            source="$RUNNER_TEMP/gitrun-v1.8.23-packaging/assets/gitrun-icon-$size.png"
+            destination="$root/usr/share/icons/hicolor/${size}x${size}/apps/gitrun.png"
+            test -s "$source"
+            mkdir -p "$(dirname "$destination")"
+            convert "$source" -alpha on -define png:color-type=6 "PNG32:$destination"
+          done
+          artifact="GitRun-$VERSION-linux-x86_64-deb.deb"
+          dpkg-deb --build --root-owner-group "$root" "$out/$artifact" >/dev/null
+          test "$(dpkg-deb -f "$out/$artifact" Package)" = gitrun
+          test "$(dpkg-deb -f "$out/$artifact" Version)" = "$VERSION_NUMBER"
+          control_inspect="$RUNNER_TEMP/migration-control-inspect"
+          dpkg-deb -e "$out/$artifact" "$control_inspect"
+          sh -n "$control_inspect/prerm"
+          grep -Fq 'in-favour' "$control_inspect/prerm"
+          grep -Fq 'gitrun-server' "$control_inspect/prerm"
+          mock_bin="$RUNNER_TEMP/migration-prerm-mock"
+          mock_log="$RUNNER_TEMP/migration-prerm-systemctl.log"
+          mkdir -p "$mock_bin"
+          cat > "$mock_bin/systemctl" <<'MOCK'
+          #!/bin/sh
+          printf '%s\n' "$*" >> "$GITRUN_MIGRATION_SYSTEMCTL_LOG"
+          MOCK
+          chmod 0755 "$mock_bin/systemctl"
+          : > "$mock_log"
+          PATH="$mock_bin:$PATH" GITRUN_MIGRATION_SYSTEMCTL_LOG="$mock_log" \
+            "$control_inspect/prerm" remove in-favour gitrun-server "$VERSION_NUMBER"
+          test ! -s "$mock_log"
+          PATH="$mock_bin:$PATH" GITRUN_MIGRATION_SYSTEMCTL_LOG="$mock_log" \
+            "$control_inspect/prerm" remove
+          grep -Fq 'disable --now gitrun-gsr.service gitrun.service' "$mock_log"
+          dpkg-deb -x "$out/$artifact" "$RUNNER_TEMP/legacy-package-inspect"
+          test -x "$RUNNER_TEMP/legacy-package-inspect/usr/bin/gitrun"
+          test -x "$RUNNER_TEMP/legacy-package-inspect/usr/libexec/gitrun/reinstall-latest.sh"
+          sha256sum "$out/$artifact" > "$out/SHA256SUMS"
+      - name: Upload legacy migration package
+        if: steps.migration.outputs.enabled == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-migration-deb-linux-x86_64
+          path: ${{ runner.temp }}/migration-package/*
+          if-no-files-found: error
+          retention-days: 1
+      - *report
+      - *logs
+
+
+
+  release-dashboard-package-certification:
+    name: Release Desktop GNU package certification · ${{ matrix.arch }}
+    needs: [tauri, tauri-arm64]
+    if: ${{ needs.tauri.result == 'success' && needs.tauri-arm64.result == 'success' }}
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs: *job_outputs
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            package_arch: amd64
+          - arch: aarch64
+            package_arch: arm64
+    env:
+      DESKTOP_ARCH: ${{ matrix.arch }}
+      PACKAGE_ARCH: ${{ matrix.package_arch }}
+    steps:
+      - *checkout
+      - *boot
+      - name: Set package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_NUMBER="$(tr -d '[:space:]' < version.txt)"
+          test -n "$VERSION_NUMBER"
+          VERSION="v$VERSION_NUMBER"
+          {
+            echo "VERSION_NUMBER=$VERSION_NUMBER"
+            echo "VERSION=$VERSION"
+          } >> "$GITHUB_ENV"
+      - name: Download x86_64 Dashboard build
+        if: matrix.arch == 'x86_64'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: gitrun-tauri-bundles
+          path: dashboard-input
+      - name: Download ARM64 Dashboard build
+        if: matrix.arch == 'aarch64'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: gitrun-dashboard-arm64-ci
+          path: dashboard-input
+      - name: Stage Dashboard AppImage
+        shell: bash
+        run: |
+          set -euo pipefail
+          appimage="$(find dashboard-input -type f -name '*.AppImage' -print -quit)"
+          test -n "$appimage"
+          test -s "$appimage"
+          file "$appimage"
+          stage="$RUNNER_TEMP/dashboard-stage"
+          out="$RUNNER_TEMP/dashboard-package"
+          rm -rf "$stage" "$out"
+          mkdir -p "$stage/opt/gitrun-desktop" "$stage/usr/share/applications" "$out"
+          install -m 0755 "$appimage" "$stage/opt/gitrun-desktop/GitRun.AppImage"
+           install -m 0755 "$appimage" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH.AppImage"
+          cat > "$stage/usr/share/applications/gitrun-desktop.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=GitRun Desktop
+          Comment=GitRun desktop management interface
+          Exec=/opt/gitrun-desktop/GitRun.AppImage
+          Terminal=false
+          Categories=Development;System;
+          DESKTOP
+      - name: Install package inspection tools
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm zstd
+      - name: Set up pinned Go toolchain for nFPM
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.26.10"
+          check-latest: false
+          cache: false
+      - name: Create independent Dashboard DEB, RPM and Arch packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/dashboard-stage"
+          out="$RUNNER_TEMP/dashboard-package"
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          cat > "$RUNNER_TEMP/dashboard-nfpm.yaml" <<NFPM
+          name: gitrun-desktop
+          arch: $PACKAGE_ARCH
+          platform: linux
+          version: $VERSION_NUMBER
+          maintainer: Vider06
+          description: GitRun Tauri Dashboard, independently installable from the server
+          license: Apache-2.0
+          depends: [libwebkit2gtk-4.1-0, policykit-1]
+          overrides:
+            rpm:
+              depends: ["(webkit2gtk4.1 or libwebkit2gtk-4_1-0)", polkit]
+            archlinux:
+              depends: [webkit2gtk-4.1, polkit]
+          contents:
+            - src: $stage/opt/gitrun-desktop/GitRun.AppImage
+              dst: /opt/gitrun-desktop/GitRun.AppImage
+              file_info:
+                mode: 0755
+            - src: $stage/usr/share/applications/gitrun-desktop.desktop
+              dst: /usr/share/applications/gitrun-desktop.desktop
+          NFPM
+          config="$RUNNER_TEMP/dashboard-nfpm.yaml"
+          nfpm package --config "$config" --packager deb --target "$out"
+          deb="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop_*.deb' -print -quit)"
+          test -n "$deb"
+          mv "$deb" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb"
+          test "$(dpkg-deb -f "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb" Package)" = gitrun-desktop
+          test "$(dpkg-deb -f "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-deb.deb" Version)" = "$VERSION_NUMBER"
+          nfpm package --config "$config" --packager rpm --target "$out"
+          rpm_file="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.rpm' -print -quit)"
+          test -n "$rpm_file"
+          mv "$rpm_file" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm"
+          test "$(rpm -qp --queryformat '%{NAME}' "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm")" = gitrun-desktop
+          rpm_requires="$(rpm -qp --requires "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-rpm.rpm")"
+          grep -Fq webkit2gtk4.1 <<< "$rpm_requires"
+          grep -Fq libwebkit2gtk-4_1-0 <<< "$rpm_requires"
+          nfpm package --config "$config" --packager archlinux --target "$out"
+          arch="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop-*.pkg.tar.zst' -print -quit)"
+          test -n "$arch"
+          mv "$arch" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst"
+          arch_info="$(tar --zstd -xOf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-archlinux.pkg.tar.zst" .PKGINFO)"
+          grep -Fq 'pkgname = gitrun-desktop' <<< "$arch_info"
+          grep -Fq 'depend = webkit2gtk-4.1' <<< "$arch_info"
+          sha256sum "$out"/* > "$out/SHA256SUMS"
+      - name: Upload certified GNU Desktop packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-dashboard-gnu-packages-${{ matrix.arch }}
+          path: ${{ runner.temp }}/dashboard-package/*
+          if-no-files-found: error
+          retention-days: 1
+      - *report
+      - *logs
+
+
+  release-dashboard-musl-build-certification:
+    name: Release Desktop musl build certification · ${{ matrix.target }}
+    needs: [cargo-lock, rust-lint, frontend]
+    if: ${{ needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    outputs: *job_outputs
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            arch: x86_64
+            kind: musl
+            docker_platform: linux/amd64
+            musl_distro: alpine
+            cache_variant: alpine-rust-1.99.0-alpine3.24
+            container_image: rust:1.99.0-alpine3.24
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            arch: aarch64
+            kind: musl
+            docker_platform: linux/arm64
+            musl_distro: void
+            cache_variant: void-musl-20260801r1
+            container_image: ghcr.io/void-linux/void-musl-full:20260801r1
+    env:
+      TARGET: ${{ matrix.target }}
+      DESKTOP_ARCH: ${{ matrix.arch }}
+      BUILD_KIND: musl
+      MUSL_DISTRO: ${{ matrix.musl_distro }}
+      CONTAINER_IMAGE: ${{ matrix.container_image }}
+      CARGO_HOME: ${{ github.workspace }}/.gitrun-cargo
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      CARGO_INCREMENTAL: "0"
+      NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-npm-cache
+    steps:
+      - *checkout
+      - *boot
+      - name: Set Dashboard package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_NUMBER="$(tr -d '[:space:]' < version.txt)"
+          test -n "$VERSION_NUMBER"
+          VERSION="v$VERSION_NUMBER"
+          {
+            echo "VERSION_NUMBER=$VERSION_NUMBER"
+            echo "VERSION=$VERSION"
+          } >> "$GITHUB_ENV"
+      - name: Restore musl Dashboard Cargo and npm caches
+        if: matrix.kind == 'musl'
+        id: dashboard-cache-musl
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-cargo
+            target
+            .gitrun-npm-cache
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-musl-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json', '.github/workflows/release.yml', 'scripts/ci/check-dashboard-distro-dependencies.py') }}
+          restore-keys: |
+            gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-musl-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-
+      - name: Build native musl Dashboard in distro-native environment
+        if: matrix.kind == 'musl'
+        env:
+          DOCKER_PLATFORM: ${{ matrix.docker_platform }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR" "$NPM_CONFIG_CACHE"
+          docker run --rm --pull=always --platform "$DOCKER_PLATFORM" \
+            -e VERSION_NUMBER="$VERSION_NUMBER" \
+            -e TARGET="$TARGET" \
+            -e RUST_VERSION="$RUST_VERSION" \
+            -e MUSL_DISTRO="$MUSL_DISTRO" \
+            -e RUSTFLAGS="-C target-feature=-crt-static" \
+            -e CARGO_HOME=/workspace/.gitrun-cargo \
+            -e CARGO_TARGET_DIR=/workspace/target \
+            -e CARGO_INCREMENTAL=0 \
+            -e NPM_CONFIG_CACHE=/workspace/.gitrun-npm-cache \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace/crates/gitrun-dashboard-tauri \
+            "$CONTAINER_IMAGE" sh -ec '
+              if [ "$MUSL_DISTRO" = "alpine" ]; then
+                apk add --no-cache build-base pkgconf nodejs npm curl wget file openssl-dev \
+                  webkit2gtk-4.1-dev libayatana-appindicator-dev librsvg font-dejavu imagemagick \
+                  openssl-libs-static cairo-static harfbuzz-static glib-static wayland-static zlib-static
+              else
+                xbps-install -Suy
+                xbps-install -y base-devel pkg-config nodejs curl ca-certificates file ImageMagick \
+                  libwebkit2gtk41-devel libayatana-appindicator-devel librsvg-devel gtk+3-devel \
+                  openssl-devel cairo-devel harfbuzz-devel glib-devel wayland-devel zlib-devel
+                export RUSTUP_HOME=/workspace/.gitrun-cargo/rustup
+                curl --fail --silent --show-error --location \
+                  "https://static.rust-lang.org/rustup/dist/${TARGET}/rustup-init" \
+                  -o /tmp/rustup-init
+                chmod 0755 /tmp/rustup-init
+                /tmp/rustup-init -y --no-modify-path --profile minimal \
+                  --default-toolchain "$RUST_VERSION" --default-host "$TARGET"
+                . "$CARGO_HOME/env"
+              fi
+              if [ "$MUSL_DISTRO" = "alpine" ]; then
+                # The pinned rust:1.99.0-alpine image already contains its matching
+                # toolchain under /usr/local/rustup; do not shadow it with an empty cache.
+                export RUSTUP_HOME=/usr/local/rustup
+              fi
+              test "$(rustc -vV | sed -n "s/^host: //p")" = "$TARGET"
+              rustc --version | grep -Fq "rustc $RUST_VERSION "
+              pkg-config --exists gtk+-3.0 webkit2gtk-4.1 ayatana-appindicator3-0.1
+              node --version
+              npm --version
+              node --input-type=module - "$VERSION_NUMBER" <<NODE
+          import fs from "node:fs";
+          const version = process.argv[2];
+          for (const file of ["package.json", "src-tauri/tauri.conf.json"]) {
+            const value = JSON.parse(fs.readFileSync(file, "utf8"));
+            value.version = version;
+            fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\\n");
+          }
+          const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+          lock.version = version;
+          lock.packages[""].version = version;
+          fs.writeFileSync("package-lock.json", JSON.stringify(lock, null, 2) + "\\n");
+          NODE
+              npm ci
+              for icon in src-tauri/icons/*.png; do
+                [ -f "$icon" ] || continue
+                tmp="$(mktemp)"
+                convert "$icon" -alpha on -define png:color-type=6 "PNG32:$tmp"
+                mv "$tmp" "$icon"
+              done
+              npm run tauri build -- --ci --no-bundle
+              binary=/workspace/target/release/gitrun-dashboard-tauri
+              test -s "$binary"
+              ldd "$binary" > /tmp/gitrun-dashboard-ldd.txt
+              if grep -Fq "not found" /tmp/gitrun-dashboard-ldd.txt; then
+                cat /tmp/gitrun-dashboard-ldd.txt >&2
+                exit 1
+              fi
+            '
+          # The container installs distro packages as root and writes to bind-mounted caches.
+          # Return cache ownership to the hosted runner before actions/cache/save reads them.
+          sudo chown -R "$(id -u):$(id -g)" "$CARGO_HOME" "$CARGO_TARGET_DIR" "$NPM_CONFIG_CACHE"
+          out="$RUNNER_TEMP/dashboard-musl-canonical"
+          rm -rf "$out"
+          mkdir -p "$out"
+          install -m 0755 "$GITHUB_WORKSPACE/target/release/gitrun-dashboard-tauri" "$out/GitRun-Desktop-$VERSION-$TARGET.bin"
+      - name: Upload independent musl Dashboard executable
+        if: matrix.kind == 'musl'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-dashboard-musl-build-${{ matrix.target }}
+          path: ${{ runner.temp }}/dashboard-musl-canonical/*
+          if-no-files-found: error
+          retention-days: 1
+      - name: Save musl Dashboard Cargo and npm caches
+        if: matrix.kind == 'musl' && success() && steps.dashboard-cache-musl.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-cargo
+            target
+            .gitrun-npm-cache
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-musl-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json', '.github/workflows/release.yml', 'scripts/ci/check-dashboard-distro-dependencies.py') }}
+      - *report
+      - *logs
+
+
+  release-dashboard-musl-package-certification:
+    name: Release Desktop musl package certification · ${{ matrix.arch }}
+    needs: [release-dashboard-musl-build-certification]
+    if: ${{ needs.release-dashboard-musl-build-certification.result == 'success' }}
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs: *job_outputs
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            target_triple: x86_64-unknown-linux-musl
+            arch: x86_64
+            package_arch: amd64
+            kind: musl
+            xbps_arch: x86_64-musl
+            xbps_static_arch: x86_64
+          - target: aarch64-unknown-linux-musl
+            target_triple: aarch64-unknown-linux-musl
+            arch: aarch64
+            package_arch: arm64
+            kind: musl
+            xbps_arch: aarch64-musl
+            xbps_static_arch: x86_64
+    env:
+      TARGET: ${{ matrix.target_triple }}
+      DESKTOP_ARCH: ${{ matrix.arch }}
+      PACKAGE_ARCH: ${{ matrix.package_arch }}
+      XBPS_ARCH: ${{ matrix.xbps_arch }}
+      XBPS_STATIC_ARCH: ${{ matrix.xbps_static_arch }}
+    steps:
+      - *checkout
+      - *boot
+      - name: Set Dashboard package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_NUMBER="$(tr -d '[:space:]' < version.txt)"
+          test -n "$VERSION_NUMBER"
+          VERSION="v$VERSION_NUMBER"
+          {
+            echo "VERSION_NUMBER=$VERSION_NUMBER"
+            echo "VERSION=$VERSION"
+          } >> "$GITHUB_ENV"
+      - name: Download musl Dashboard executable
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: ci-dashboard-musl-build-${{ matrix.target }}
+          path: canonical
+      - name: Set up pinned Go toolchain for nFPM (musl)
+        if: matrix.kind == 'musl'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.26.10"
+          check-latest: false
+          cache: false
+      - name: Build musl APK and XBPS packages
+        if: matrix.kind == 'musl'
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="$GITHUB_WORKSPACE/canonical/GitRun-Desktop-$VERSION-$TARGET.bin"
+          test -s "$binary"
+          stage="$RUNNER_TEMP/dashboard-musl-stage"
+          out="$RUNNER_TEMP/dashboard-package"
+          rm -rf "$stage" "$out"
+          mkdir -p "$stage/usr/bin" "$stage/usr/share/applications" "$out"
+          install -m 0755 "$binary" "$stage/usr/bin/gitrun-desktop"
+          cat > "$stage/usr/share/applications/gitrun-desktop.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=GitRun Desktop
+          Comment=GitRun desktop management interface
+          Exec=/usr/bin/gitrun-desktop
+          Terminal=false
+          Categories=Development;System;
+          DESKTOP
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          cat > "$RUNNER_TEMP/dashboard-musl-nfpm.yaml" <<NFPM
+          name: gitrun-desktop
+          arch: $PACKAGE_ARCH
+          platform: linux
+          version: $VERSION_NUMBER
+          maintainer: Vider06
+          description: GitRun Tauri Dashboard for musl Linux, independently installable from the server
+          license: Apache-2.0
+          depends: [musl]
+          overrides:
+            apk:
+              depends: [musl, webkit2gtk-4.1, polkit]
+          contents:
+            - src: $stage/usr/bin/gitrun-desktop
+              dst: /usr/bin/gitrun-desktop
+              file_info:
+                mode: 0755
+            - src: $stage/usr/share/applications/gitrun-desktop.desktop
+              dst: /usr/share/applications/gitrun-desktop.desktop
+          NFPM
+          if [ "$DESKTOP_ARCH" = "x86_64" ]; then
+            nfpm package --config "$RUNNER_TEMP/dashboard-musl-nfpm.yaml" --packager apk --target "$out"
+            apk="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop*.apk' -print -quit)"
+            test -n "$apk"
+            mv "$apk" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk"
+            apk_contents="$(tar -tzf "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-apk.apk")"
+            grep -Fq '.PKGINFO' <<< "$apk_contents"
+          fi
+
+          xbps_stage="$RUNNER_TEMP/dashboard-xbps-stage"
+          cp -a "$stage" "$xbps_stage"
+          xbps_root="$RUNNER_TEMP/xbps-static"
+          mkdir -p "$xbps_root"
+          curl --fail --silent --show-error --location \
+            "https://repo-default.voidlinux.org/static/xbps-static-latest.${XBPS_STATIC_ARCH}-musl.tar.xz" \
+            -o "$RUNNER_TEMP/xbps-static.tar.xz"
+          tar -xJf "$RUNNER_TEMP/xbps-static.tar.xz" -C "$xbps_root"
+          xbps_create="$xbps_root/usr/bin/xbps-create"
+          xbps_rindex="$xbps_root/usr/bin/xbps-rindex"
+          xbps_query="$xbps_root/usr/bin/xbps-query"
+          test -x "$xbps_create" && test -x "$xbps_rindex" && test -x "$xbps_query"
+          (cd "$out" && "$xbps_create" -A "$XBPS_ARCH" \
+            -n "gitrun-desktop-${VERSION_NUMBER}_1" -D "musl libwebkit2gtk41 polkit" \
+            -H https://github.com/Vider06/GitRun -l Apache-2.0 -m Vider06 \
+            -s "GitRun Desktop for musl Linux" "$xbps_stage")
+          xbps="$(find "$out" -maxdepth 1 -type f -name 'gitrun-desktop*.xbps' -print -quit)"
+          test -n "$xbps"
+          mv "$xbps" "$out/GitRun-Desktop-$VERSION-linux-$DESKTOP_ARCH-musl-xbps.xbps"
+          "$xbps_rindex" -a "$out"/*.xbps
+          desktop_deps="$("$xbps_query" -R --repository="$out" -x "gitrun-desktop-${VERSION_NUMBER}_1")"
+          grep -Fq musl <<< "$desktop_deps"
+          grep -Fq libwebkit2gtk41 <<< "$desktop_deps"
+          grep -Fq polkit <<< "$desktop_deps"
+      - name: Upload musl Desktop packages
+        if: matrix.kind == 'musl'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-dashboard-musl-packages-${{ matrix.arch }}
+          path: ${{ runner.temp }}/dashboard-package/*
+          if-no-files-found: error
+          retention-days: 1
+      - *report
+      - *logs
+
+
+  release-inputs-certification:
+    name: Release shared metadata and input certification
+    needs: [cargo-lock]
+    if: ${{ needs.cargo-lock.outputs.rust == 'true' }}
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Install metadata tools
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq zip
+      - name: Synchronize and validate release version metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION_NUMBER="$(tr -d '[:space:]' < version.txt)"
+          test -n "$VERSION_NUMBER"
+          python3 scripts/sync-markdown-version.py --version "$VERSION_NUMBER"
+          python3 scripts/sync-markdown-version.py --check --version "$VERSION_NUMBER"
+          python3 scripts/check-version-consistency.py
+      - name: Assemble the exact shared Release inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/common"
+          library="$RUNNER_TEMP/library"
+          rm -rf "$root" "$library"
+          mkdir -p "$root" "$library"
+          sources=(
+            "Core/Dockers/runners/linux-x86_64/profiles.json"
+            "crates/gitrun-cli/src/cat/cat_states.json"
+            "crates/gitrun-cli/src/cat/gitrun.json"
+            "crates/gitrun-dashboard-tauri/package.json"
+            "crates/gitrun-dashboard-tauri/package-lock.json"
+            "crates/gitrun-dashboard-tauri/src-tauri/capabilities/default.json"
+            "crates/gitrun-dashboard-tauri/src-tauri/tauri.conf.json"
+            "crates/gitrun-recovery/capabilities/default.json"
+            "crates/gitrun-recovery/tauri.conf.json"
+            "release/release-manifest.example.json"
+            "release/release-manifest.schema.json"
+          )
+          entries=()
+          for source in "${sources[@]}"; do
+            test -f "$source"
+            jq -e 'type == "object" or type == "array"' "$source" >/dev/null
+            mkdir -p "$library/$(dirname "$source")"
+            install -m 0644 "$source" "$library/$source.Back"
+            entries+=("$source.Back")
+          done
+          (cd "$library" && zip -q -9 "$root/library.zip" "${entries[@]}")
+          cargo metadata --locked --format-version 1 > "$root/cargo-metadata.json"
+          created="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq --arg created "$created" --arg commit "$GITHUB_SHA" \
+            '{spdxVersion:"SPDX-2.3",dataLicense:"CC0-1.0",SPDXID:"SPDXRef-DOCUMENT",name:"GitRun",documentNamespace:("https://github.com/Vider06/GitRun/spdx/" + $commit),creationInfo:{created:$created,creators:["Tool: GitRun CI"]},packages:[.packages | to_entries[] | {SPDXID:("SPDXRef-Package-" + (.key|tostring)),name:.value.name,versionInfo:.value.version,downloadLocation:(.value.source // "NOASSERTION")}]}' \
+            "$root/cargo-metadata.json" > "$root/sbom.spdx.json"
+          jq -n --arg commit "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" \
+            '{schema:"gitrun.provenance.v2",git_commit:$commit,run_id:$run,server_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],updater_archive:"tar.gz",package_formats:["deb","rpm","apk","archlinux","xbps","tar.zst"],desktop:"GitRun-Desktop",desktop_targets:["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-unknown-linux-musl","aarch64-unknown-linux-musl"],desktop_package_formats:["deb","rpm","archlinux","appimage","apk","xbps"],desktop_package_arches:{apk:["x86_64"],xbps:["x86_64","aarch64"]}}' \
+            > "$root/provenance.json"
+          for metadata in cargo-metadata.json sbom.spdx.json provenance.json; do jq -e . "$root/$metadata" >/dev/null; done
+          test "$(unzip -Z1 "$root/library.zip" | wc -l)" -eq 11
+      - name: Upload certified shared Release inputs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-release-common
+          path: ${{ runner.temp }}/common/*
+          if-no-files-found: error
+          retention-days: 1
+      - *report
+      - *logs
+
+  release-asset-assembly-certification:
+    name: Final Release asset assembly and exact inventory
+    needs:
+      - release-inputs-certification
+      - release-package-certification
+      - migration-package-certification
+      - release-dashboard-package-certification
+      - release-dashboard-musl-build-certification
+      - release-dashboard-musl-package-certification
+      - formal-verification
+      - miri
+    if: ${{ always() && needs.release-inputs-certification.result == 'success' && needs.release-package-certification.result == 'success' && needs.migration-package-certification.result == 'success' && needs.release-dashboard-package-certification.result == 'success' && needs.release-dashboard-musl-build-certification.result == 'success' && needs.release-dashboard-musl-package-certification.result == 'success' && needs.formal-verification.result == 'success' && needs.miri.result == 'success' }}
+    runs-on: *runner
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs: *job_outputs
+    env:
+      MIGRATION_RELEASE: ${{ needs.migration-package-certification.outputs.migration_release }}
+    steps:
+      - *checkout
+      - *boot
+      - name: Download certified Server packages
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          pattern: ci-server-packages-*
+          path: all-assets/server
+          merge-multiple: true
+      - name: Download certified GNU Desktop packages and AppImages
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          pattern: ci-dashboard-gnu-packages-*
+          path: all-assets/desktop-gnu
+          merge-multiple: true
+      - name: Download certified musl Desktop executables
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          pattern: ci-dashboard-musl-build-*
+          path: all-assets/desktop-musl-build
+          merge-multiple: true
+      - name: Download certified musl Desktop packages
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          pattern: ci-dashboard-musl-packages-*
+          path: all-assets/desktop-musl-packages
+          merge-multiple: true
+      - name: Download exact shared Release inputs
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: ci-release-common
+          path: all-assets/common
+      - name: Download conditional migration package
+        if: env.MIGRATION_RELEASE == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: ci-migration-deb-linux-x86_64
+          path: all-assets/migration
+      - name: Install release asset inspection tools
+        run: |
+          set -euo pipefail
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq zstd unzip rpm file
+      - name: Assemble canonical Release asset set
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/release-assets"
+          rm -rf "$root"
+          mkdir -p "$root"
+          for group in server desktop-gnu desktop-musl-build desktop-musl-packages migration; do
+            [ -d "all-assets/$group" ] || continue
+            find "all-assets/$group" -maxdepth 1 -type f -name 'GitRun-*' -exec cp -t "$root" {} +
+          done
+          cp all-assets/common/library.zip all-assets/common/cargo-metadata.json all-assets/common/sbom.spdx.json all-assets/common/provenance.json "$root/"
+          find "$root" -maxdepth 1 -type f \
+            \( -name 'GitRun-Desktop-*.AppImage' -o -name 'GitRun-Desktop-*-unknown-linux-musl.bin' \) \
+            -exec chmod 0755 {} +
+          VERSION_NUMBER="$(tr -d '[:space:]' < version.txt)"
+          VERSION="v$VERSION_NUMBER"
+          expected=()
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            expected+=("GitRun-Server-$VERSION-$target-server.tar.gz" "GitRun-Server-$VERSION-$target-server.tar.zst")
+          done
+          for arch in x86_64 aarch64; do
+            expected+=("GitRun-Server-$VERSION-linux-$arch-deb.deb" "GitRun-Server-$VERSION-linux-$arch-rpm.rpm" "GitRun-Server-$VERSION-linux-$arch-arch.pkg.tar.zst" "GitRun-Server-$VERSION-linux-$arch-xbps.xbps")
+            expected+=("GitRun-Server-$VERSION-linux-$arch-musl-apk.apk" "GitRun-Server-$VERSION-linux-$arch-musl-xbps.xbps")
+            expected+=("GitRun-Desktop-$VERSION-linux-$arch-deb.deb" "GitRun-Desktop-$VERSION-linux-$arch-rpm.rpm" "GitRun-Desktop-$VERSION-linux-$arch-archlinux.pkg.tar.zst" "GitRun-Desktop-$VERSION-linux-$arch.AppImage")
+            expected+=("GitRun-Desktop-$VERSION-linux-$arch-musl-xbps.xbps")
+            expected+=("GitRun-Desktop-$VERSION-$arch-unknown-linux-musl.bin")
+          done
+          expected+=("GitRun-Desktop-$VERSION-linux-x86_64-musl-apk.apk" library.zip cargo-metadata.json sbom.spdx.json provenance.json)
+          if [ "$MIGRATION_RELEASE" = true ]; then expected+=("GitRun-$VERSION-linux-x86_64-deb.deb"); fi
+          for name in "${expected[@]}"; do
+            test -s "$root/$name" || { echo "Missing required Release asset: $name" >&2; exit 1; }
+          done
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+          mapfile -t actual_sorted < <(find "$root" -maxdepth 1 -type f -printf '%f\n' | sort)
+          diff -u <(printf '%s\n' "${expected_sorted[@]}") <(printf '%s\n' "${actual_sorted[@]}")
+          for metadata in cargo-metadata.json sbom.spdx.json provenance.json; do jq -e . "$root/$metadata" >/dev/null; done
+          mapfile -t library_members < <(unzip -Z1 "$root/library.zip")
+          (( ${#library_members[@]} == 11 ))
+          for member in "${library_members[@]}"; do
+            [[ "$member" == *.json.Back && "$member" != /* && "$member" != *".."* && "$member" != *\\* ]]
+            unzip -p "$root/library.zip" "$member" | jq -e 'type == "object" or type == "array"' >/dev/null
+          done
+          for package in "$root"/GitRun-*; do
+            test -s "$package"
+            name="${package##*/}"
+            case "$name" in
+              *.deb) dpkg-deb --info "$package" >/dev/null ;;
+              *.rpm) rpm -qp "$package" >/dev/null ;;
+              *.pkg.tar.zst) tar --zstd -tf "$package" >/dev/null ;;
+              *.apk) tar -tzf "$package" >/dev/null ;;
+              *.xbps) tar -tJf "$package" >/dev/null ;;
+              *-server.tar.gz) tar -tzf "$package" >/dev/null ;;
+              *-server.tar.zst) tar --zstd -tf "$package" >/dev/null ;;
+              *.AppImage|*.bin) test -x "$package"; file "$package" >/dev/null ;;
+              *) echo "Unknown Release asset type: $name" >&2; exit 1 ;;
+            esac
+          done
+          (cd "$root" && sha256sum -- * > SHA256SUMS && sha256sum -c SHA256SUMS)
+      - name: Upload assembled CI Release candidate assets
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-certified-release-asset-set
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 3
+      - *report
+      - *logs
   platform-compatibility:
     name: Linux platform and updater target contracts
     needs: [cargo-lock, rust-lint]
@@ -1747,6 +2931,127 @@ jobs:
       - *report
       - *logs
 
+  python-quality:
+    name: Python quality checks
+    needs: [cargo-lock]
+    if: ${{ needs.cargo-lock.result == 'success' && needs.cargo-lock.outputs.python == 'true' }}
+    runs-on: *runner
+    timeout-minutes: 30
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - name: Compile, lint and test tracked Python files
+        run: |
+          source "$RUNNER_TEMP/ci-lib.sh"
+          mapfile -d '' python_files < <(git ls-files -z '*.py')
+          if [ "${#python_files[@]}" -eq 0 ]; then
+            ci_err "Python files were detected but none are tracked."
+            exit 1
+          fi
+          python3 -m venv "$RUNNER_TEMP/python-quality-venv"
+          py="$RUNNER_TEMP/python-quality-venv/bin/python"
+          ci_run "Install pinned Ruff 0.17.3" "$py" -m pip install --disable-pip-version-check "ruff==0.17.3"
+          rc=0
+          ci_run "Compile all tracked Python files" "$py" -m compileall -q "${python_files[@]}" || rc=1
+          ci_run "Check Python correctness with Ruff" "$RUNNER_TEMP/python-quality-venv/bin/ruff" check --select E9,F --target-version py311 --output-format=github "${python_files[@]}" || rc=1
+          ci_run "Run Python unit tests" "$py" -m unittest discover -s scripts/tests -p 'test_*.py' || rc=1
+          exit "$rc"
+      - *report
+      - *logs
+
+  miri:
+    name: Miri interpreter · pure updater regression
+    needs: [cargo-lock, rust-lint]
+    if: ${{ needs.cargo-lock.result == 'success' && needs.cargo-lock.outputs.rust == 'true' && needs.rust-lint.result == 'success' }}
+    runs-on: *runner
+    timeout-minutes: 60
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - name: Install pinned nightly Miri toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: nightly-2026-11-06
+          components: miri
+      - name: Prepare Miri sysroot
+        run: cargo +nightly-2026-11-06 miri setup
+      - name: Run targeted Miri regression test
+        run: bash scripts/ci/verify-rust-miri.sh
+      - name: Upload Miri source coverage
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: miri-source-coverage
+          path: ${{ runner.temp }}/gitrun-miri-source-coverage.tsv
+          if-no-files-found: ignore
+          retention-days: 7
+      - *report
+      - *logs
+  formal-verification:
+    name: Rust source assurance and formal verification
+    needs: [cargo-lock, rust-lint]
+    if: ${{ needs.cargo-lock.result == 'success' && needs.cargo-lock.outputs.rust == 'true' && needs.rust-lint.result == 'success' }}
+    runs-on: *runner
+    timeout-minutes: 60
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt
+      - name: Verify every tracked Rust source file
+        shell: bash
+        run: bash scripts/ci/verify-rust-source-coverage.bash
+      - name: Upload Rust source inventory
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rust-source-inventory
+          path: ${{ runner.temp }}/gitrun-rust-source-inventory.tsv
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Install pinned Kani verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install --locked kani-verifier --version 0.68.0
+          cargo kani setup
+      - name: Prove required Rust invariants
+        shell: bash
+        run: bash scripts/ci/verify-rust-formal.sh
+      - name: Install pinned Verus verifier
+        shell: bash
+        run: bash scripts/ci/install-verus.sh
+      - name: Verify Verus toolchain and proof runner
+        shell: bash
+        run: "${RUNNER_TEMP}/verus/installed/verus" verification/verus/smoke.rs
+      - name: Enforce dual-verifier coverage for every tracked Rust file
+        shell: bash
+        run: python3 scripts/ci/verify-rust-dual-coverage.py
+      - name: Upload Kani per-file coverage status
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: kani-source-coverage
+          path: ${{ runner.temp }}/gitrun-kani-source-coverage.tsv
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload dual-verifier source coverage
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dual-verifier-source-coverage
+          path: ${{ runner.temp }}/gitrun-dual-verifier-coverage.tsv
+          if-no-files-found: ignore
+          retention-days: 7
+      - *report
+      - *logs
+
   # ───────────────────────────────────────────── release contracts ──
   release-contracts:
     name: Server, Desktop and migration release contracts
@@ -1766,73 +3071,7 @@ jobs:
           set -euo pipefail
           python3 scripts/ci/check-updater-release-policy.py
           python3 scripts/ci/check-desktop-appimage-contracts.py
-          python3 - <<'PY'
-          from pathlib import Path
-
-          release = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-          cli = Path("crates/gitrun-cli/src/main.rs").read_text(encoding="utf-8")
-          release_job = release.rsplit("  release:", 1)[1]
-          release_steps = [
-              line.split("name: ", 1)[1]
-              for line in release_job.splitlines()
-              if line.startswith("      - name: ")
-          ]
-          publish_index = release.index("      - name: Publish all release assets")
-          checks = {
-              "legacy Debian package identity": "Package: gitrun" in release and 'artifact="GitRun-$VERSION-linux-x86_64-deb.deb"' in release,
-              "legacy updater target retained": 'artifact_for("linux-x86_64-deb")' in release,
-              "legacy updater source tag": "--branch v1.8.23" in release,
-              "legacy trust anchor is matched to the release signing key": "test \"$GITRUN_UPDATE_PUBLIC_KEY_HEX\" = \"$legacy_key_hex\"" in release and "test \"$GITRUN_UPDATE_SIGNING_KEY_ID\" = \"$legacy_key_id\"" in release,
-              "actual legacy reinstall command is executed": '--no-cat --reinstall-latest-root' in release,
-              "legacy updater uses latest manifest resolution": 'latest_manifest_download_url("Vider06/GitRun")' in release,
-              "migration preserves service state during legacy package replacement": "gitrun-v1.8.23-packaging/packaging/gitrun-postinst" in release and "packaging/gitrun-migration-prerm" in release and "in-favour" in release and "gitrun-server" in release and "preserves existing systemd service state" in release,
-              "legacy updater SHA verification": "download_and_verify(" in release and "&artifact.sha256" in release,
-              "migration has GTK and GLib build dependencies": all(package in release for package in ["libglib2.0-dev", "libgtk-3-dev", "libwebkit2gtk-4.1-dev"]),
-              "migration uses a local staged-payload fixture": "GITRUN_MIGRATION_TEST_BASE_URL" in release and "python3 -m http.server" in release,
-              "migration is verified before publication": release.index("Verify migration with the actual 1.8.23 updater") < publish_index,
-              "release publication is the final release step": bool(release_steps) and release_steps[-1] == "Publish all release assets",
-              "release manifest declares its signed classification": '"release_type":"pre"' in release and '"release_type"' in Path("release/release-manifest.schema.json").read_text(encoding="utf-8"),
-              "manual release reclassification updates the signed manifest and GitHub metadata": Path(".github/workflows/release-type-change.yml").is_file() and "pkeyutl -sign" in Path(".github/workflows/release-type-change.yml").read_text(encoding="utf-8") and "GITRUN_RELEASE_TYPE:" in Path(".github/workflows/release-type-change.yml").read_text(encoding="utf-8"),
-              "new updater policy is implemented in gitrun-updater": "resolve_policy_update_for_target" in Path("crates/gitrun-updater/src/release_policy.rs").read_text(encoding="utf-8"),
-              "GUI and TUI use the shared management updater backend": "get_updater_settings" in Path("crates/gitrun-management/src/backend.rs").read_text(encoding="utf-8") and "save_updater_settings" in Path("crates/gitrun-dashboard-tauri/dist/js/views/settings.js").read_text(encoding="utf-8") and "updater_settings_save" in Path("crates/gitrun-cli/src/manage.rs").read_text(encoding="utf-8"),
-              "CLI exposes local updater diagnostics and optional check": "info: bool" in cli and "fn run_update_info" in cli and "resolve_policy_update_for_target" in cli,
-              "no post-publication migration rollback remains": "Revert failed migration verification to prerelease" not in release and "make_latest=false" not in release,
-              "new releases are initially prereleases": "<!-- GITRUN_RELEASE_TYPE: pre -->" in release and 'gh release edit "$VERSION"' in release and 'gh release create "$VERSION"' in release and release.count("--prerelease") >= 2,
-              "new Server package identity": "name: gitrun-server" in release and "GitRun-Server-$VERSION-" in release,
-              "Server package replaces legacy Debian package": "conflicts: [gitrun]" in release and "replaces: [gitrun]" in release,
-              "new CLI prefers the Server DEB target": 'artifact_for("linux-x86_64-server-deb")' in cli,
-              "new CLI validates gitrun-server package identity": '"gitrun-server"' in cli and "trim() != expected_package" in cli,
-              "new CLI detects the selected package for reinstall": ".arg(expected_package)" in cli,
-              "new CLI has reinstall target unit coverage": "prefers_new_server_deb_when_both_targets_exist" in cli and "retains_legacy_target_fallback_for_old_manifests" in cli,
-              "new CLI retains legacy manifest fallback": 'artifact_for("linux-x86_64-deb")' in cli and '"gitrun"' in cli,
-              "Desktop package remains independent": "name: gitrun-desktop" in release,
-              "Dashboard release restores Cargo and npm caches": "Restore Dashboard Cargo and npm caches" in release and ".gitrun-cargo" in release and ".gitrun-npm-cache" in release,
-              "Dashboard has native x86_64 and ARM64 GNU build runners on the glibc compatibility baseline": "runner: ubuntu-22.04-arm" in release and "runner: ubuntu-22.04" in release and "target: aarch64-unknown-linux-gnu" in release and "target: x86_64-unknown-linux-gnu" in release,
-              "Dashboard GNU and musl builds and packages share unified four-target matrices": all(target in release for target in ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]) and "kind: gnu" in release and "kind: musl" in release and "build-dashboard-musl:" not in release and "package-dashboard-musl:" not in release,
-              "Dashboard ARM64 musl build uses Void native WebKitGTK packages": "ghcr.io/void-linux/void-musl-full:20260801r1" in release and "libwebkit2gtk41-devel" in release and "rustup-init" in release,
-              "Dashboard GNU packages include DEB, RPM and Arch": all(token in release for token in ["-deb.deb", "-rpm.rpm", "-archlinux.pkg.tar.zst"]),
-              "Dashboard musl APK is limited to Alpine x86_64 while XBPS covers both architectures": all(token in release for token in ['if [ "$DESKTOP_ARCH" = "x86_64" ]', "-musl-apk.apk", "-musl-xbps.xbps", "linux-x86_64-musl-desktop-apk", "linux-x86_64-musl-desktop-xbps", "linux-aarch64-musl-desktop-xbps"]) and "linux-aarch64-musl-desktop-apk" not in release and "Alpine ARM64 Desktop APK must not be published" in release,
-              "Dashboard manifest maps every Desktop package to a unique target": all(token in release for token in ["linux-x86_64-desktop-rpm", "linux-aarch64-desktop-rpm", "linux-x86_64-desktop-arch", "linux-aarch64-desktop-arch", "linux-x86_64-musl-desktop-bin", "linux-aarch64-musl-desktop-bin", "linux-x86_64-musl-desktop-apk", "linux-x86_64-musl-desktop-xbps", "linux-aarch64-musl-desktop-xbps"]),
-              "Dashboard provenance declares architecture-specific package availability": "desktop_package_formats" in release and "desktop_package_arches" in release and "aarch64-unknown-linux-musl" in release,
-              "Dashboard cache key is isolated from Server builds": "-desktop-" in release and "hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json')" in release,
-              "Dashboard cache is saved after its artifact build": release.index("Upload independent Dashboard artifacts") < release.index("Save Dashboard Cargo and npm caches"),
-              "Dashboard uses the Node 24-compatible setup-node action": "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" in release,
-              "Desktop excludes Server executable": "grep -Eq" in release and "usr/bin/gitrun$" in release,
-              "release notes include per-architecture ABI tables": '["Architecture", "ABI", "Package format", "Artifact", "SHA-256"]' in release,
-              "release notes are generated from signed manifest": "manifest = json.loads(manifest_path.read_text" in release,
-              "release notes verify asset checksums": 'digest != item["sha256"]' in release,
-              "migration notes include fresh-install warning": "DO NOT USE FOR FRESH INSTALL!" in release,
-              "migration notice is limited to the one-time migration release": 'if migration == "true":' in release and "## Migration Release" in release and "No migration needed, updater/release system has not been changed in a way that requires a migration package." not in release,
-              "manifest contains separate Server package target": 'package_target[:-4] + "-server-deb"' in release,
-              "release asset inventory rejects unexpected files": "diff -u <(printf" in release,
-              "manifest requires the exact target set": "actual_targets != required" in release and "len(items) != len(required)" in release,
-          }
-          for label, passed in checks.items():
-              print(("PASS" if passed else "FAIL") + ": " + label)
-          failed = [label for label, passed in checks.items() if not passed]
-          if failed:
-              raise SystemExit("Release contract checks failed: " + "; ".join(failed))
-          PY
+          python3 scripts/ci/check-release-workflow-contracts.py
       - *report
       - *logs
 
@@ -2090,8 +3329,8 @@ jobs:
           mkdir -p "$TMPDIR" "$XDG_CACHE_HOME"
           bundle() { (cd crates/gitrun-dashboard-tauri && npm run tauri bundle -- --bundles deb,appimage --no-binary-patching); }
           ci_run "tauri bundle (deb, appimage)" bundle
-      - name: Upload Tauri bundles
-        if: always() && env.CI_UPLOAD_ARTIFACTS == 'true'
+      - name: Upload Tauri bundles for release package certification
+        if: success()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: gitrun-tauri-bundles
@@ -2115,7 +3354,7 @@ jobs:
     name: Tauri GUI build and package · ARM64
     needs: [cargo-lock, rust-lint, frontend]
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success') }}
-    runs-on: ubuntu-22.04-arm
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     permissions:
       contents: read
@@ -2530,6 +3769,7 @@ jobs:
       - environment
       - detect
       - cargo-lock
+      - python-quality
       - ci-selftest
       - repository
       - workflows
@@ -2547,11 +3787,20 @@ jobs:
       - systemd-verify
       - native-service-manager-contracts
       - platform-target-check
+      - release-package-certification
+      - migration-package-certification
+      - release-inputs-certification
+      - release-asset-assembly-certification
       - platform-compatibility
       - multi-distro-contracts
       - release-contracts
+      - formal-verification
+      - miri
       - tauri
       - tauri-arm64
+      - release-dashboard-package-certification
+      - release-dashboard-musl-build-certification
+      - release-dashboard-musl-package-certification
       - tauri-recovery
       - docker
     runs-on: *runner
@@ -2572,188 +3821,7 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           ATTEMPT: ${{ github.run_attempt }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          summary_started="$(date +%s)"
-          summary_record_step() {
-            rc=$?
-            local result=ok
-            [ "$rc" -eq 0 ] || result=fail
-            printf 'Build workflow verdict and pipeline report\t%s\t%s\n' "$result" "$(( $(date +%s) - summary_started ))" >> "$CI_STEPS"
-          }
-          trap summary_record_step EXIT
-          J="$RUNNER_TEMP/needs.json"; printf '%s' "$NEEDS" > "$J"
-          res() { jq -r --arg j "$1" '.[$j].result // "skipped"' "$J"; }
-          out() { jq -r --arg j "$1" --arg k "$2" '.[$j].outputs[$k] // ""' "$J"; }
-          dur() { local s="$1"; if [ -z "$s" ]; then echo "–"; else ci_dur "$s"; fi; }
-
-          # id | label | enabled when detect.<flag> is true | extra jobs it waits for
-          read -r -d '' JOBLIST <<'JOBS' || true
-          variables-verification|Repository CI variables|always|
-          environment|Runner environment|always|
-          detect|Detect components|always|
-          cargo-lock|Cargo.lock validation|rust|
-          ci-selftest|CI self-test|workflows|
-          repository|Hygiene and syntax|always|
-          workflows|Workflow lint and security|workflows|
-          shell|Shell|shell|
-          powershell|PowerShell|powershell|
-          frontend|JS, TS and CSS|node|
-          audit-node|npm audit|node|
-          rust-lint|Rust lint|rust|
-          rust-test|Rust tests|rust|rust-lint
-          rust-build|Rust release build|rust|rust-test
-          audit-rust|Cargo audit and deny|rust|
-          security-hardening|Security hardening regression gate|rust|rust-lint
-          gsr-watchdog|GSR watchdog lifecycle and failure detection|rust|rust-lint
-          runtime-contracts|Runtime contracts and configuration integration|rust|rust-lint
-          systemd-verify|systemd-analyze unit verification|rust|
-          native-service-manager-contracts|OpenRC and runit service-manager contracts|native|
-          platform-target-check|Server and updater Linux target matrix|rust|rust-build
-          platform-compatibility|Linux platform and updater target contracts|rust|rust-lint
-          multi-distro-contracts|Multi-distro portability contracts|rust|rust-lint
-          release-contracts|Server, Desktop and migration release contracts|workflows|
-          tauri|Tauri GUI|tauri|rust-lint frontend
-          tauri-arm64|Tauri GUI native ARM64 build|tauri|rust-lint frontend
-          tauri-recovery|Tauri GitRun Recovery GUI|tauri|rust-lint frontend
-          docker|Docker|docker|
-          JOBS
-
-          detect_ok=false; if [ "$(res detect)" = success ]; then detect_ok=true; fi
-          declare -A STATE LABEL SECS CACHE DEPS DEP_IDS WHY
-          order=(); nfail=0; ncancel=0; nok=0; nblocked=0; nna=0
-          while IFS='|' read -r id label flag extra; do
-            [ -n "$id" ] || continue
-            order+=("$id"); LABEL[$id]="$label"
-            r="$(res "$id")"; SECS[$id]="$(out "$id" secs)"; CACHE[$id]="$(out "$id" cache)"
-            case "$id" in
-              variables-verification) DEP_IDS[$id]="" ;;
-              environment|detect) DEP_IDS[$id]="variables-verification" ;;
-              cargo-lock) DEP_IDS[$id]="detect" ;;
-              *) DEP_IDS[$id]="cargo-lock${extra:+ $extra}" ;;
-            esac
-            DEPS[$id]="${DEP_IDS[$id]// /, }"; DEPS[$id]="${DEPS[$id]:-–}"
-            if [ "$flag" = always ] || { [ "$detect_ok" = true ] && [ "$(out cargo-lock "$flag")" = true ]; } || { [ "$id" = cargo-lock ] && [ "$detect_ok" != true ]; }; then en=1; else en=0; fi
-            if [ "$id" = native-service-manager-contracts ]; then
-              if [ "$(out cargo-lock rust)" = true ] || [ "$(out cargo-lock workflows)" = true ]; then en=1; else en=0; fi
-            fi
-            case "$r" in
-              success) STATE[$id]=ok; nok=$((nok + 1)) ;;
-              failure) STATE[$id]=fail; nfail=$((nfail + 1)) ;;
-              cancelled) STATE[$id]=cancelled; ncancel=$((ncancel + 1)) ;;
-              *)
-                if [ "$en" = 0 ]; then STATE[$id]=na; nna=$((nna + 1))
-                else
-                  why=""
-                  read -r -a blockers <<< "${DEP_IDS[$id]:-}"
-                  for b in "${blockers[@]}"; do
-                    if [ "$(res "$b")" != success ]; then why="$why$b "; fi
-                  done
-                  if [ -n "$why" ]; then STATE[$id]=blocked; WHY[$id]="${why% }"; nblocked=$((nblocked + 1))
-                  else STATE[$id]=fail; WHY[$id]="skipped unexpectedly"; nfail=$((nfail + 1)); fi
-                fi ;;
-            esac
-          done <<<"$JOBLIST"
-
-          verdict=pass
-          if [ "$nfail" -gt 0 ] || [ "$detect_ok" != true ]; then verdict=fail; elif [ "$ncancel" -gt 0 ]; then verdict=cancelled; fi
-          icon() { case "$1" in ok) echo "✅" ;; fail) echo "❌" ;; cancelled) echo "🚫" ;; blocked) echo "⛔" ;; *) echo "➖" ;; esac; }
-          cls() { case "$1" in ok) echo ok ;; fail) echo fail ;; cancelled) echo cancelled ;; blocked) echo blocked ;; *) echo skip ;; esac; }
-          case "$verdict" in pass) head="✅ All applicable gates passed" ;; fail) head="❌ Verification failed" ;; *) head="🚫 Run cancelled" ;; esac
-
-          R="$RUNNER_TEMP/report.md"
-          {
-            echo "## $head — GitRun CI"
-            echo
-            echo "**Commit** \`${HEAD_SHA:0:8}\` · **ref** \`$REF_NAME\` · **event** \`$EVENT\` · [run #$ATTEMPT]($RUN_URL)"
-            echo
-            echo "✅ $nok passed · ❌ $nfail failed · ⛔ $nblocked blocked · ➖ $nna not applicable$([ "$ncancel" -gt 0 ] && echo " · 🚫 $ncancel cancelled")"
-            echo
-            echo '```mermaid'
-            echo 'flowchart LR'
-            for id in "${order[@]}"; do
-              n="${id//-/_}"
-              printf '  %s["%s<br/>%s %s"]:::%s\n' "$n" "${LABEL[$id]}" "$(icon "${STATE[$id]}")" "$(dur "${SECS[$id]}")" "$(cls "${STATE[$id]}")"
-            done
-            printf '  verdict{{"%s"}}:::%s\n' "$head" "$([ "$verdict" = pass ] && echo ok || echo fail)"
-            for id in "${order[@]}"; do
-              n="${id//-/_}"
-              read -r -a dep_ids <<< "${DEP_IDS[$id]:-}"
-              for dep in "${dep_ids[@]}"; do
-                dep_node="${dep//-/_}"
-                echo "  $dep_node --> $n"
-              done
-              echo "  $n --> verdict"
-            done
-            echo '  classDef ok fill:#dafbe1,stroke:#1a7f37,color:#0a3622'
-            echo '  classDef fail fill:#ffebe9,stroke:#cf222e,color:#82071e'
-            echo '  classDef skip fill:#f6f8fa,stroke:#8c959f,color:#57606a'
-            echo '  classDef blocked fill:#fff8c5,stroke:#bf8700,color:#633c01'
-            echo '  classDef cancelled fill:#eaeef2,stroke:#57606a,color:#24292f'
-            echo '```'
-            echo
-            echo "| | Job | Time | Depends on | Cache | Note |"
-            echo "|---|---|---|---|---|---|"
-            for id in "${order[@]}"; do
-              note=""
-              case "${STATE[$id]}" in blocked) note="blocked by ${WHY[$id]}" ;; na) note="not applicable" ;; fail) note="${WHY[$id]:-}" ;; esac
-              if [ "$id" = platform-target-check ]; then
-                note="${note:+$note; }each target publishes an independent job report"
-              fi
-              echo "| $(icon "${STATE[$id]}") | \`$id\` — ${LABEL[$id]} | $(dur "${SECS[$id]}") | ${DEPS[$id]} | ${CACHE[$id]:-–} | $note |"
-            done
-            echo
-            if [ "$verdict" = fail ]; then
-              echo "### Errors"
-              echo
-              for id in "${order[@]}"; do
-                [ "${STATE[$id]}" = fail ] || continue
-                e="$(out "$id" errors | sed 's/```/'"'''"'/g')"
-                echo "<details open><summary>❌ <b>${LABEL[$id]}</b> (<code>$id</code>)</summary>"
-                echo
-                if [ -n "$e" ]; then echo '```text'; printf '%s\n' "$e"; echo '```'; else echo "_No error excerpt was captured: open the job log._"; fi
-                echo "</details>"
-                echo
-              done
-              if [ "$detect_ok" != true ]; then echo "> ⚠️ Component detection did not succeed, so applicability could not be determined reliably."; echo; fi
-            fi
-          } > "$R"
-          ci_sum < "$R"
-          cat "$R"
-
-          # ── pull request comment (one comment, updated in place) ──
-          if [ "$EVENT" = pull_request ] && [ -n "${PR_NUMBER:-}" ]; then
-            if [ "$verdict" = cancelled ]; then
-              ci_note "run cancelled: the PR comment is left untouched"
-            else
-              MARK='<!-- gitrun-ci-summary -->'
-              body="$RUNNER_TEMP/pr-body.md"
-              { echo "$MARK"; head -c 60000 "$R"; } > "$body"
-              post_comment() {
-                local payload="$RUNNER_TEMP/pr-payload.json" cid="" page=1 list api="https://api.github.com/repos/$GITHUB_REPOSITORY"
-                local h=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
-                jq -Rs '{body: .}' < "$body" > "$payload"
-                while [ -z "$cid" ] && [ "$page" -le 5 ]; do
-                  list="$(curl -fsS "${h[@]}" "$api/issues/$PR_NUMBER/comments?per_page=100&page=$page")" || return 1
-                  cid="$(jq -r --arg m "$MARK" '[.[] | select(.body | contains($m))][0].id // empty' <<<"$list")"
-                  if [ "$(jq 'length' <<<"$list")" -lt 100 ]; then break; fi
-                  page=$((page + 1))
-                done
-                if [ -n "$cid" ]; then
-                  curl -fsS -X PATCH "${h[@]}" --data-binary @"$payload" "$api/issues/comments/$cid" > /dev/null && echo "PR comment updated (#$cid)"
-                else
-                  curl -fsS -X POST "${h[@]}" --data-binary @"$payload" "$api/issues/$PR_NUMBER/comments" > /dev/null && echo "PR comment created"
-                fi
-              }
-              post_comment || ci_warn "could not post the PR comment (the token needs pull-requests: write; fork PRs are read-only). The report is in the job summary."
-            fi
-          fi
-
-          if [ "$verdict" = fail ]; then
-            for id in "${order[@]}"; do if [ "${STATE[$id]}" = fail ]; then ci_err "gate failed: $id (${LABEL[$id]})${WHY[$id]:+ — ${WHY[$id]}}"; fi; done
-            exit 1
-          fi
-          echo "Verdict: $verdict"
+        run: python3 scripts/ci/render-ci-summary.py
       - *report
 
   # ──────────────────────────────────────────────────────────── cache-gc ──
@@ -2774,96 +3842,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DRY_RUN: ${{ env.CI_GC_DRY_RUN }}
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          gc_started="$(date +%s)"
-          gc_record_step() {
-            rc=$?
-            local result=ok
-            [ "$rc" -eq 0 ] || result=fail
-            printf 'Cache inventory and garbage collection\t%s\t%s\n' "$result" "$(( $(date +%s) - gc_started ))" >> "$CI_STEPS"
-          }
-          trap gc_record_step EXIT
-          api() { curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" "$@"; }
-          base="https://api.github.com/repos/$GITHUB_REPOSITORY/actions"
-          pages="$RUNNER_TEMP/cache-pages"; rm -rf "$pages"; mkdir -p "$pages"
-          page=1
-          while :; do
-            if ! api "$base/caches?per_page=100&page=$page" > "$pages/$page.json"; then ci_err "cannot list caches: the job needs the actions: write permission"; exit 1; fi
-            n="$(jq '.actions_caches | length' "$pages/$page.json")"
-            if [ "$n" -lt 100 ] || [ "$page" -ge 30 ]; then break; fi
-            page=$((page + 1))
-          done
-          jq -s '[.[].actions_caches[]]' "$pages"/*.json > "$RUNNER_TEMP/caches.json"
-          used_before="$(api "$base/cache/usage" | jq -r '.active_caches_size_in_bytes // 0')"
-
-          # Deletion plan. A cache is removed only if it is clearly stale or if a NEWER cache of the
-          # same kind exists on the same ref. Keep only the newest cache per family/ref to stay
-          # comfortably inside GitHub Free's shared 10 GB repository budget, and never touch a cache
-          # younger than ~10 minutes (a save may still be in flight).
-          jq --arg epoch "$CACHE_BASE_EPOCH" --arg rust "$RUST_VERSION" --argjson now "$(date +%s)" '
-            def ts: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
-            def fam:
-              if contains("-target-img") then
-                sub("-man[^-]+-[^-]+-prof"; "-prof")
-              else sub("-[^-]+$"; "") end;
-            map(. + { fam: (.key | fam), age: (($now - (.created_at | ts)) / 86400) })
-            | map(. + { reason:
-                ( if (.key | startswith("gitrun-") | not) then "legacy key format"
-                  elif (.key | test("^gitrun-e[0-9]+-")) and ((.key | capture("^gitrun-(?<e>e[0-9]+)-").e) != $epoch) then "old cache epoch"
-                  elif (.key | test("-rustup-[0-9]")) and ((.key | contains("-rustup-" + $rust + "-")) | not) then "toolchain of an old Rust version"
-                  elif (.key | test("-rustc[0-9]")) and ((.key | contains("-rustc" + $rust + "-")) | not) then "target built with an old Rust version"
-                  elif (.ref | startswith("refs/pull/")) and (.age > 1) then "pull-request cache older than 1 day"
-                  elif (.key | test("^gitrun-e[0-9]+x")) and (.age > 1) then "one-off fresh-cache run"
-                  else null end ) })
-            | ( map(select(.reason == null)) | group_by([.ref, .fam])
-                | map( sort_by(.created_at) | reverse | to_entries
-                       | map(select(.key >= 1) | .value + { reason: "superseded by a newer cache of the same kind" }) )
-                | add // [] ) as $superseded
-            | ( map(select(.reason != null)) + $superseded )
-            | map(select(.age > 0.007))
-            | sort_by(.reason, .key)
-          ' "$RUNNER_TEMP/caches.json" > "$RUNNER_TEMP/gc-plan.json"
-
-          total="$(jq 'length' "$RUNNER_TEMP/caches.json")"
-          todel="$(jq 'length' "$RUNNER_TEMP/gc-plan.json")"
-          freed="$(jq '[.[].size_in_bytes] | add // 0' "$RUNNER_TEMP/gc-plan.json")"
-          mode="deleting"; if [ "$DRY_RUN" = true ]; then mode="dry run (nothing is deleted)"; fi
-          {
-            echo "### 🗑 Cache garbage collection — $mode"; echo
-            echo "- ${total} caches, $((used_before / 1048576)) MB used of the 10 GB repository limit"
-            echo "- ${todel} to remove, $((freed / 1048576)) MB to free"; echo
-            if [ "$todel" -gt 0 ]; then
-              echo "| Reason | Caches | MB |"; echo "|---|---|---|"
-              jq -r 'group_by(.reason) | .[] | "| \(.[0].reason) | \(length) | \(([.[].size_in_bytes] | add) / 1048576 | floor) |"' "$RUNNER_TEMP/gc-plan.json"
-              echo
-            fi
-            echo "<details><summary>Caches that are kept</summary>"; echo
-            echo "| Kind | Ref | Count | MB |"; echo "|---|---|---|---|"
-            jq -r --slurpfile plan "$RUNNER_TEMP/gc-plan.json" '
-              def fam:
-                sub("-run[0-9]+-attempt[0-9]+$"; "")
-                | if contains("-target-img") then
-                    sub("-man[^-]+-[^-]+-prof"; "-prof")
-                  else sub("-[^-]+$"; "") end;
-              ([$plan[0][].id]) as $gone
-              | map(select(.id as $i | $gone | index($i) | not) | . + { fam: (.key | fam) })
-              | group_by([.fam, .ref]) | .[]
-              | "| `\(.[0].fam)` | \(.[0].ref) | \(length) | \(([.[].size_in_bytes] | add) / 1048576 | floor) |"' "$RUNNER_TEMP/caches.json"
-            echo; echo "</details>"; echo
-          } | ci_sum
-
-          jq -r '.[] | [.id, .reason, .size_in_bytes, .key] | @tsv' "$RUNNER_TEMP/gc-plan.json" | while IFS=$'\t' read -r id reason size key; do
-            if [ "$DRY_RUN" = true ]; then
-              echo "[dry run] would delete $key ($((size / 1048576)) MB): $reason"
-            elif api -X DELETE "$base/caches/$id" > /dev/null; then
-              echo "deleted $key ($((size / 1048576)) MB): $reason"
-            else
-              ci_warn "could not delete cache $key"
-            fi
-          done
-          if [ "$DRY_RUN" != true ]; then
-            used_after="$(api "$base/cache/usage" | jq -r '.active_caches_size_in_bytes // 0')"
-            echo "cache usage: $((used_before / 1048576)) MB → $((used_after / 1048576)) MB"
-          fi
+          CACHE_BASE_EPOCH: ${{ env.CACHE_BASE_EPOCH }}
+          RUST_VERSION: ${{ env.RUST_VERSION }}
+        run: python3 scripts/ci/render-cache-gc-summary.py | ci_sum
       - *report

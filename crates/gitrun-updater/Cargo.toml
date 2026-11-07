@@ -19,3 +19,6 @@ sha2 = "0.11"
 tar = "0.4"
 thiserror = "2"
 zip = "9"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }

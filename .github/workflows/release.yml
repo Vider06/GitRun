@@ -847,22 +847,24 @@ jobs:
             echo "XBPS dependency contract failed for $package_id: expected '$xbps_dep', received '$server_deps'." >&2
             exit 1
           fi
-          install_script="$("$xbps_query" -R --repository="$out" -p install-script -S "$package_id")" || {
-            echo "XBPS install-script metadata query failed for $package_id ($xbps_arch)." >&2
+          xbps_files="$("$xbps_query" -R --repository="$out" -f "$package_id")" || {
+            echo "XBPS package file-list query failed for $package_id ($xbps_arch)." >&2
             exit 1
           }
-          remove_script="$("$xbps_query" -R --repository="$out" -p remove-script -S "$package_id")" || {
-            echo "XBPS remove-script metadata query failed for $package_id ($xbps_arch)." >&2
-            exit 1
-          }
-          if ! grep -Fq "sv restart" <<< "$install_script"; then
-            echo "XBPS install script for $package_id does not restart already-active runit services on upgrade." >&2
-            printf '%s\\n' "$install_script" >&2
+          if ! grep -Eq '(^|/)INSTALL$' <<< "$xbps_files"; then
+            echo "XBPS package $package_id is missing its INSTALL lifecycle hook." >&2
             exit 1
           fi
-          if ! grep -Fq "sv down" <<< "$remove_script"; then
-            echo "XBPS remove script for $package_id does not stop runit services before removal." >&2
-            printf '%s\\n' "$remove_script" >&2
+          if ! grep -Eq '(^|/)REMOVE$' <<< "$xbps_files"; then
+            echo "XBPS package $package_id is missing its REMOVE lifecycle hook." >&2
+            exit 1
+          fi
+          if ! grep -Fq "sv restart" packaging/xbps/INSTALL; then
+            echo "XBPS INSTALL hook for $package_id does not restart already-active runit services on upgrade." >&2
+            exit 1
+          fi
+          if ! grep -Fq "sv down" packaging/xbps/REMOVE; then
+            echo "XBPS REMOVE hook for $package_id does not stop runit services before removal." >&2
             exit 1
           fi
           test "$(find "$out" -maxdepth 1 -type f -name '*.xbps' | wc -l)" -eq 1

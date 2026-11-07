@@ -14,9 +14,9 @@ ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "verification/source-proof-map.tsv"
 REPORT = Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "gitrun-dual-verifier-coverage.tsv"
 EXPECTED_HEADER = ["SOURCE_FILE", "KANI_ENTRYPOINT", "VERUS_ENTRYPOINT"]
-PATH_ATTRIBUTE = re.compile(r'#\\s*\\[\\s*path\\s*=\\s*"([^"]+)"\\s*\\]')
-KANI_PROOF = re.compile(r"#\\s*\\[\\s*kani\\s*::\\s*proof\\s*\\]")
-VERUS_MODULE = re.compile(r"\\bverus\\s*!")
+PATH_ATTRIBUTE = re.compile(r'#\s*\[\s*path\s*=\s*"([^"]+)"\s*\]')
+KANI_PROOF = re.compile(r"#\s*\[\s*kani\s*::\s*proof\s*\]")
+VERUS_MODULE = re.compile(r"\bverus\s*!")
 
 
 def tracked_sources() -> set[str]:
@@ -26,7 +26,7 @@ def tracked_sources() -> set[str]:
         check=True,
         stdout=subprocess.PIPE,
     )
-    return {item.decode() for item in result.stdout.split(b"\\0") if item}
+    return {item.decode() for item in result.stdout.split(b"\0") if item}
 
 
 def source_closure(entrypoint: Path) -> set[str]:
@@ -56,7 +56,7 @@ def write_report(
 ) -> None:
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     with REPORT.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.writer(handle, delimiter="\\t", lineterminator="\\n")
+        writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
         writer.writerow(["SOURCE_FILE", "KANI_STATUS", "VERUS_STATUS"])
         for source in sorted(sources):
             writer.writerow([source, *statuses[source]])
@@ -75,21 +75,21 @@ def write_summary(
         return
 
     with Path(summary).open("a", encoding="utf-8") as handle:
-        handle.write("### Dual-verifier Rust source coverage\\n\\n")
-        handle.write("| Metric | Result |\\n|---|---:|\\n")
-        handle.write(f"| Tracked Rust source files | {len(sources)} |\\n")
-        handle.write(f"| Fully proven by Kani and Verus | {fully_proven} |\\n")
-        handle.write(f"| Kani proof results: PROVEN | {totals['PROVEN']} |\\n")
-        handle.write(f"| Verus proof results: PROVEN | {totals['PROVEN']} |\\n")
-        handle.write(f"| FAILED results | {totals['FAILED']} |\\n")
-        handle.write(f"| UNVERIFIED results | {totals['UNVERIFIED']} |\\n")
-        handle.write(f"| ERROR results | {totals['ERROR']} |\\n")
-        handle.write(f"| Preflight / execution issues | {issues} |\\n")
-        handle.write(f"| Gate phase | {phase} |\\n\\n")
+        handle.write("### Dual-verifier Rust source coverage\n\n")
+        handle.write("| Metric | Result |\n|---|---:|\n")
+        handle.write(f"| Tracked Rust source files | {len(sources)} |\n")
+        handle.write(f"| Fully proven by Kani and Verus | {fully_proven} |\n")
+        handle.write(f"| Kani proof results: PROVEN | {totals['PROVEN']} |\n")
+        handle.write(f"| Verus proof results: PROVEN | {totals['PROVEN']} |\n")
+        handle.write(f"| FAILED results | {totals['FAILED']} |\n")
+        handle.write(f"| UNVERIFIED results | {totals['UNVERIFIED']} |\n")
+        handle.write(f"| ERROR results | {totals['ERROR']} |\n")
+        handle.write(f"| Preflight / execution issues | {issues} |\n")
+        handle.write(f"| Gate phase | {phase} |\n\n")
         handle.write(
             "A source is fully proven only when both independent verifier results "
             "are PROVEN. Inventory, compilation, linting, smoke proofs, and "
-            "structural source-closure checks do not count as formal proofs.\\n\\n"
+            "structural source-closure checks do not count as formal proofs.\n\n"
         )
 
 
@@ -106,7 +106,7 @@ def main() -> int:
         return 1
 
     with MANIFEST.open(encoding="utf-8", newline="") as handle:
-        reader = csv.reader(handle, delimiter="\\t")
+        reader = csv.reader(handle, delimiter="\t")
         if next(reader, []) != EXPECTED_HEADER:
             errors.append(
                 "Manifest header must be SOURCE_FILE, KANI_ENTRYPOINT, VERUS_ENTRYPOINT."

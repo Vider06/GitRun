@@ -102,28 +102,31 @@ class DualVerifierCoverageTests(unittest.TestCase):
         )
         self.assertIn("Fully proven by Kani and Verus | 1", self.summary.read_text())
 
-    def test_missing_source_mapping_blocks_execution_and_stays_unverified(self) -> None:
+    def test_missing_source_mapping_does_not_block_validated_proofs(self) -> None:
         (self.root / "src/other.rs").write_text(
             "pub fn other() {}\n", encoding="utf-8"
         )
         self.sources_mock.return_value = {"src/policy.rs", "src/other.rs"}
 
-        with patch.object(DUAL_COVERAGE.subprocess, "run") as run:
+        with patch.object(
+            DUAL_COVERAGE.subprocess,
+            "run",
+            side_effect=[
+                CompletedProcess(["kani"], 0),
+                CompletedProcess(["verus"], 0),
+            ],
+        ) as run:
             result = DUAL_COVERAGE.main()
 
         self.assertEqual(result, 1)
-        run.assert_not_called()
-        rows = self.read_report()
-        self.assertEqual(len(rows), 2)
-        self.assertTrue(
-            all(
-                row["KANI_STATUS"] == "UNVERIFIED"
-                and row["VERUS_STATUS"] == "UNVERIFIED"
-                for row in rows
-            )
-        )
+        self.assertEqual(run.call_count, 2)
+        rows = {row["SOURCE_FILE"]: row for row in self.read_report()}
+        self.assertEqual(rows["src/policy.rs"]["KANI_STATUS"], "PROVEN")
+        self.assertEqual(rows["src/policy.rs"]["VERUS_STATUS"], "PROVEN")
+        self.assertEqual(rows["src/other.rs"]["KANI_STATUS"], "UNVERIFIED")
+        self.assertEqual(rows["src/other.rs"]["VERUS_STATUS"], "UNVERIFIED")
         self.assertNotIn("READY", self.report.read_text())
-        self.assertIn("preflight blocked", self.summary.read_text())
+        self.assertIn("execution complete with preflight issues", self.summary.read_text())
 
     def test_failed_verus_proof_does_not_report_dual_coverage(self) -> None:
         with patch.object(

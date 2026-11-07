@@ -15,12 +15,16 @@
 //! even *attempts* any GitHub call, so a limited repo is skipped outright
 //! instead of generating another doomed request.
 
+#[cfg(not(verus))]
 use std::collections::HashMap;
+#[cfg(not(verus))]
 use std::sync::Mutex;
+#[cfg(not(verus))]
 use std::time::{Duration, Instant};
 #[cfg(verus)]
 use vstd::prelude::*;
 
+#[cfg(not(verus))]
 pub struct RateLimitTracker {
     cooldowns: Mutex<HashMap<String, Instant>>,
 }
@@ -29,6 +33,7 @@ pub struct RateLimitTracker {
 /// for an effectively unbounded period. GitHub's normal reset windows are
 /// far shorter than this defensive ceiling.
 const MAX_COOLDOWN_SECONDS: u64 = 24 * 60 * 60;
+#[cfg(not(verus))]
 const MAX_COOLDOWN: Duration = Duration::from_secs(MAX_COOLDOWN_SECONDS);
 
 /// Clamp an untrusted Retry-After value to the repository cooldown ceiling.
@@ -41,12 +46,14 @@ fn cap_cooldown_seconds(seconds: u64) -> u64 {
     seconds.min(MAX_COOLDOWN_SECONDS)
 }
 
+#[cfg(not(verus))]
 impl Default for RateLimitTracker {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(not(verus))]
 impl RateLimitTracker {
     pub fn new() -> Self {
         Self {
@@ -109,7 +116,7 @@ impl RateLimitTracker {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(verus)))]
 mod tests {
     use super::*;
 

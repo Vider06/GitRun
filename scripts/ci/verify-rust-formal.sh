@@ -35,7 +35,7 @@ with open(inventory, newline="", encoding="utf-8") as source, open(
     writer = csv.writer(target, delimiter=chr(9), lineterminator="\n")
     writer.writerow(["SOURCE_FILE", "KANI_STATUS", "PACKAGE", "ROLE"])
     for row in reader:
-        if len(row) != 4 or row[0] != "FORMAT_OK":
+        if len(row) != 4 or row[0] != "INVENTORIED":
             continue
         _, path, package, role = row
         if overall == "PROVEN":

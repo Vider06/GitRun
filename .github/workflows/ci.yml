@@ -3024,12 +3024,29 @@ jobs:
       - name: Prove required Rust invariants
         shell: bash
         run: bash scripts/ci/verify-rust-formal.sh
+      - name: Install pinned Verus verifier
+        shell: bash
+        run: bash scripts/ci/install-verus.sh
+      - name: Verify Verus toolchain and proof runner
+        shell: bash
+        run: "${RUNNER_TEMP}/verus/installed/verus" verification/verus/smoke.rs
+      - name: Enforce dual-verifier coverage for every tracked Rust file
+        shell: bash
+        run: python3 scripts/ci/verify-rust-dual-coverage.py
       - name: Upload Kani per-file coverage status
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: kani-source-coverage
           path: ${{ runner.temp }}/gitrun-kani-source-coverage.tsv
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload dual-verifier source coverage
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dual-verifier-source-coverage
+          path: ${{ runner.temp }}/gitrun-dual-verifier-coverage.tsv
           if-no-files-found: ignore
           retention-days: 7
       - *report

@@ -2008,11 +2008,12 @@ jobs:
         shell: bash
         run: bash scripts/ci/verify-rust-source-coverage.bash
       - name: Upload Rust source inventory
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: rust-source-inventory
           path: ${{ runner.temp }}/gitrun-rust-source-inventory.tsv
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 7
       - name: Install pinned Kani verifier
         shell: bash
@@ -2024,11 +2025,12 @@ jobs:
         shell: bash
         run: bash scripts/ci/verify-rust-formal.sh
       - name: Upload Kani per-file coverage status
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: kani-source-coverage
           path: ${{ runner.temp }}/gitrun-kani-source-coverage.tsv
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 7
       - *report
       - *logs

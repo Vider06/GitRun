@@ -222,7 +222,8 @@ mod verus_verification {
                 cap_cooldown_seconds(seconds) <= MAX_COOLDOWN_SECONDS,
                 cap_cooldown_seconds(seconds) <= seconds,
                 seconds <= MAX_COOLDOWN_SECONDS ==> cap_cooldown_seconds(seconds) == seconds,
-                seconds > MAX_COOLDOWN_SECONDS ==> cap_cooldown_seconds(seconds) == MAX_COOLDOWN_SECONDS,
+                seconds > MAX_COOLDOWN_SECONDS
+                    ==> cap_cooldown_seconds(seconds) == MAX_COOLDOWN_SECONDS,
         {
         }
     }

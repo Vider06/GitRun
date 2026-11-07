@@ -119,7 +119,7 @@ def main() -> int:
         reader = csv.reader(handle, delimiter="\t")
         if next(reader, []) != EXPECTED_HEADER:
             errors.append(
-                "Manifest header must be SOURCE_FILE, KANI_ENTRYPOINT, VERUS_ENTRYPOINT."
+                "Manifest header must define source, verifier entrypoints, proof scope, both verifier obligations, and status."
             )
         for line, row in enumerate(reader, start=2):
             if not row or (len(row) == 1 and not row[0].strip()):
@@ -161,6 +161,9 @@ def main() -> int:
     for source, mapping in sorted(rows.items()):
         kani_name, verus_name = mapping[:2]
         if source not in sources:
+            continue
+        if mapping[5] == "PLANNED":
+            errors.append(f"UNVERIFIED: Kani and Verus proof implementation is still PLANNED for {source}")
             continue
         for tool, name, used in (
             ("KANI", kani_name, kani_used),

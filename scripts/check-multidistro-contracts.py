@@ -123,7 +123,7 @@ def check_release_package_boundaries(errors: list[str]) -> None:
         "package-server",
         "package-dashboard",
         "migration-package",
-        "validate",
+        "formal-verification",
         "sign",
         "release",
     )

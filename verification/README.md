@@ -43,11 +43,17 @@ Verus is pinned to `0.2026.11.02.8bf68ee` and installed by
 `rustc-dev` and `llvm-tools`) is installed separately from GitRun's primary
 Rust toolchain (`1.99.0`).
 
-At this revision, Verus runs only the toolchain smoke proof in
-`verification/verus/smoke.rs`. That arithmetic assertion checks that the
-pinned Verus executable and its toolchain can perform a proof; it is not a
-proof of GitRun production code and is not counted as source coverage. There
-are currently no production-source Verus properties.
+The toolchain smoke proof in `verification/verus/smoke.rs` remains separate
+from source coverage. A first production Verus property is now attached to
+`crates/gitrun-updater/src/policy_logic.rs`: the production
+`UpdatePolicy::accepts_release_type` body is exposed through Verus's
+`dual_spec` mechanism, and the proof checks all nine policy/release
+combinations. The standalone updater-policy entrypoint also checks that the
+production module is reachable from its verifier harness.
+
+These are authored proof targets, not a claim that the pinned verifier has
+already discharged them. Their actual result is recorded only when the dual
+gate executes Kani and Verus.
 
 ## Required dual-verifier source gate
 
@@ -67,14 +73,14 @@ both verifier processes completed successfully for every mapped source; a
 smoke proof, compilation, inventory entry, or lint result cannot substitute.
 
 **Coverage at this PR revision:** the repository has 75 tracked Rust source
-files, while `verification/source-proof-map.tsv` contains only its header and
-no completed mappings. Consequently, dual-verifier coverage is currently
-`0/75` and the strict gate is expected to fail. This is intentional: the
-manifest must not be filled with disconnected harnesses or placeholder
-mappings to make CI appear green. The gate becomes green only after every
-tracked Rust file has a reviewed, meaningful Kani proof and a reviewed,
-meaningful Verus proof. This includes tests, build scripts, and verification
-harnesses; no file is silently excluded.
+files. Two rows now have distinct, source-local Kani and Verus entrypoints:
+the updater policy implementation and its standalone verifier harness. The
+remaining 73 rows are still `PLANNED`. This is implementation readiness,
+not a `PROVEN` result: both verifier processes must still complete
+successfully before either row is reported as covered. The gate remains
+intentionally red until every tracked Rust file has a reviewed, meaningful
+Kani proof and a reviewed, meaningful Verus proof. This includes tests, build
+scripts, and verification harnesses; no file is silently excluded.
 
 Run the strict map gate locally only after preparing both verifier entrypoints
 for every tracked source:

@@ -27,3 +27,6 @@ path = "src/bin/gitrun-gsr-agent.rs"
 [[bin]]
 name = "gitrun-api"
 path = "src/bin/gitrun-api.rs"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(verus)'] }

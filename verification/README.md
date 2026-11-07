@@ -25,3 +25,23 @@ The pure policy module is shared directly by the updater and the standalone Kani
 The gate fails if Kani is missing, the pinned version differs, a required harness disappears, or any proof fails. It does not claim that every GitRun crate or runtime behavior is formally proven; the proof inventory must expand as additional production invariants are selected.
 
 The release workflow runs the same source proofs after its package matrices complete, then inspects every produced release package individually before allowing the verified payload to reach signing.
+
+## Per-file Rust source assurance
+
+The CI source-assurance gate inventories every tracked `.rs` file, including
+test, build-script, example, benchmark, and verification sources. Each file
+must be tracked, have an owning Cargo package (or be an explicitly permitted
+verification entrypoint), and pass an individual rustfmt parse/format check
+with the repository toolchain. The generated inventory records the path,
+manifest, and source role; an unowned or malformed file fails the gate.
+
+Package-level type checking, Clippy, documentation, and behavior tests remain
+Cargo target/package checks in their dedicated CI jobs. They are not falsely
+reported as independent per-file proofs: Rust modules are compiled through
+their owning targets, and conditional/platform-specific modules are covered by
+the relevant target checks. Kani proves only its declared harness properties,
+not every Rust file.
+
+The source inventory is uploaded as a CI artifact. New tracked Rust files are
+discovered automatically, so a stale hand-maintained file count cannot hide
+them.

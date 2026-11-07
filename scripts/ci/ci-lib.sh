@@ -355,7 +355,7 @@ ci_image_fp() {
   } | sha256sum | cut -c1-8
 }
 ci_diag() {
-  local ws="${GITHUB_WORKSPACE:-.}" avail_kb inode_pct mem_mb
+  local ws="${GITHUB_WORKSPACE:-.}" avail_kb temp_avail_kb inode_pct mem_mb
   echo "::group::Runner diagnostics"
   echo "runner: ${RUNNER_NAME:-?} (${RUNNER_OS:-?}/${RUNNER_ARCH:-?})  job: ${GITHUB_JOB:-?}  sha: ${GITHUB_SHA:0:12}"
   # shellcheck source=/dev/null

@@ -12,19 +12,27 @@ Kani is pinned to `0.68.0`. The current production proof target is
 module shared by the updater and the standalone harness
 `verification/kani/updater_policy.rs`.
 
-The current Kani harnesses prove these properties over the actual shared
-implementation:
+The current Kani proof targets are:
 
 - `update_policy_acceptance_is_exact`: every combination of the finite
   `UpdatePolicy` and `ReleaseType` domains has the expected acceptance result.
-- `release_type_wire_values_are_total`: every release type has its expected
-  stable wire representation.
-- `update_policy_wire_values_are_total`: every update policy has its expected
-  stable wire representation.
+- `release_type_wire_values_are_total` and
+  `update_policy_wire_values_are_total`: all policy and release variants have
+  their expected stable wire representations.
+- `desired_count_respects_bounds_for_all_u32_inputs` in
+  `crates/gitrun-core/src/runner.rs`: the production runner target is always
+  bounded by the configured maximum and by the effective minimum, including
+  saturating arithmetic and reversed bounds.
+- `cooldown_seconds_are_bounded` in
+  `crates/gitrun-scheduler/src/backoff.rs`: the production Retry-After clamp
+  never increases its input and never exceeds 86400 seconds.
+- The standalone `verification/kani/updater_policy.rs` harness also proves
+  representative allow/deny outcomes using the imported production policy.
 
-These properties do not prove the updater's HTTP, cryptography, archive,
-filesystem, process, or operating-system integration, and they do not prove
-the rest of the GitRun workspace.
+These targeted properties do not prove the updater's HTTP, cryptography,
+archive, filesystem, process, or operating-system integration, nor the
+uncovered parts of the GitRun workspace. They are not substitutes for the
+remaining per-source obligations in the manifest.
 
 Run the current Kani suite locally after installing the pinned release:
 
@@ -44,12 +52,19 @@ Verus is pinned to `0.2026.11.02.8bf68ee` and installed by
 Rust toolchain (`1.99.0`).
 
 The toolchain smoke proof in `verification/verus/smoke.rs` remains separate
-from source coverage. A first production Verus property is now attached to
-`crates/gitrun-updater/src/policy_logic.rs`: the production
-`UpdatePolicy::accepts_release_type` body is exposed through Verus's
-`dual_spec` mechanism, and the proof checks all nine policy/release
-combinations. The standalone updater-policy entrypoint also checks that the
-production module is reachable from its verifier harness.
+from source coverage. Production Verus properties are now attached to three
+small decision functions:
+
+- `UpdatePolicy::accepts_release_type` in
+  `crates/gitrun-updater/src/policy_logic.rs`, with all nine policy/release
+  combinations checked against the production body.
+- `Runner::desired_count` in `crates/gitrun-core/src/runner.rs`, with
+  minimum/maximum bounds proved for every `u32` input.
+- `cap_cooldown_seconds` in `crates/gitrun-scheduler/src/backoff.rs`, with
+  the 86400-second cap and exact behavior on either side of the boundary.
+
+The standalone updater-policy entrypoint also checks representative policy
+outcomes through its imported production module.
 
 These are authored proof targets, not a claim that the pinned verifier has
 already discharged them. Their actual result is recorded only when the dual
@@ -73,14 +88,19 @@ both verifier processes completed successfully for every mapped source; a
 smoke proof, compilation, inventory entry, or lint result cannot substitute.
 
 **Coverage at this PR revision:** the repository has 75 tracked Rust source
-files. Two rows now have distinct, source-local Kani and Verus entrypoints:
-the updater policy implementation and its standalone verifier harness. The
-remaining 73 rows are still `PLANNED`. This is implementation readiness,
-not a `PROVEN` result: both verifier processes must still complete
-successfully before either row is reported as covered. The gate remains
-intentionally red until every tracked Rust file has a reviewed, meaningful
-Kani proof and a reviewed, meaningful Verus proof. This includes tests, build
-scripts, and verification harnesses; no file is silently excluded.
+files. Four rows have source-local Kani and Verus entrypoints: updater policy,
+its standalone verifier harness, runner target bounds, and scheduler cooldown
+clamping. The remaining 71 rows are still `PLANNED`. These entries describe
+authored proof targets, not `PROVEN` results: both verifier processes must
+complete successfully before a source is reported as covered. The gate
+remains intentionally red until every tracked Rust file has a reviewed,
+meaningful Kani proof and a reviewed, meaningful Verus proof. This includes
+tests, build scripts, and verification harnesses; no file is silently
+excluded.
+
+The TSV has separate `KANI_OBLIGATIONS`, `KANI_CASES`, and
+`VERUS_OBLIGATIONS` columns so the required property and the input partitions
+are explicit for every source.
 
 Run the strict map gate locally only after preparing both verifier entrypoints
 for every tracked source:

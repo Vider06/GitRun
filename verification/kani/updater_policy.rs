@@ -26,10 +26,10 @@ mod verus_verification {
     verus! {
         /// Verifies the imported production policy through this standalone entrypoint.
         proof fn standalone_harness_uses_production_policy() {
-            assert!(!UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Pre));
-            assert!(UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Security));
-            assert!(UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Full));
-            assert!(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Pre));
+            assert(!UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Pre));
+            assert(UpdatePolicy::SecurityOnly.accepts_release_type(ReleaseType::Security));
+            assert(UpdatePolicy::SecurityFull.accepts_release_type(ReleaseType::Full));
+            assert(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Pre));
         }
     }
 }

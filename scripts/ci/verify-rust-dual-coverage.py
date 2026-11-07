@@ -41,7 +41,6 @@ def main() -> int:
     sources = tracked_sources()
     rows: dict[str, tuple[str, str]] = {}
     errors: list[str] = []
-    report_rows: list[list[str]] = []
 
     if not sources:
         print("No tracked Rust sources found; refusing an empty proof pass.", file=sys.stderr)

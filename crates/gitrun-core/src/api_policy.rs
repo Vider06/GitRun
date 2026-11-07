@@ -29,8 +29,8 @@ pub fn parse_boolean_argument(value: &str) -> Option<bool> {
 ///
 /// Adding a new API is an explicit source-level change so the security
 /// surface cannot grow accidentally through configuration.
-#[cfg_attr(verus, verus_verify)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(verus, verus_verify)]
 #[cfg_attr(
     not(any(kani, verus)),
     derive(PartialOrd, Ord, Hash, Serialize, Deserialize)

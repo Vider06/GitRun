@@ -22,6 +22,7 @@ pub enum AutomationAction {
 }
 
 impl AutomationAction {
+    #[cfg_attr(verus, verus_verify)]
     fn as_str(self) -> &'static str {
         match self {
             Self::PredictiveWarmPool => "predictive_warm_pool",

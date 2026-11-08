@@ -60,6 +60,9 @@ The current Kani proof targets are:
   `github_app_id_string_validation_rejects_invalid_values` in
   `crates/gitrun-core/src/app_auth.rs`: App IDs must be positive decimal
   integers, with explicit zero, non-decimal, and overflow boundary cases.
+- `severity_wire_names_are_total` in
+  `crates/gitrun-gsr/src/events.rs`: every event severity variant maps to its
+  stable external wire name.
 - The standalone `verification/kani/updater_policy.rs` harness also proves
   representative allow/deny outcomes using the imported production policy.
 
@@ -121,6 +124,8 @@ source modules:
   byte-code mapping and separation of literal and escaped values.
 - The GitHub App identity policy in `crates/gitrun-core/src/app_auth.rs`,
   proving the positive-ID predicate for all u64 values.
+- The GSR event severity enum in `crates/gitrun-gsr/src/events.rs`, proving
+  every severity variant's canonical wire name.
 
 The standalone updater-policy entrypoint also checks representative policy
 outcomes through its imported production module.

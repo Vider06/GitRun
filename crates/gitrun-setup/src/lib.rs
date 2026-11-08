@@ -1,5 +1,8 @@
+#[cfg(not(any(kani, verus)))]
 use gitrun_core::{Config, GitRunSettings};
+#[cfg(not(any(kani, verus)))]
 use sha2::{Digest, Sha256};
+#[cfg(not(any(kani, verus)))]
 use std::{
     collections::BTreeSet,
     fs,
@@ -9,11 +12,14 @@ use std::{
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
+#[cfg(not(any(kani, verus)))]
 mod resources;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct DependencyStatus {
     pub name: &'static str,
     pub available: bool,
@@ -21,6 +27,7 @@ pub struct DependencyStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct SetupReport {
     pub dependencies: Vec<DependencyStatus>,
     pub config_dir: PathBuf,
@@ -29,6 +36,7 @@ pub struct SetupReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub enum BootstrapAuth {
     Pat(String),
     GitHubApp {
@@ -42,6 +50,7 @@ pub enum BootstrapAuth {
 /// receives its path. Open without following symlinks, validate the opened
 /// inode, enforce a bounded regular file, and apply mode 0600 through the
 /// already-open descriptor to avoid chmod/path substitution races.
+#[cfg(not(any(kani, verus)))]
 pub fn secure_github_app_private_key(path: &Path) -> Result<(PathBuf, String), SetupError> {
     use std::io::Read;
     use std::os::unix::fs::OpenOptionsExt;
@@ -106,6 +115,7 @@ pub fn secure_github_app_private_key(path: &Path) -> Result<(PathBuf, String), S
 
 /// Verify that the selected GitHub credentials can access a repository.
 /// Both interactive setup frontends call this same check before elevation.
+#[cfg(not(any(kani, verus)))]
 pub fn verify_github_repository_access(
     auth: &gitrun_core::GitHubAuth,
     repository: &str,
@@ -163,6 +173,7 @@ pub fn verify_github_repository_access(
 
 /// Convert the setup payload to the same authenticated API client used by the
 /// terminal setup, securely reopening App PEMs without following symlinks.
+#[cfg(not(any(kani, verus)))]
 pub fn verify_bootstrap_repository_access(
     auth: &BootstrapAuth,
     repository: &str,
@@ -192,6 +203,7 @@ pub fn verify_bootstrap_repository_access(
 }
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum SetupError {
     #[error("failed to create setup directory: {0}")]
     Io(#[from] std::io::Error),
@@ -215,6 +227,7 @@ pub enum SetupError {
     InvalidRepository(String),
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn check_dependencies() -> Vec<DependencyStatus> {
     vec![
         command_status("docker", &["--version"]),
@@ -224,6 +237,7 @@ pub fn check_dependencies() -> Vec<DependencyStatus> {
     ]
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn prepare_directories(
     config: &Config,
     config_dir: impl Into<PathBuf>,
@@ -258,19 +272,23 @@ pub fn prepare_directories(
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn config_file_path(config_dir: &Path) -> PathBuf {
     config_dir.join("gitrun.env")
 }
 
+#[cfg(not(any(kani, verus)))]
 pub const SETUP_FLAG_PATH: &str = "/etc/gitrun/setup.flag";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub enum InstallationState {
     FirstRun,
     Incomplete,
     Complete,
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn installation_state() -> InstallationState {
     let config_present = Path::new("/etc/gitrun/gitrun.env").is_file();
     let flag_valid = setup_flag_is_valid();
@@ -282,10 +300,12 @@ pub fn installation_state() -> InstallationState {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn setup_flag_path() -> PathBuf {
     PathBuf::from(SETUP_FLAG_PATH)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn setup_flag_is_valid() -> bool {
     let path = setup_flag_path();
     let Ok(metadata) = fs::symlink_metadata(&path) else {
@@ -323,6 +343,7 @@ pub fn setup_flag_is_valid() -> bool {
     setup_flag_contents_are_valid(fs::read_to_string(path))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn setup_flag_contents_are_valid(content: Result<String, std::io::Error>) -> bool {
     match content {
         Ok(content) => parse_setup_flag(&content),
@@ -334,13 +355,24 @@ fn setup_flag_contents_are_valid(content: Result<String, std::io::Error>) -> boo
     }
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns byte.is_ascii_hexdigit()))]
+fn setup_nonce_byte_is_hex(byte: u8) -> bool {
+    byte.is_ascii_hexdigit()
+}
+
+fn setup_nonce_is_valid(value: &str) -> bool {
+    value.len() == 32 && value.bytes().all(setup_nonce_byte_is_hex)
+}
+
 fn parse_setup_flag(content: &str) -> bool {
     let Some(value) = content.trim().strip_prefix("GITRUN_SETUP_COMPLETE=") else {
         return false;
     };
-    value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+    setup_nonce_is_valid(value)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn generate_setup_nonce() -> Result<String, SetupError> {
     use std::io::Read;
     let mut bytes = [0u8; 16];
@@ -349,6 +381,7 @@ fn generate_setup_nonce() -> Result<String, SetupError> {
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn write_setup_flag() -> Result<(), SetupError> {
     let nonce = generate_setup_nonce()?;
     let content = format!("GITRUN_SETUP_COMPLETE={nonce}\n");
@@ -358,6 +391,7 @@ fn write_setup_flag() -> Result<(), SetupError> {
 /// Removes GitRun runtime state and purges its native Server package when present.
 /// Only GitRun-owned Docker objects and app-specific user state are removed; Docker
 /// itself and other host workloads are shared dependencies and are not purged.
+#[cfg(not(any(kani, verus)))]
 pub fn uninstall_linux() -> Result<(), SetupError> {
     validate_uninstall_host()?;
     let registered_package = current_package_manager().ok().and_then(|manager| {
@@ -389,6 +423,7 @@ pub fn uninstall_linux() -> Result<(), SetupError> {
 
 /// Entry point for the .deb maintainer hook. This must not invoke dpkg again:
 /// dpkg owns the package files and removes them immediately after this hook exits.
+#[cfg(not(any(kani, verus)))]
 pub fn uninstall_linux_package_hook() -> Result<(), SetupError> {
     validate_uninstall_host()?;
     cleanup_uninstall_resources(true)?;
@@ -397,6 +432,7 @@ pub fn uninstall_linux_package_hook() -> Result<(), SetupError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_uninstall_host() -> Result<(), SetupError> {
     if !cfg!(target_os = "linux") || !supported_linux_architecture() {
         return Err(SetupError::UnsupportedPlatform);
@@ -407,6 +443,7 @@ fn validate_uninstall_host() -> Result<(), SetupError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn package_is_registered(manager: gitrun_platform::PackageManager, name: &str) -> bool {
     let result = match manager {
         gitrun_platform::PackageManager::Apt => Command::new("/usr/bin/dpkg-query")
@@ -441,6 +478,7 @@ fn package_is_registered(manager: gitrun_platform::PackageManager, name: &str) -
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn package_remove_spec(
     manager: gitrun_platform::PackageManager,
     name: &str,
@@ -472,6 +510,7 @@ fn package_remove_spec(
     Ok((program, args))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn stop_gitrun_services() -> Result<(), SetupError> {
     let Some(manager) = gitrun_platform::detect_service_manager() else {
         return Ok(());
@@ -512,6 +551,7 @@ fn stop_gitrun_services() -> Result<(), SetupError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn cleanup_uninstall_resources(package_owned_files: bool) -> Result<(), SetupError> {
     println!("[GitRun uninstall] Stopping GitRun services through the active init system");
     stop_gitrun_services()?;
@@ -523,6 +563,7 @@ fn cleanup_uninstall_resources(package_owned_files: bool) -> Result<(), SetupErr
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn cleanup_residual_paths(package_owned_files: bool) -> Result<(), SetupError> {
     for path in [
         "/etc/systemd/system/gitrun.service",
@@ -595,6 +636,7 @@ fn cleanup_residual_paths(package_owned_files: bool) -> Result<(), SetupError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn cleanup_user_application_data() -> Result<(), SetupError> {
     const RELATIVE_PATHS: &[&str] = &[
         ".config/dev.gitrun.dashboard",
@@ -646,6 +688,7 @@ fn cleanup_user_application_data() -> Result<(), SetupError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn cleanup_temp_artifacts() -> Result<(), SetupError> {
     let temp_root = std::env::temp_dir();
     let entries = match fs::read_dir(&temp_root) {
@@ -669,6 +712,7 @@ fn cleanup_temp_artifacts() -> Result<(), SetupError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn reload_systemd() -> Result<(), SetupError> {
     if gitrun_platform::detect_service_manager() != Some(gitrun_platform::ServiceManager::Systemd) {
         return Ok(());
@@ -680,6 +724,7 @@ fn reload_systemd() -> Result<(), SetupError> {
     run_command(Command::new(systemctl).args(["daemon-reload"]))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn verify_uninstall_complete() -> Result<(), SetupError> {
     for path in [
         "/usr/bin/gitrun",
@@ -713,6 +758,7 @@ fn verify_uninstall_complete() -> Result<(), SetupError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
     if !command_exists("docker") {
         return Ok(());
@@ -798,6 +844,7 @@ fn remove_gitrun_docker_resources() -> Result<(), SetupError> {
     restore_result
 }
 
+#[cfg(not(any(kani, verus)))]
 fn remove_gitrun_runner_containers_and_home_volumes() -> Result<(), SetupError> {
     let output = Command::new("/usr/bin/docker")
         .args(["ps", "-aq", "--filter", "label=gitrun.runner=true"])
@@ -858,6 +905,7 @@ fn remove_gitrun_runner_containers_and_home_volumes() -> Result<(), SetupError> 
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn remove_volume_if_present(name: &str) -> Result<(), SetupError> {
     let inspect = Command::new("/usr/bin/docker")
         .args(["volume", "inspect", name])
@@ -868,6 +916,7 @@ fn remove_volume_if_present(name: &str) -> Result<(), SetupError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn remove_docker_items(
     list_args: &[&str],
     remove_prefix: &[&str],
@@ -892,6 +941,7 @@ fn remove_docker_items(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn remove_path_if_present(path: &Path) -> Result<(), SetupError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
@@ -910,6 +960,7 @@ fn remove_path_if_present(path: &Path) -> Result<(), SetupError> {
 /// the operator's existing configuration and runtime state. Authentication is
 /// supplied by the caller so no secret is copied into a temporary privileged
 /// request beyond the existing setup flow.
+#[cfg(not(any(kani, verus)))]
 pub fn reinstall_linux_with_auth(
     auth: BootstrapAuth,
     repositories: &str,
@@ -966,6 +1017,7 @@ pub fn reinstall_linux_with_auth(
     Ok(report)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn bootstrap_linux_with_auth(
     auth: BootstrapAuth,
     repositories: &str,
@@ -975,6 +1027,7 @@ pub fn bootstrap_linux_with_auth(
     bootstrap_linux_with_auth_and_profile(auth, repositories, app_binary, owner_uid, "workbench")
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn bootstrap_linux_with_auth_and_profile(
     auth: BootstrapAuth,
     repositories: &str,
@@ -1145,13 +1198,16 @@ pub fn bootstrap_linux_with_auth_and_profile(
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 const SETUP_PROGRESS_TOTAL: u8 = 9;
 
+#[cfg(not(any(kani, verus)))]
 fn setup_progress(step: u8, message: &str) {
     println!("[GitRun setup] [{step}/{SETUP_PROGRESS_TOTAL}] {message}");
     let _ = std::io::stdout().flush();
 }
 
+#[cfg(not(any(kani, verus)))]
 fn find_recovery_binary(app_binary: &Path) -> Option<PathBuf> {
     [
         // This resolver is used while bootstrapping with elevated privileges.
@@ -1170,6 +1226,7 @@ fn find_recovery_binary(app_binary: &Path) -> Option<PathBuf> {
     .find(|path| path.is_file())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn render_bootstrap_config(auth: &BootstrapAuth, repositories: &str) -> String {
     let auth_lines = match auth {
         BootstrapAuth::Pat(token) => format!("GITHUB_TOKEN={}\n", token.trim()),
@@ -1190,6 +1247,7 @@ fn render_bootstrap_config(auth: &BootstrapAuth, repositories: &str) -> String {
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_bootstrap_auth(auth: &BootstrapAuth) -> Result<(), SetupError> {
     match auth {
         BootstrapAuth::Pat(token) => {
@@ -1226,6 +1284,7 @@ fn validate_bootstrap_auth(auth: &BootstrapAuth) -> Result<(), SetupError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_env_value(value: &str, key: &str) -> Result<(), SetupError> {
     if value.trim().is_empty() {
         return Err(SetupError::Command(format!("{key} must not be empty")));
@@ -1241,6 +1300,7 @@ fn validate_env_value(value: &str, key: &str) -> Result<(), SetupError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn current_package_manager() -> Result<gitrun_platform::PackageManager, SetupError> {
     let release = ["/etc/os-release", "/usr/lib/os-release"]
         .iter()
@@ -1262,6 +1322,7 @@ fn current_package_manager() -> Result<gitrun_platform::PackageManager, SetupErr
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn package_install_spec(
     manager: gitrun_platform::PackageManager,
     packages: &[&str],
@@ -1300,6 +1361,7 @@ fn package_install_spec(
     Ok((program, args))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn install_distribution_packages(packages: &[&str]) -> Result<(), SetupError> {
     let manager = current_package_manager()?;
     if manager == gitrun_platform::PackageManager::Apt {
@@ -1309,6 +1371,7 @@ fn install_distribution_packages(packages: &[&str]) -> Result<(), SetupError> {
     run_command(Command::new(program).args(args))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn docker_packages(manager: gitrun_platform::PackageManager) -> &'static [&'static str] {
     match manager {
         gitrun_platform::PackageManager::Apt => &["docker.io", "docker-compose-v2"],
@@ -1324,6 +1387,7 @@ fn docker_packages(manager: gitrun_platform::PackageManager) -> &'static [&'stat
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn buildx_packages(manager: gitrun_platform::PackageManager) -> &'static [&'static [&'static str]] {
     match manager {
         gitrun_platform::PackageManager::Apt => &[&["docker-buildx-plugin"], &["docker-buildx"]],
@@ -1337,6 +1401,7 @@ fn buildx_packages(manager: gitrun_platform::PackageManager) -> &'static [&'stat
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn host_service_active(service: &str) -> bool {
     let Some(manager) = gitrun_platform::detect_service_manager() else {
         return false;
@@ -1370,6 +1435,7 @@ fn host_service_active(service: &str) -> bool {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn start_host_service_temporary(service: &str) -> Result<(), SetupError> {
     let manager = gitrun_platform::detect_service_manager().ok_or_else(|| {
         SetupError::Command("no supported active service manager was detected".into())
@@ -1404,6 +1470,7 @@ fn start_host_service_temporary(service: &str) -> Result<(), SetupError> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn stop_host_service(service: &str) -> Result<(), SetupError> {
     let manager = gitrun_platform::detect_service_manager().ok_or_else(|| {
         SetupError::Command("no supported active service manager was detected".into())
@@ -1433,6 +1500,7 @@ fn stop_host_service(service: &str) -> Result<(), SetupError> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn start_host_service(service: &str) -> Result<(), SetupError> {
     let manager = gitrun_platform::detect_service_manager().ok_or_else(|| {
         SetupError::Command("no supported active service manager was detected".into())
@@ -1464,6 +1532,7 @@ fn start_host_service(service: &str) -> Result<(), SetupError> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn ensure_docker() -> Result<(), SetupError> {
     if command_exists("docker") {
         let _ = start_host_service("docker");
@@ -1491,6 +1560,7 @@ fn ensure_docker() -> Result<(), SetupError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn docker_buildx_ready() -> bool {
     Command::new("/usr/bin/docker")
         .args(["buildx", "version"])
@@ -1501,6 +1571,7 @@ fn docker_buildx_ready() -> bool {
 /// BuildKit is required by GitRun's runner Dockerfiles (RUN --mount=type=cache).
 /// Some distributions ship Docker without the Buildx plugin, so bootstrap it
 /// rather than failing later with the legacy-builder error.
+#[cfg(not(any(kani, verus)))]
 fn ensure_buildx() -> Result<(), SetupError> {
     if docker_buildx_ready() {
         return Ok(());
@@ -1534,10 +1605,12 @@ fn ensure_buildx() -> Result<(), SetupError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn gitrun_service_environment_wrapper(_recovery_installed: bool) -> String {
     resources::GITRUN_SERVICE.to_owned()
 }
 
+#[cfg(not(any(kani, verus)))]
 fn ensure_runit_service_link(service: &str) -> Result<(), SetupError> {
     use std::os::unix::fs::symlink;
 
@@ -1575,6 +1648,7 @@ fn ensure_runit_service_link(service: &str) -> Result<(), SetupError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn install_gitrun_service_definitions(recovery_installed: bool) -> Result<(), SetupError> {
     let manager = gitrun_platform::detect_service_manager().ok_or_else(|| {
         SetupError::Command("no supported active service manager was detected".into())
@@ -1648,6 +1722,7 @@ fn install_gitrun_service_definitions(recovery_installed: bool) -> Result<(), Se
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn start_gitrun_services() -> Result<(), SetupError> {
     let manager = gitrun_platform::detect_service_manager().ok_or_else(|| {
         SetupError::Command("no supported active service manager was detected".into())
@@ -1692,12 +1767,15 @@ fn start_gitrun_services() -> Result<(), SetupError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 const RUNNER_BUILD_FINGERPRINT_LABEL: &str = "io.gitrun.runner.build-input-sha256";
+#[cfg(not(any(kani, verus)))]
 const RUNNER_BUILD_PROFILE_LABEL: &str = "io.gitrun.runner.build-profile";
 
 /// Rebuild the standard local runner image only when the signed release's full
 /// runner build inputs differ from the fingerprint recorded on the current
 /// image. Registry-qualified references stay on the signed-manifest/digest path.
+#[cfg(not(any(kani, verus)))]
 pub fn refresh_local_runner_image_if_stale(image_ref: &str) -> Result<bool, SetupError> {
     refresh_local_runner_image(image_ref, false)
 }
@@ -1705,10 +1783,12 @@ pub fn refresh_local_runner_image_if_stale(image_ref: &str) -> Result<bool, Setu
 /// Rebuild and validate the local runner image even when its recorded build
 /// fingerprint matches the current build inputs. The existing public tag is
 /// promoted only after fingerprint, entrypoint, and runtime-bootstrap checks pass.
+#[cfg(not(any(kani, verus)))]
 pub fn rebuild_local_runner_image(image_ref: &str) -> Result<bool, SetupError> {
     refresh_local_runner_image(image_ref, true)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn refresh_local_runner_image(image_ref: &str, force: bool) -> Result<bool, SetupError> {
     if image_ref.contains('/') {
         if force {
@@ -1743,6 +1823,7 @@ fn refresh_local_runner_image(image_ref: &str, force: bool) -> Result<bool, Setu
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 fn refresh_local_runner_image_if_stale_at_with_force(
     image_ref: &str,
     install_root: &Path,
@@ -1935,6 +2016,7 @@ fn refresh_local_runner_image_if_stale_at_with_force(
     Ok(true)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_local_image_reference(image_ref: &str) -> Result<(), SetupError> {
     if image_ref.is_empty() || image_ref.trim() != image_ref || image_ref.matches(':').count() > 1 {
         return Err(SetupError::Command(format!(
@@ -1962,6 +2044,7 @@ fn validate_local_image_reference(image_ref: &str) -> Result<(), SetupError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn temporary_runner_image_reference(
     image_ref: &str,
     fingerprint: &str,
@@ -1974,6 +2057,7 @@ fn temporary_runner_image_reference(
     Ok(format!("{name}:gitrun-build-{}", &fingerprint[..16]))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn installed_runner_profile(install_root: &Path) -> Result<&'static str, SetupError> {
     let profile_path = install_root.join("runner-profile");
     match fs::symlink_metadata(&profile_path) {
@@ -1997,6 +2081,7 @@ fn installed_runner_profile(install_root: &Path) -> Result<&'static str, SetupEr
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn runner_build_fingerprint(
     profile: &str,
     dockerfile: &str,
@@ -2024,6 +2109,7 @@ fn runner_build_fingerprint(
         .collect()
 }
 
+#[cfg(not(any(kani, verus)))]
 fn inspect_runner_image_label(
     docker_bin: &Path,
     image_ref: &str,
@@ -2052,6 +2138,7 @@ fn inspect_runner_image_label(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn build_image(tag: &str, context: &Path, dockerfile: &Path) -> Result<(), SetupError> {
     // Use Buildx explicitly: docker build may select the legacy builder on
     // otherwise healthy Docker installations, which cannot process cache mounts.
@@ -2063,6 +2150,7 @@ fn build_image(tag: &str, context: &Path, dockerfile: &Path) -> Result<(), Setup
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 fn ensure_directory(path: &Path, mode: u32) -> Result<(), SetupError> {
     if path.exists() && !path.is_dir() {
         return Err(SetupError::InvalidRuntimeDir);
@@ -2072,6 +2160,7 @@ fn ensure_directory(path: &Path, mode: u32) -> Result<(), SetupError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_install_binary(path: &Path, owner_uid: Option<u32>) -> Result<PathBuf, SetupError> {
     let metadata = fs::symlink_metadata(path).map_err(|error| {
         SetupError::InvalidInstallBinary(format!("{}: {error}", path.display()))
@@ -2116,10 +2205,12 @@ fn validate_install_binary(path: &Path, owner_uid: Option<u32>) -> Result<PathBu
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_expected_debian_gitrun_symlink(destination: &Path, target: &Path) -> bool {
     destination == Path::new("/usr/local/bin/gitrun") && target == Path::new("/usr/bin/gitrun")
 }
 
+#[cfg(not(any(kani, verus)))]
 fn install_binary(
     source: &Path,
     destination: &Path,
@@ -2192,6 +2283,7 @@ fn install_binary(
     result
 }
 
+#[cfg(not(any(kani, verus)))]
 fn write_resource(path: &Path, content: &str, mode: u32) -> Result<(), SetupError> {
     use std::io::Write;
 
@@ -2239,6 +2331,7 @@ fn write_resource(path: &Path, content: &str, mode: u32) -> Result<(), SetupErro
     result
 }
 
+#[cfg(not(any(kani, verus)))]
 fn ensure_control_manager_group() -> Result<(), SetupError> {
     let exists = Command::new("/usr/bin/getent")
         .args(["group", "gitrun-control"])
@@ -2260,6 +2353,7 @@ fn ensure_control_manager_group() -> Result<(), SetupError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn add_user_to_control_group(uid: u32) -> Result<(), SetupError> {
     if uid == 0 {
         return Ok(());
@@ -2277,6 +2371,7 @@ fn add_user_to_control_group(uid: u32) -> Result<(), SetupError> {
 
 /// Repair/install the system control service during an elevated installation
 /// or upgrade. The caller must choose the intended desktop operator explicitly.
+#[cfg(not(any(kani, verus)))]
 pub fn ensure_control_manager_service(desktop_uid: Option<u32>) -> Result<(), SetupError> {
     let binary = std::env::current_exe()
         .map_err(|error| SetupError::InvalidInstallBinary(error.to_string()))?;
@@ -2285,6 +2380,7 @@ pub fn ensure_control_manager_service(desktop_uid: Option<u32>) -> Result<(), Se
 
 /// Repair systemd integration using the exact, trusted binary path that the
 /// privileged CLI is updating. Supports both /usr/local and Debian /usr/bin.
+#[cfg(not(any(kani, verus)))]
 pub fn ensure_control_manager_service_with_binary(
     desktop_uid: Option<u32>,
     binary_path: &Path,
@@ -2365,6 +2461,7 @@ pub fn ensure_control_manager_service_with_binary(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn systemd_unit_for_binary(template: &str, binary_path: &Path) -> Result<String, SetupError> {
     let binary = binary_path.to_str().ok_or_else(|| {
         SetupError::InvalidInstallBinary("system binary path is not valid UTF-8".into())
@@ -2377,6 +2474,7 @@ fn systemd_unit_for_binary(template: &str, binary_path: &Path) -> Result<String,
     Ok(template.replace("/usr/local/bin/gitrun ", &format!("{binary} ")))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn add_user_to_docker_group(uid: u32) -> Result<(), SetupError> {
     let user = Command::new("/usr/bin/getent")
         .args(["passwd", &uid.to_string()])
@@ -2389,6 +2487,7 @@ fn add_user_to_docker_group(uid: u32) -> Result<(), SetupError> {
     run_command(Command::new("/usr/sbin/usermod").args(["-aG", "docker", &user]))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn primary_gid_for_uid(uid: u32) -> Result<u32, SetupError> {
     let output = Command::new("/usr/bin/getent")
         .args(["passwd", &uid.to_string()])
@@ -2474,6 +2573,7 @@ fn primary_gid_for_uid(uid: u32) -> Result<u32, SetupError> {
 /// Validate the full directory chain for paths that will contain state or policy
 /// trusted by a privileged service. Checking only the final parent is not enough:
 /// an attacker-writable ancestor can rename a root-owned child directory.
+#[cfg(not(any(kani, verus)))]
 fn validate_root_owned_directory_chain(directory: &Path) -> Result<(), SetupError> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
@@ -2517,12 +2617,14 @@ fn validate_root_owned_directory_chain(directory: &Path) -> Result<(), SetupErro
 
 /// Validate the complete root-owned state directory before any privileged
 /// policy or registry write is attempted.
+#[cfg(not(any(kani, verus)))]
 pub fn validate_system_state_directory(directory: &Path) -> Result<(), SetupError> {
     validate_root_owned_directory_chain(directory)
 }
 
 /// Repair ownership drift from older system installations without recursively
 /// changing user-owned settings, vault contents, or recovery journals.
+#[cfg(not(any(kani, verus)))]
 pub fn repair_installed_runtime_permissions(config_path: &Path) -> Result<(), SetupError> {
     if !cfg!(target_os = "linux") || !supported_linux_architecture() {
         return Err(SetupError::UnsupportedPlatform);
@@ -2599,6 +2701,7 @@ pub fn repair_installed_runtime_permissions(config_path: &Path) -> Result<(), Se
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn repair_system_runtime_directory(
     directory: &Path,
     expected_legacy_owner: Option<u32>,
@@ -2658,10 +2761,12 @@ fn repair_system_runtime_directory(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn trusted_legacy_state_owner(actual_uid: u32, expected_legacy_owner: Option<u32>) -> bool {
     actual_uid == 0 || expected_legacy_owner == Some(actual_uid)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_runtime_directory_path(directory: &Path) -> Result<(), SetupError> {
     if !directory.is_absolute()
         || directory == Path::new("/")
@@ -2680,6 +2785,7 @@ fn validate_runtime_directory_path(directory: &Path) -> Result<(), SetupError> {
 /// Security policy is consumed by the root scheduler to authorize privileged
 /// workflow operations. Never make this file desktop-user-owned or writable:
 /// grant only read access through the desktop user's primary group.
+#[cfg(not(any(kani, verus)))]
 pub fn secure_system_settings_file(
     path: &Path,
     desktop_uid: Option<u32>,
@@ -2728,6 +2834,7 @@ pub fn secure_system_settings_file(
 
 /// Keep the credential-bearing system configuration readable only by root.
 /// Desktop and terminal UIs access it through the persistent Control Manager.
+#[cfg(not(any(kani, verus)))]
 pub fn secure_system_config_file(path: &Path, _desktop_uid: Option<u32>) -> Result<(), SetupError> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
@@ -2760,6 +2867,7 @@ pub fn secure_system_config_file(path: &Path, _desktop_uid: Option<u32>) -> Resu
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn chown_path(path: &Path, uid: u32) -> Result<(), SetupError> {
     run_command(
         Command::new("/usr/bin/chown")
@@ -2768,6 +2876,7 @@ fn chown_path(path: &Path, uid: u32) -> Result<(), SetupError> {
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 fn valid_repo(value: &str) -> bool {
     let Some((owner, repo)) = value.split_once('/') else {
         return false;
@@ -2782,10 +2891,12 @@ fn valid_repo(value: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn supported_linux_architecture() -> bool {
     cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64")
 }
 
+#[cfg(not(any(kani, verus)))]
 fn running_as_root() -> bool {
     Command::new("/usr/bin/id")
         .args(["-u"])
@@ -2794,6 +2905,7 @@ fn running_as_root() -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn trusted_command_path(name: &str) -> Option<&'static str> {
     match name {
         "docker" => Some("/usr/bin/docker"),
@@ -2810,6 +2922,7 @@ fn trusted_command_path(name: &str) -> Option<&'static str> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn command_exists(name: &str) -> bool {
     let Some(path) = trusted_command_path(name) else {
         return false;
@@ -2818,6 +2931,7 @@ fn command_exists(name: &str) -> bool {
         .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn docker_daemon_ready() -> bool {
     Command::new("/usr/bin/docker")
         .arg("info")
@@ -2826,6 +2940,7 @@ fn docker_daemon_ready() -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn docker_daemon_status() -> DependencyStatus {
     if docker_daemon_ready() {
         DependencyStatus {
@@ -2842,6 +2957,7 @@ fn docker_daemon_status() -> DependencyStatus {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn compose_ready() -> bool {
     Command::new("/usr/bin/docker")
         .args(["compose", "version"])
@@ -2850,6 +2966,7 @@ fn compose_ready() -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn compose_status() -> DependencyStatus {
     if compose_ready() {
         DependencyStatus {
@@ -2875,6 +2992,7 @@ fn compose_status() -> DependencyStatus {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn command_status(name: &'static str, args: &[&str]) -> DependencyStatus {
     let Some(path) = trusted_command_path(name) else {
         return DependencyStatus {
@@ -2900,6 +3018,7 @@ fn command_status(name: &'static str, args: &[&str]) -> DependencyStatus {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run_command(command: &mut Command) -> Result<(), SetupError> {
     let display = format!("{command:?}");
     let status = command.status()?;
@@ -2914,6 +3033,7 @@ fn run_command(command: &mut Command) -> Result<(), SetupError> {
 
 /// Persist the dashboard-managed configuration fields to GitRun's env file.
 /// Kept in the setup crate so GUI and CLI use one implementation.
+#[cfg(not(any(kani, verus)))]
 const MANAGED_CONFIG_KEYS: &[&str] = &[
     "GITRUN_REPOSITORIES",
     "GITRUN_MIN_RUNNERS",
@@ -2955,6 +3075,7 @@ const MANAGED_CONFIG_KEYS: &[&str] = &[
     "GITRUN_GSR_ZIZMOR_LICENSE_ACCEPTED",
 ];
 
+#[cfg(not(any(kani, verus)))]
 fn config_env_values(config: &Config) -> Vec<(&'static str, String)> {
     vec![
         ("GITRUN_REPOSITORIES", config.repositories.join(",")),
@@ -3064,6 +3185,7 @@ fn config_env_values(config: &Config) -> Vec<(&'static str, String)> {
     ]
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn update_env_file(path: &Path, config: &Config) -> Result<(), String> {
     config.validate().map_err(|e| e.to_string())?;
     let original = read_existing_env_file(path)?;
@@ -3127,12 +3249,14 @@ pub fn update_env_file(path: &Path, config: &Config) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_valid_env_key(key: &str) -> bool {
     let mut chars = key.chars();
     matches!(chars.next(), Some(c) if c.is_ascii_uppercase() || c == '_')
         && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_existing_env_file(path: &Path) -> Result<String, String> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
@@ -3173,6 +3297,7 @@ fn read_existing_env_file(path: &Path) -> Result<String, String> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_env_file_value(key: &str, value: &str) -> Result<(), String> {
     if value.contains('\n') || value.contains('\r') {
         return Err(format!("{key} must not contain newlines"));
@@ -3181,6 +3306,7 @@ fn validate_env_file_value(key: &str, value: &str) -> Result<(), String> {
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 mod tests {
     use gitrun_platform::PackageManager;
 
@@ -3750,6 +3876,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 mod runner_image_refresh_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
@@ -3952,3 +4079,46 @@ exit 0
         );
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{parse_setup_flag, setup_nonce_byte_is_hex, setup_nonce_is_valid};
+
+    #[kani::proof]
+    fn setup_nonce_hex_alphabet_is_exact() {
+        let byte: u8 = kani::any();
+        assert_eq!(setup_nonce_byte_is_hex(byte), byte.is_ascii_hexdigit());
+    }
+
+    #[kani::proof]
+    fn setup_complete_flag_requires_exact_prefix_and_32_hex_bytes() {
+        assert!(parse_setup_flag("GITRUN_SETUP_COMPLETE=0123456789abcdefABCDEF0123456789\n"));
+        assert!(parse_setup_flag("GITRUN_SETUP_COMPLETE=00000000000000000000000000000000"));
+        assert!(!parse_setup_flag("GITRUN_SETUP_COMPLETE="));
+        assert!(!parse_setup_flag("GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcde"));
+        assert!(!parse_setup_flag("GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdef0"));
+        assert!(!parse_setup_flag("OTHER=0123456789abcdef0123456789abcdef"));
+        assert!(!parse_setup_flag("GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdeg"));
+        assert!(setup_nonce_is_valid("0123456789abcdef0123456789ABCDEF"));
+        assert!(!setup_nonce_is_valid("0123456789abcdef0123456789abcde"));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::setup_nonce_byte_is_hex;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn setup_nonce_hex_alphabet_is_exact(byte: u8)
+            ensures setup_nonce_byte_is_hex(byte) == byte.is_ascii_hexdigit(),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

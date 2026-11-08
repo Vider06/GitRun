@@ -215,18 +215,18 @@ fn runner_floor_is_bounded(configured: u32, proposed: u32, maximum: u32) -> bool
     verus,
     verus_spec(
         returns
-            (byte >= b'a' && byte <= b'z')
-                || (byte >= b'A' && byte <= b'Z')
-                || (byte >= b'0' && byte <= b'9')
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_uppercase()
+                || byte.is_ascii_digit()
                 || byte == b'-'
                 || byte == b'_'
                 || byte == b'.'
     )
 )]
 fn valid_repository_component_byte(byte: u8) -> bool {
-    (byte >= b'a' && byte <= b'z')
-        || (byte >= b'A' && byte <= b'Z')
-        || (byte >= b'0' && byte <= b'9')
+    byte.is_ascii_lowercase()
+        || byte.is_ascii_uppercase()
+        || byte.is_ascii_digit()
         || byte == b'-'
         || byte == b'_'
         || byte == b'.'
@@ -500,9 +500,9 @@ mod kani_verification {
     #[kani::proof]
     fn repository_component_byte_alphabet_is_closed() {
         let byte: u8 = kani::any();
-        let expected = (byte >= b'a' && byte <= b'z')
-            || (byte >= b'A' && byte <= b'Z')
-            || (byte >= b'0' && byte <= b'9')
+        let expected = byte.is_ascii_lowercase()
+            || byte.is_ascii_uppercase()
+            || byte.is_ascii_digit()
             || byte == b'-'
             || byte == b'_'
             || byte == b'.';
@@ -541,9 +541,9 @@ mod verus_verification {
             ensures
                 super::valid_repository_component_byte(byte)
                     == (
-                        (byte >= b'a' && byte <= b'z')
-                            || (byte >= b'A' && byte <= b'Z')
-                            || (byte >= b'0' && byte <= b'9')
+                        byte.is_ascii_lowercase()
+                            || byte.is_ascii_uppercase()
+                            || byte.is_ascii_digit()
                             || byte == b'-'
                             || byte == b'_'
                             || byte == b'.'

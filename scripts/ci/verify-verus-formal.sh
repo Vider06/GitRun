@@ -33,6 +33,7 @@ readonly -a production_sources=(
   "crates/gitrun-smart-scheduler/src/future_mapping.rs"
   "crates/gitrun-gsr/src/bin/gitrun-api.rs"
   "crates/gitrun-updater/src/release_policy.rs"
+  "crates/gitrun-scheduler/src/vm.rs"
 )
 phase=preflight
 

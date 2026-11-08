@@ -22,9 +22,11 @@ class DualVerifierCoverageTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         (self.root / "src").mkdir()
-        self.root.joinpath("verification").mkdir()
+        (self.root / "verification").mkdir()
         self.summary = self.root / "step-summary.md"
         self.report = self.root / "gitrun-dual-verifier-coverage.tsv"
+        self.kani_results = self.root / "gitrun-kani-proof-results.tsv"
+        self.verus_results = self.root / "gitrun-verus-proof-results.tsv"
 
         (self.root / "src/policy.rs").write_text(
             "pub fn accepted() -> bool { true }\n", encoding="utf-8"
@@ -41,15 +43,17 @@ class DualVerifierCoverageTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        self.old_root = DUAL_COVERAGE.ROOT
-        self.old_manifest = DUAL_COVERAGE.MANIFEST
-        self.old_report = DUAL_COVERAGE.REPORT
-        DUAL_COVERAGE.ROOT = self.root
-        DUAL_COVERAGE.MANIFEST = self.root / "verification/source-proof-map.tsv"
-        DUAL_COVERAGE.REPORT = self.report
-        self.addCleanup(setattr, DUAL_COVERAGE, "ROOT", self.old_root)
-        self.addCleanup(setattr, DUAL_COVERAGE, "MANIFEST", self.old_manifest)
-        self.addCleanup(setattr, DUAL_COVERAGE, "REPORT", self.old_report)
+        constants = {
+            "ROOT": self.root,
+            "MANIFEST": self.root / "verification/source-proof-map.tsv",
+            "REPORT": self.report,
+            "KANI_RESULTS": self.kani_results,
+            "VERUS_RESULTS": self.verus_results,
+        }
+        for name, value in constants.items():
+            old_value = getattr(DUAL_COVERAGE, name)
+            setattr(DUAL_COVERAGE, name, value)
+            self.addCleanup(setattr, DUAL_COVERAGE, name, old_value)
 
         self.sources_patch = patch.object(
             DUAL_COVERAGE, "tracked_sources", return_value={"src/policy.rs"}
@@ -80,11 +84,15 @@ class DualVerifierCoverageTests(unittest.TestCase):
     def write_manifest(
         self, rows: list[tuple[str, str, str, str, str, str, str, str]]
     ) -> None:
-        manifest = DUAL_COVERAGE.MANIFEST
-        manifest.parent.mkdir(parents=True, exist_ok=True)
-        with manifest.open("w", encoding="utf-8", newline="") as handle:
+        with DUAL_COVERAGE.MANIFEST.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
             writer.writerow(DUAL_COVERAGE.EXPECTED_HEADER)
+            writer.writerows(rows)
+
+    @staticmethod
+    def write_results(path: Path, rows: list[tuple[str, str]]) -> None:
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
             writer.writerows(rows)
 
     def read_report(self) -> list[dict[str, str]]:
@@ -101,11 +109,11 @@ class DualVerifierCoverageTests(unittest.TestCase):
         self.assertEqual(rows[1][5], "finite Kani cases")
         self.assertEqual(rows[1][7], "IMPLEMENTED")
 
-    def test_implemented_scope_stays_unverified_until_verifier_jobs_run(self) -> None:
+    def test_implemented_scope_stays_unverified_until_both_verifiers_run(self) -> None:
         with patch.object(DUAL_COVERAGE.subprocess, "run") as run:
             result = DUAL_COVERAGE.main()
 
-        self.assertEqual(result, 0)
+        self.assertEqual(result, 1)
         run.assert_not_called()
         self.assertEqual(
             self.read_report(),
@@ -114,16 +122,61 @@ class DualVerifierCoverageTests(unittest.TestCase):
                     "SOURCE_FILE": "src/policy.rs",
                     "KANI_STATUS": "UNVERIFIED",
                     "VERUS_STATUS": "UNVERIFIED",
-                    "SCOPE_STATUS": "IMPLEMENTED",
+                    "SCOPE_STATUS": "UNVERIFIED",
                 }
             ],
         )
         summary = self.summary.read_text(encoding="utf-8")
-        self.assertIn("Formal coverage gate | **OPEN**", summary)
-        self.assertIn("remain UNVERIFIED here", summary)
+        self.assertIn("Formal coverage gate | **CLOSED**", summary)
+        self.assertIn("Awaiting one or both verifier results | 1", summary)
         self.assertNotIn("PROVEN", self.report.read_text(encoding="utf-8"))
 
-    def test_planned_source_keeps_gate_closed_and_is_never_reported_as_proven(self) -> None:
+    def test_source_is_proven_only_after_both_verifiers_succeed(self) -> None:
+        self.write_results(self.kani_results, [("src/policy.rs", "PROVEN")])
+        self.write_results(self.verus_results, [("src/policy.rs", "PROVEN")])
+
+        result = DUAL_COVERAGE.main()
+
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            self.read_report(),
+            [
+                {
+                    "SOURCE_FILE": "src/policy.rs",
+                    "KANI_STATUS": "PROVEN",
+                    "VERUS_STATUS": "PROVEN",
+                    "SCOPE_STATUS": "PROVEN",
+                }
+            ],
+        )
+        self.assertIn("Proven by both Kani and Verus | 1", self.summary.read_text())
+        self.assertIn("Formal coverage gate | **OPEN**", self.summary.read_text())
+
+    def test_one_verifier_failure_never_becomes_proven(self) -> None:
+        self.write_results(self.kani_results, [("src/policy.rs", "PROVEN")])
+        self.write_results(self.verus_results, [("src/policy.rs", "FAILED")])
+
+        result = DUAL_COVERAGE.main()
+
+        self.assertEqual(result, 1)
+        row = self.read_report()[0]
+        self.assertEqual(row["KANI_STATUS"], "PROVEN")
+        self.assertEqual(row["VERUS_STATUS"], "FAILED")
+        self.assertEqual(row["SCOPE_STATUS"], "FAILED")
+        self.assertIn("Failed by at least one verifier | 1", self.summary.read_text())
+
+    def test_one_verifier_success_without_the_other_stays_unverified(self) -> None:
+        self.write_results(self.kani_results, [("src/policy.rs", "PROVEN")])
+
+        result = DUAL_COVERAGE.main()
+
+        self.assertEqual(result, 1)
+        row = self.read_report()[0]
+        self.assertEqual(row["KANI_STATUS"], "PROVEN")
+        self.assertEqual(row["VERUS_STATUS"], "UNVERIFIED")
+        self.assertEqual(row["SCOPE_STATUS"], "UNVERIFIED")
+
+    def test_planned_source_keeps_gate_closed_and_is_not_reported_as_proven(self) -> None:
         self.write_manifest(
             [
                 (
@@ -139,11 +192,9 @@ class DualVerifierCoverageTests(unittest.TestCase):
             ]
         )
 
-        with patch.object(DUAL_COVERAGE.subprocess, "run") as run:
-            result = DUAL_COVERAGE.main()
+        result = DUAL_COVERAGE.main()
 
         self.assertEqual(result, 1)
-        run.assert_not_called()
         row = self.read_report()[0]
         self.assertEqual(row["KANI_STATUS"], "NOT_IN_SCOPE")
         self.assertEqual(row["VERUS_STATUS"], "NOT_IN_SCOPE")
@@ -165,7 +216,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
         self.assertEqual(rows["src/other.rs"]["KANI_STATUS"], "UNVERIFIED")
         self.assertEqual(rows["src/other.rs"]["VERUS_STATUS"], "UNVERIFIED")
         self.assertEqual(rows["src/other.rs"]["SCOPE_STATUS"], "UNMAPPED")
-        self.assertIn("Sources without a manifest mapping | 1", self.summary.read_text())
+        self.assertIn("Sources without a valid mapping | 1", self.summary.read_text())
         self.assertIn("unmapped", self.summary.read_text().lower())
 
     def test_implemented_scope_requires_existing_source_connected_entrypoints(self) -> None:

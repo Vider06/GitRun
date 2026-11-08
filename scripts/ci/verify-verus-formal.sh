@@ -48,6 +48,7 @@ readonly -a production_sources=(
   "crates/gitrun-exe/src/lib.rs"
   "crates/gitrun-smart-scheduler/src/lib.rs"
   "crates/gitrun-updater/src/lib.rs"
+  "crates/gitrun-updater/src/state.rs"
   "crates/gitrun-scheduler/src/gsr_poll.rs"
 )
 phase=preflight

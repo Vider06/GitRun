@@ -1,17 +1,32 @@
+#[cfg(not(any(kani, verus)))]
 pub mod api_service;
+#[cfg(not(any(kani, verus)))]
 pub mod backoff;
+#[cfg(not(any(kani, verus)))]
 pub mod dock_registry;
+#[cfg(not(any(kani, verus)))]
 pub mod docker;
+#[cfg(not(any(kani, verus)))]
 pub mod github;
+#[cfg(not(any(kani, verus)))]
 pub mod gsr_bridge;
+#[cfg(not(any(kani, verus)))]
 pub mod gsr_poll;
+#[cfg(not(any(kani, verus)))]
 pub mod gtuu;
+#[cfg(not(any(kani, verus)))]
 pub mod gtuu_startup;
+#[cfg(not(any(kani, verus)))]
 pub mod logic_containers;
+#[cfg(not(any(kani, verus)))]
 pub mod reconcile;
+#[cfg(not(any(kani, verus)))]
 pub mod resource_pressure;
+#[cfg(not(any(kani, verus)))]
 pub mod state;
+#[cfg(not(any(kani, verus)))]
 pub mod vm;
+#[cfg(not(any(kani, verus)))]
 pub mod vm_resolution;
 
 pub use backoff::RateLimitTracker;
@@ -37,25 +52,40 @@ pub use reconcile::{Action, ReconcileInput};
 // GTUU runs on its own schedule in a background thread, same shape as the
 // Python `gtuu_schedule_loop`.
 
+#[cfg(not(any(kani, verus)))]
 use crate::docker::ManagedContainer;
+#[cfg(not(any(kani, verus)))]
 use crate::gsr_bridge::VaultToGsrBridge;
+#[cfg(not(any(kani, verus)))]
 use crate::gtuu::{GtuuConfig, GtuuLock};
+#[cfg(not(any(kani, verus)))]
 use crate::reconcile::{ContainerHealth, ContainerView, IdleInfo, RunnerView};
+#[cfg(not(any(kani, verus)))]
 use crate::state::SchedulerState;
+#[cfg(not(any(kani, verus)))]
 use crate::vm_resolution::VmResolutionRegistry;
+#[cfg(not(any(kani, verus)))]
 use gitrun_core::{Config, GitHubAuth, StateStore};
+#[cfg(not(any(kani, verus)))]
 use gitrun_vault::Vault;
+#[cfg(not(any(kani, verus)))]
 use std::path::{Path, PathBuf};
+#[cfg(not(any(kani, verus)))]
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[cfg(not(any(kani, verus)))]
 use std::sync::Arc;
+#[cfg(not(any(kani, verus)))]
 use std::time::{Duration, Instant};
 
+#[cfg(not(any(kani, verus)))]
 static CONTAINER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 // Bound per-repository Docker process spawning for Kitty's 30-second telemetry poll.
+#[cfg(not(any(kani, verus)))]
 const MAX_ACTIVE_RESOURCE_SAMPLES_PER_REPOSITORY: usize = 32;
 
 // The scheduler keeps reconciliation in Rust; the legacy Python path is no longer executed.
+#[cfg(not(any(kani, verus)))]
 pub fn run() {
     let stopping = Arc::new(AtomicBool::new(false));
     if let Err(error) = install_signal_handlers(&stopping) {
@@ -257,6 +287,7 @@ pub fn run() {
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn open_protected_pid_file(
     path: &std::path::Path,
     read: bool,
@@ -287,6 +318,7 @@ fn open_protected_pid_file(
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
     use std::io::{Error, ErrorKind, Read, Write};
     use std::os::fd::AsRawFd;
@@ -353,6 +385,7 @@ fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
 }
 
 #[cfg(not(unix))]
+#[cfg(not(any(kani, verus)))]
 fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<Option<std::fs::File>> {
     use std::io::Write;
 
@@ -381,6 +414,7 @@ fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<Option<std::fs::F
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn process_is_alive(pid: u32) -> bool {
     // Never cast an untrusted oversized PID to i32: a negative value to
     // kill(2) targets a process group rather than one process.
@@ -396,10 +430,12 @@ fn process_is_alive(pid: u32) -> bool {
 }
 
 #[cfg(not(unix))]
+#[cfg(not(any(kani, verus)))]
 fn process_is_alive(_pid: u32) -> bool {
     true
 }
 
+#[cfg(not(any(kani, verus)))]
 fn load_config() -> Result<Config, gitrun_core::ConfigError> {
     match std::env::var("GITRUN_CONFIG_FILE") {
         Ok(path) => Config::from_env_file(path),
@@ -413,6 +449,7 @@ fn load_config() -> Result<Config, gitrun_core::ConfigError> {
 /// otherwise falls back to the `GITHUB_TOKEN` PAT, exactly as before App
 /// support existed — so an operator who never touches the new fields sees no
 /// behavior change at all.
+#[cfg(not(any(kani, verus)))]
 fn build_github_client(config: &Config) -> Result<GitHubClient, Box<dyn std::error::Error>> {
     let connect_timeout = Duration::from_secs(config.github_connect_timeout);
     let request_timeout = Duration::from_secs(config.github_request_timeout);
@@ -431,12 +468,14 @@ fn build_github_client(config: &Config) -> Result<GitHubClient, Box<dyn std::err
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn install_signal_handlers(stopping: &Arc<AtomicBool>) -> Result<(), std::io::Error> {
     signal_hook::flag::register(signal_hook::consts::SIGTERM, stopping.clone())?;
     signal_hook::flag::register(signal_hook::consts::SIGINT, stopping.clone())?;
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn sleep_interruptible(total: Duration, stopping: &Arc<AtomicBool>) {
     let deadline = Instant::now() + total;
     loop {
@@ -477,6 +516,7 @@ fn sleep_interruptible(total: Duration, stopping: &Arc<AtomicBool>) {
 /// matched VM's own definition (`VmConfig::is_windows`) rather than being
 /// guessed from the backend shape, since a `Remote` backend alone doesn't
 /// say what OS is on the other end.
+#[cfg(not(any(kani, verus)))]
 fn resolve_backend_and_image(
     config: &Config,
     state_dir: &std::path::Path,
@@ -550,6 +590,7 @@ fn resolve_backend_and_image(
 /// Records that a repo's reconcile cycle panicked/errored hard, so an
 /// operator (or GSR, see `gsr_bridge.rs`) can see the last crash without
 /// having to scroll back through logs.
+#[cfg(not(any(kani, verus)))]
 fn record_crash(state_dir: &std::path::Path, message: &str) -> std::io::Result<()> {
     let now = std::time::SystemTime::now();
     StateStore::new(state_dir)
@@ -557,6 +598,7 @@ fn record_crash(state_dir: &std::path::Path, message: &str) -> std::io::Result<(
         .map_err(|error| std::io::Error::other(error.to_string()))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn kitty_automation_policy(
     config: &Config,
     settings: &gitrun_smart_scheduler::KittySettings,
@@ -576,6 +618,7 @@ fn kitty_automation_policy(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn maybe_fast_stop_workflow(
     client: &GitHubClient,
     config: &Config,
@@ -688,6 +731,7 @@ fn maybe_fast_stop_workflow(
 /// safety work. Suppress whole replacement actions (rather than splitting
 /// remove/create), and suppress scale-down plans computed assuming deferred
 /// creations will succeed.
+#[cfg(not(any(kani, verus)))]
 fn bound_workload_prewarms_to_budget(
     targets: &mut Vec<gitrun_smart_scheduler::WorkloadPrewarm>,
     extra_runner_budget: u32,
@@ -703,6 +747,7 @@ fn bound_workload_prewarms_to_budget(
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn actions_for_resource_pressure(
     actions: Vec<reconcile::Action>,
     allow_creation: bool,
@@ -727,6 +772,7 @@ fn actions_for_resource_pressure(
 
 /// Runs one reconcile cycle for a single repository: snapshot, plan, execute.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 struct KittyObservationCounts {
     queued_jobs: u32,
     busy_runners: u32,
@@ -737,6 +783,7 @@ struct KittyObservationCounts {
 /// Forecast only the runner pool Kitty can actually influence. GitDockRun
 /// targets are served by a reserved pool and must not inflate demand for the
 /// ordinary pool's predictive minimum.
+#[cfg(not(any(kani, verus)))]
 fn kitty_observation_counts(
     queued_job_names: &[String],
     dock_target_jobs: &[String],
@@ -791,16 +838,19 @@ fn kitty_observation_counts(
 }
 
 #[derive(Clone, Copy)]
+#[cfg(not(any(kani, verus)))]
 struct ResourcePressureContext {
     allow_new_runner_creation: bool,
     snapshot: Option<resource_pressure::ResourceSnapshot>,
 }
 
+#[cfg(not(any(kani, verus)))]
 struct ReconcileResourceContext<'a> {
     pressure: ResourcePressureContext,
     adaptive_budget: &'a mut AdaptiveResourceBudgetState,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn reconcile_repo(
     client: &GitHubClient,
     config: &Config,
@@ -1621,6 +1671,7 @@ fn reconcile_repo(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn to_container_view(container: &ManagedContainer) -> ContainerView {
     ContainerView {
         name: container.name.clone(),
@@ -1636,12 +1687,14 @@ fn to_container_view(container: &ManagedContainer) -> ContainerView {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 struct AdaptiveResourceBudgetState {
     enabled: bool,
     budget: Option<AdaptiveResourceBudget>,
     unavailable_reason: Option<String>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl AdaptiveResourceBudgetState {
     fn for_cycle(state_dir: &std::path::Path) -> Self {
         let settings = match gitrun_smart_scheduler::load_settings_for_dashboard(state_dir) {
@@ -1744,6 +1797,7 @@ impl AdaptiveResourceBudgetState {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 struct RunnerResourceAllocation {
     cpus: String,
     memory: String,
@@ -1753,12 +1807,14 @@ struct RunnerResourceAllocation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 struct ContainerResourceReservation {
     cpu_cores: f64,
     memory_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 struct AdaptiveResourceBudget {
     capacity_cpu_cores: f64,
     capacity_memory_bytes: u64,
@@ -1769,6 +1825,7 @@ struct AdaptiveResourceBudget {
     reservations_by_name: std::collections::HashMap<String, ContainerResourceReservation>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl AdaptiveResourceBudget {
     fn from_capacity(
         capacity: resource_pressure::ResourceCapacity,
@@ -1914,6 +1971,7 @@ impl AdaptiveResourceBudget {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn ensure_adaptive_allocation_backend_is_local(
     backend: &docker::DockerHost,
     resource_allocation: Option<&RunnerResourceAllocation>,
@@ -1926,6 +1984,7 @@ fn ensure_adaptive_allocation_backend_is_local(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn ensure_adaptive_resource_backend_is_local(
     state_dir: &std::path::Path,
     job_labels: &[String],
@@ -1957,6 +2016,7 @@ fn ensure_adaptive_resource_backend_is_local(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn adaptive_resource_identity(
     action: &Action,
     inventory: &[docker::ManagedContainer],
@@ -1995,6 +2055,7 @@ fn adaptive_resource_identity(
 }
 
 #[derive(Clone, Copy)]
+#[cfg(not(any(kani, verus)))]
 struct ExecuteContext<'a> {
     client: &'a GitHubClient,
     config: &'a Config,
@@ -2004,6 +2065,7 @@ struct ExecuteContext<'a> {
     workload_routing_profiles: &'a std::collections::HashMap<String, Vec<String>>,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn execute(
     context: &ExecuteContext<'_>,
     inventory: &[docker::ManagedContainer],
@@ -2272,6 +2334,7 @@ fn execute(
 /// ordinary autoscaler recovery. Refuse destructive actions explicitly so
 /// reconciliation stops before later actions can overprovision around a
 /// container it deliberately left in place.
+#[cfg(not(any(kani, verus)))]
 fn ensure_not_dock_bound(
     state_dir: &std::path::Path,
     repo: &str,
@@ -2296,6 +2359,7 @@ fn ensure_not_dock_bound(
     Err(std::io::Error::other(message).into())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn expected_container_id<'a>(
     inventory: &'a [docker::ManagedContainer],
     name: &str,
@@ -2313,6 +2377,7 @@ fn expected_container_id<'a>(
         })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn check_container_identity(
     name: &str,
     expected_id: &str,
@@ -2329,6 +2394,7 @@ fn check_container_identity(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn ensure_current_container_identity(
     name: &str,
     expected_id: &str,
@@ -2339,6 +2405,7 @@ fn ensure_current_container_identity(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn deregister_and_remove(
     client: &GitHubClient,
     repo: &str,
@@ -2359,6 +2426,7 @@ fn deregister_and_remove(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn expected_runner_matches_authorized_id(
     expected_runner_id: Option<u64>,
     observed_runner_id: u64,
@@ -2366,6 +2434,7 @@ fn expected_runner_matches_authorized_id(
     expected_runner_id.is_none_or(|expected| expected == observed_runner_id)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn remove_if_still_idle(
     client: &GitHubClient,
     repo: &str,
@@ -2412,6 +2481,7 @@ fn remove_if_still_idle(
     Ok(true)
 }
 
+#[cfg(not(any(kani, verus)))]
 struct RunnerCreateContext<'a> {
     permanent: bool,
     job_name: Option<&'a str>,
@@ -2424,6 +2494,7 @@ struct RunnerCreateContext<'a> {
     resource_allocation: Option<&'a RunnerResourceAllocation>,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn create_runner(
     client: &GitHubClient,
     config: &Config,
@@ -2603,6 +2674,7 @@ fn create_runner(
     Ok(true)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn load_dock_target_jobs(
     state_dir: &std::path::Path,
     repo: &str,
@@ -2698,6 +2770,7 @@ fn load_dock_target_jobs(
 /// queued job that caused a dynamic runner to be created. This prevents a
 /// dynamically routed runner (for example a Windows/VM runner) from becoming
 /// eligible for an unrelated job after registration.
+#[cfg(not(any(kani, verus)))]
 fn runner_workflow_binding<'a>(
     routed_workload_id: Option<&str>,
     dispatch_route_id: Option<&str>,
@@ -2716,6 +2789,7 @@ fn runner_workflow_binding<'a>(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn runner_labels_for_job(configured: &str, permanent: bool, job_labels: &[String]) -> String {
     if permanent || job_labels.is_empty() {
         return configured.to_owned();
@@ -2747,6 +2821,7 @@ fn runner_labels_for_job(configured: &str, permanent: bool, job_labels: &[String
 /// Adds the stable workload-family routing label to predictive prewarm runners.
 /// Workflows must explicitly request this label in `runs-on` to prefer the
 /// family. It does not and cannot hard-pin a future GitHub run/job ID.
+#[cfg(not(any(kani, verus)))]
 fn explicit_workload_routing_id(job_labels: &[String]) -> Result<Option<String>, std::io::Error> {
     let has_family = gitrun_smart_scheduler::has_workload_routing_marker(job_labels);
     let has_route = gitrun_smart_scheduler::has_dispatch_routing_marker(job_labels);
@@ -2799,6 +2874,7 @@ fn explicit_workload_routing_id(job_labels: &[String]) -> Result<Option<String>,
     Ok(Some(workload_id))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn explicit_dispatch_route_id(job_labels: &[String]) -> Result<Option<String>, std::io::Error> {
     if !gitrun_smart_scheduler::has_dispatch_routing_marker(job_labels) {
         return Ok(None);
@@ -2813,6 +2889,7 @@ fn explicit_dispatch_route_id(job_labels: &[String]) -> Result<Option<String>, s
     Ok(Some(route_id))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn exclusive_workload_routing_label(workload_id: &str) -> Result<String, std::io::Error> {
     let label = format!("gitrun-job-{workload_id}");
     if gitrun_smart_scheduler::workload_id_from_routing_labels(std::slice::from_ref(&label))
@@ -2828,6 +2905,7 @@ fn exclusive_workload_routing_label(workload_id: &str) -> Result<String, std::io
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 mod workload_routing_label_tests {
     use super::*;
 
@@ -2878,6 +2956,7 @@ mod workload_routing_label_tests {
 /// advisory workflow scans. Fetch/persist failures are fatal to this repo's
 /// reconcile cycle; advisory findings and optional zizmor failures remain
 /// warnings and do not replace command enforcement in the runner.
+#[cfg(not(any(kani, verus)))]
 fn validate_repo_workflows_best_effort(
     client: &GitHubClient,
     config: &Config,
@@ -2972,6 +3051,7 @@ fn validate_repo_workflows_best_effort(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn process_workflow_files(
     state_dir: &str,
     repo: &str,
@@ -2996,6 +3076,7 @@ fn process_workflow_files(
     Ok(findings)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn emit_workflow_validation_warning(events_path: &std::path::Path, repo: &str, detail: &str) {
     let message = format!("{repo}: workflow validation warning: {detail}");
     eprintln!("gitrun-autoscaler: {message}");
@@ -3013,6 +3094,7 @@ fn emit_workflow_validation_warning(events_path: &std::path::Path, repo: &str, d
 /// with a placeholder is not injective (for example, owner/repo names containing
 /// underscores can collide after replacing the slash), so security state must use
 /// the original bytes encoded losslessly.
+#[cfg(not(any(kani, verus)))]
 fn repo_storage_key(repo: &str) -> String {
     let mut key = String::with_capacity(repo.len() * 2);
     for byte in repo.bytes() {
@@ -3022,6 +3104,7 @@ fn repo_storage_key(repo: &str) -> String {
     key
 }
 
+#[cfg(not(any(kani, verus)))]
 fn save_workflow_dock_requirements(
     state_dir: &str,
     repo: &str,
@@ -3108,15 +3191,18 @@ fn save_workflow_dock_requirements(
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn sync_directory(path: &std::path::Path) -> std::io::Result<()> {
     std::fs::File::open(path)?.sync_all()
 }
 
 #[cfg(not(unix))]
+#[cfg(not(any(kani, verus)))]
 fn sync_directory(_path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn write_scratch_workflows(
     dir: &std::path::Path,
     files: &[(String, String)],
@@ -3148,6 +3234,7 @@ fn write_scratch_workflows(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn write_scratch_file_atomic(target: &std::path::Path, content: &str) -> std::io::Result<()> {
     use std::io::Write;
     let parent = target.parent().ok_or_else(|| {
@@ -3206,6 +3293,7 @@ fn write_scratch_file_atomic(target: &std::path::Path, content: &str) -> std::io
 /// Failures are logged, not silently swallowed, so an operator relying on a
 /// secret notices it's missing rather than debugging a mysteriously empty
 /// environment variable inside a job.
+#[cfg(not(any(kani, verus)))]
 fn gsr_policy_env(config: &Config) -> Vec<(String, String)> {
     vec![
         (
@@ -3243,6 +3331,7 @@ fn gsr_policy_env(config: &Config) -> Vec<(String, String)> {
     ]
 }
 
+#[cfg(not(any(kani, verus)))]
 fn vault_env_for_repo(
     config: &Config,
     repo: &str,
@@ -3295,17 +3384,34 @@ fn vault_env_for_repo(
 /// technically requires, but there's no reason a secret's env var name
 /// should need anything looser, and being strict here is cheap insurance
 /// against shell-metacharacter or injection surprises downstream.
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns if first { byte.is_ascii_uppercase() || byte == b'_' }
+        else { byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_' }
+    )
+)]
+fn env_var_name_byte_is_valid(byte: u8, first: bool) -> bool {
+    if first {
+        byte.is_ascii_uppercase() || byte == b'_'
+    } else {
+        byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
+    }
+}
+
 fn is_valid_env_var_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_uppercase() || c == '_' => {}
+    let mut bytes = name.bytes();
+    match bytes.next() {
+        Some(byte) if env_var_name_byte_is_valid(byte, true) => {}
         _ => return false,
     }
-    chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+    bytes.all(|byte| env_var_name_byte_is_valid(byte, false))
 }
 
 /// Unique-enough suffix for container names without adding a dependency:
 /// epoch milliseconds + process ID + an atomic per-process sequence.
+#[cfg(not(any(kani, verus)))]
 fn uuid_like_suffix() -> String {
     let epoch_millis = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -3317,6 +3423,7 @@ fn uuid_like_suffix() -> String {
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn unix_gid_of_docker_socket() -> String {
     use std::os::unix::fs::MetadataExt;
     std::fs::metadata("/var/run/docker.sock")
@@ -3325,6 +3432,7 @@ fn unix_gid_of_docker_socket() -> String {
 }
 
 #[cfg(not(unix))]
+#[cfg(not(any(kani, verus)))]
 fn unix_gid_of_docker_socket() -> String {
     String::new()
 }
@@ -3336,6 +3444,7 @@ fn unix_gid_of_docker_socket() -> String {
 /// group membership it needs to actually use the socket). Distinguishes the
 /// two real failure modes explicitly: socket missing (Docker not ready /
 /// wrong path) vs. its metadata being unreadable for some other reason.
+#[cfg(not(any(kani, verus)))]
 fn resolve_docker_socket_gid() -> Result<String, Box<dyn std::error::Error>> {
     let socket_path = std::path::Path::new("/var/run/docker.sock");
     if !socket_path.exists() {
@@ -3356,6 +3465,7 @@ fn resolve_docker_socket_gid() -> Result<String, Box<dyn std::error::Error>> {
     Ok(gid)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
     run_gtuu_with_options(None, false, false, false)
 }
@@ -3364,6 +3474,7 @@ pub fn run_gtuu_once() -> Result<u32, Box<dyn std::error::Error>> {
 /// `check_only` performs a read-only image/container inventory; `force_rebuild`
 /// rebuilds the validated local image, and `force_replace` replaces matching
 /// permanent runners even when their image IDs already match.
+#[cfg(not(any(kani, verus)))]
 pub fn run_gtuu_with_options(
     repository_filter: Option<&str>,
     force_rebuild: bool,
@@ -3457,6 +3568,7 @@ pub fn run_gtuu_with_options(
         force_replace,
     )?)
 }
+#[cfg(not(any(kani, verus)))]
 fn spawn_gtuu_thread(_config: &Config, stopping: &Arc<AtomicBool>) -> std::io::Result<()> {
     let stopping = stopping.clone();
 
@@ -3518,6 +3630,7 @@ fn spawn_gtuu_thread(_config: &Config, stopping: &Arc<AtomicBool>) -> std::io::R
 /// there is no policy to enforce and this thread has nothing to do, so it
 /// isn't started at all rather than spun up to immediately no-op every
 /// tick.
+#[cfg(not(any(kani, verus)))]
 fn spawn_gsr_poll_thread(
     config: &Config,
     vm_registry: &VmResolutionRegistry,
@@ -3589,11 +3702,13 @@ fn spawn_gsr_poll_thread(
 /// isn't available or its output can't be parsed, so a minimal container
 /// missing the `date` binary degrades to the old (UTC) behavior instead of
 /// breaking GTUU scheduling entirely.
+#[cfg(not(any(kani, verus)))]
 struct SimpleNow {
     time_hhmm: String,
     date: String,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn chrono_like_now(use_local: bool) -> SimpleNow {
     if use_local {
         if let Some(now) = local_now_via_date_command() {
@@ -3611,6 +3726,7 @@ fn chrono_like_now(use_local: bool) -> SimpleNow {
 /// consistent across a midnight boundary. Returns `None` on any failure —
 /// binary missing, non-zero exit, unparseable output — so the caller can
 /// fall back rather than panic.
+#[cfg(not(any(kani, verus)))]
 fn local_now_via_date_command() -> Option<SimpleNow> {
     let output = std::process::Command::new("date")
         .arg("+%H:%M %Y-%m-%d")
@@ -3630,6 +3746,7 @@ fn local_now_via_date_command() -> Option<SimpleNow> {
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn utc_now() -> SimpleNow {
     // SAFETY-note-in-comment-form (not unsafe code): uses only libc via the
     // standard library's SystemTime + a manual civil-from-days calculation,
@@ -3665,6 +3782,7 @@ fn utc_now() -> SimpleNow {
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 mod tests {
     use super::*;
 
@@ -3951,6 +4069,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 mod resource_pressure_reconciliation_tests {
     use super::*;
     use crate::reconcile::Action;
@@ -4345,6 +4464,7 @@ mod resource_pressure_reconciliation_tests {
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 mod reconcile_identity_pin_tests {
     use super::*;
 
@@ -4470,3 +4590,60 @@ mod reconcile_identity_pin_tests {
         assert!(expected_container_id(&inventory, "runner").is_err());
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{env_var_name_byte_is_valid, is_valid_env_var_name};
+
+    #[kani::proof]
+    fn environment_variable_byte_alphabet_is_exact() {
+        let byte: u8 = kani::any();
+        assert_eq!(
+            env_var_name_byte_is_valid(byte, true),
+            byte.is_ascii_uppercase() || byte == b'_'
+        );
+        assert_eq!(
+            env_var_name_byte_is_valid(byte, false),
+            byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
+        );
+    }
+
+    #[kani::proof]
+    fn environment_variable_names_follow_shell_identifier_rules() {
+        assert!(is_valid_env_var_name("A"));
+        assert!(is_valid_env_var_name("_"));
+        assert!(is_valid_env_var_name("_GITRUN_1"));
+        assert!(is_valid_env_var_name("GITRUN2"));
+        assert!(!is_valid_env_var_name(""));
+        assert!(!is_valid_env_var_name("1GITRUN"));
+        assert!(!is_valid_env_var_name("gitrun"));
+        assert!(!is_valid_env_var_name("GIT-RUN"));
+        assert!(!is_valid_env_var_name("GIT.RUN"));
+        assert!(!is_valid_env_var_name("GIT RUN"));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::env_var_name_byte_is_valid;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn environment_variable_byte_alphabet_is_exact(byte: u8, first: bool)
+            ensures
+                env_var_name_byte_is_valid(byte, first)
+                    == if first {
+                        byte.is_ascii_uppercase() || byte == b'_'
+                    } else {
+                        byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
+                    },
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

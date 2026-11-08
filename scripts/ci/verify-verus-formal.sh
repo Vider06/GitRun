@@ -11,6 +11,7 @@ readonly -a production_sources=(
   "crates/gitrun-smart-scheduler/src/queueing.rs"
   "crates/gitrun-core/src/workflow_validation.rs"
   "crates/gitrun-gsr/src/automation_gate.rs"
+  "crates/gitrun-core/src/command_policy.rs"
 )
 
 if [[ ! -x "$verus" ]]; then

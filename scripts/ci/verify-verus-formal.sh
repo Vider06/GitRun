@@ -31,6 +31,7 @@ readonly -a production_sources=(
   "crates/gitrun-core/src/compatibility.rs"
   "crates/gitrun-core/src/settings.rs"
   "crates/gitrun-smart-scheduler/src/future_mapping.rs"
+  "crates/gitrun-gsr/src/bin/gitrun-api.rs"
 )
 phase=preflight
 

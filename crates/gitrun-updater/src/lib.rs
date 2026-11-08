@@ -4486,9 +4486,8 @@ mod kani_verification {
         assert!(is_sha256_digest(
             "sha256:ABCDEF0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789"
         ));
-        assert!(!is_sha256_digest(
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-        ));
+        let unprefixed_digest = "a".repeat(64);
+        assert!(!is_sha256_digest(&unprefixed_digest));
         assert!(!is_sha256_digest(
             "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde"
         ));

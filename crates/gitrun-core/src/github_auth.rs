@@ -1,10 +1,14 @@
 //! Authentication source selection shared by GitRun frontends and services.
 
+#[cfg(not(any(kani, verus)))]
 use crate::{app_auth::AppAuth, Config, ConfigError};
+#[cfg(not(any(kani, verus)))]
 use std::{fs, path::Path};
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum GitHubAuthError {
     #[error("GITHUB_TOKEN is not configured and no GitHub App authentication is configured")]
     MissingCredentials,
@@ -26,11 +30,13 @@ pub enum GitHubAuthError {
     Config(#[from] ConfigError),
 }
 
+#[cfg(not(any(kani, verus)))]
 pub enum GitHubAuth {
     Pat(String),
     App(AppAuth),
 }
 
+#[cfg(not(any(kani, verus)))]
 impl GitHubAuth {
     pub fn from_config(config: &Config) -> Result<Self, GitHubAuthError> {
         config.validate()?;
@@ -77,6 +83,7 @@ impl GitHubAuth {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_env_file_value(path: &Path, wanted_key: &str) -> Result<String, GitHubAuthError> {
     let content = fs::read_to_string(path).map_err(|source| GitHubAuthError::EnvFileIo {
         path: path.display().to_string(),
@@ -103,12 +110,21 @@ fn read_env_file_value(path: &Path, wanted_key: &str) -> Result<String, GitHubAu
     found.ok_or(GitHubAuthError::MissingCredentials)
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'')
+    )
+)]
+fn has_matching_quote_bytes(first: u8, last: u8) -> bool {
+    (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'')
+}
+
 fn unquote(value: &str) -> String {
     if value.len() >= 2 {
         let bytes = value.as_bytes();
-        let first = bytes[0];
-        let last = bytes[value.len() - 1];
-        if (first == 34 && last == 34) || (first == 39 && last == 39) {
+        if has_matching_quote_bytes(bytes[0], bytes[value.len() - 1]) {
             return value[1..value.len() - 1].to_owned();
         }
     }
@@ -179,3 +195,47 @@ mod tests {
         assert!(matches!(auth, GitHubAuth::Pat(token) if token == "token"));
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{has_matching_quote_bytes, unquote};
+
+    #[kani::proof]
+    fn matching_quote_bytes_is_exact_over_all_byte_pairs() {
+        let first: u8 = kani::any();
+        let last: u8 = kani::any();
+        let expected = (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'');
+        assert_eq!(has_matching_quote_bytes(first, last), expected);
+    }
+
+    #[kani::proof]
+    fn env_token_unquoting_preserves_unmatched_and_unquoted_values() {
+        assert!(unquote("\"token\"") == "token");
+        assert!(unquote("'token'") == "token");
+        assert!(unquote("\"token'") == "\"token'");
+        assert!(unquote("'token\"") == "'token\"");
+        assert!(unquote("token") == "token");
+        assert!(unquote("\"\"") == "");
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::has_matching_quote_bytes;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn matching_quote_bytes_is_exact_over_all_byte_pairs(first: u8, last: u8)
+            ensures
+                has_matching_quote_bytes(first, last)
+                    == ((first == b'"' && last == b'"') || (first == b'\'' && last == b'\\''))
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

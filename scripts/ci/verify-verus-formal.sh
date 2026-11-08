@@ -17,6 +17,7 @@ readonly -a production_sources=(
   "crates/gitrun-core/src/app_auth.rs"
   "crates/gitrun-gsr/src/events.rs"
   "crates/gitrun-gsr/src/agent.rs"
+  "crates/gitrun-scheduler/src/docker.rs"
 )
 phase=preflight
 

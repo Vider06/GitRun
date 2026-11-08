@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Audit source ownership and the declared dual-verifier proof scope.
+"""Fail-closed source inventory and dual-verifier result audit.
 
-This is a fail-closed preflight, not a verifier. Kani and Verus are executed by
-their dedicated CI scripts. This audit confirms that every IMPLEMENTED row
-points to real, source-connected proof entrypoints and keeps the overall gate
-closed while any tracked source remains PLANNED or unmapped.
+This preflight checks that each IMPLEMENTED scope is connected to production
+code, then combines the per-source Kani and Verus execution records. A source is
+PROVEN only when both tools have recorded a successful result for that source.
 """
 
 from __future__ import annotations
@@ -18,7 +17,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "verification/source-proof-map.tsv"
-REPORT = Path(os.environ.get("RUNNER_TEMP", "/tmp")) / "gitrun-dual-verifier-coverage.tsv"
+RUNNER_TEMP = Path(os.environ.get("RUNNER_TEMP", "/tmp"))
+REPORT = RUNNER_TEMP / "gitrun-dual-verifier-coverage.tsv"
+KANI_RESULTS = RUNNER_TEMP / "gitrun-kani-proof-results.tsv"
+VERUS_RESULTS = RUNNER_TEMP / "gitrun-verus-proof-results.tsv"
 EXPECTED_HEADER = [
     "SOURCE_FILE",
     "KANI_ENTRYPOINT",
@@ -30,6 +32,7 @@ EXPECTED_HEADER = [
     "STATUS",
 ]
 PATH_ATTRIBUTE = re.compile(r'#\s*\[\s*path\s*=\s*["\']([^"\']+)["\']\s*\]')
+VALID_RESULTS = {"PROVEN", "FAILED", "UNVERIFIED"}
 
 
 def tracked_sources() -> set[str]:
@@ -40,6 +43,21 @@ def tracked_sources() -> set[str]:
         stdout=subprocess.PIPE,
     )
     return {item.decode() for item in result.stdout.split(b"\0") if item}
+
+
+def read_results(path: Path) -> dict[str, str]:
+    results: dict[str, str] = {}
+    try:
+        with path.open(encoding="utf-8", newline="") as handle:
+            for row in csv.reader(handle, delimiter="\t"):
+                if len(row) != 2:
+                    continue
+                source, status = row
+                if status in VALID_RESULTS:
+                    results[source] = status
+    except FileNotFoundError:
+        return {}
+    return results
 
 
 def references_source(entrypoint: str, source: str) -> bool:
@@ -72,7 +90,18 @@ def has_proof_construct(entrypoint: str, tool: str) -> bool:
 def write_report(
     sources: set[str], rows: dict[str, tuple[str, ...]]
 ) -> dict[str, int]:
-    counts = {"IMPLEMENTED": 0, "PLANNED": 0, "UNMAPPED": 0}
+    kani_results = read_results(KANI_RESULTS)
+    verus_results = read_results(VERUS_RESULTS)
+    counts = {
+        "IMPLEMENTED": 0,
+        "PLANNED": 0,
+        "UNMAPPED": 0,
+        "PROVEN": 0,
+        "FAILED": 0,
+        "UNVERIFIED": 0,
+        "KANI_PROVEN": 0,
+        "VERUS_PROVEN": 0,
+    }
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     with REPORT.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
@@ -85,13 +114,35 @@ def write_report(
                 counts["UNMAPPED"] += 1
                 writer.writerow([source, "UNVERIFIED", "UNVERIFIED", "UNMAPPED"])
                 continue
+
             scope = mapping[7]
-            if scope in counts:
-                counts[scope] += 1
-            # Inventory and source-closure checks are not verifier evidence.
-            # Even IMPLEMENTED scopes remain UNVERIFIED until Kani and Verus run.
-            status = "UNVERIFIED" if scope == "IMPLEMENTED" else "NOT_IN_SCOPE"
-            writer.writerow([source, status, status, scope])
+            if scope == "PLANNED":
+                counts["PLANNED"] += 1
+                writer.writerow([source, "NOT_IN_SCOPE", "NOT_IN_SCOPE", "PLANNED"])
+                continue
+            if scope != "IMPLEMENTED":
+                counts["UNMAPPED"] += 1
+                writer.writerow([source, "UNVERIFIED", "UNVERIFIED", "INVALID_STATUS"])
+                continue
+
+            counts["IMPLEMENTED"] += 1
+            kani_status = kani_results.get(source, "UNVERIFIED")
+            verus_status = verus_results.get(source, "UNVERIFIED")
+            if kani_status == "PROVEN":
+                counts["KANI_PROVEN"] += 1
+            if verus_status == "PROVEN":
+                counts["VERUS_PROVEN"] += 1
+
+            if kani_status == "PROVEN" and verus_status == "PROVEN":
+                scope_status = "PROVEN"
+                counts["PROVEN"] += 1
+            elif "FAILED" in (kani_status, verus_status):
+                scope_status = "FAILED"
+                counts["FAILED"] += 1
+            else:
+                scope_status = "UNVERIFIED"
+                counts["UNVERIFIED"] += 1
+            writer.writerow([source, kani_status, verus_status, scope_status])
     return counts
 
 
@@ -99,22 +150,35 @@ def write_summary(counts: dict[str, int], total: int, issues: list[str]) -> None
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if not summary:
         return
-    gate = "OPEN" if not counts["PLANNED"] and not counts["UNMAPPED"] and not issues else "CLOSED"
+    gate = (
+        "OPEN"
+        if counts["PROVEN"] == total
+        and not counts["PLANNED"]
+        and not counts["UNMAPPED"]
+        and not counts["FAILED"]
+        and not counts["UNVERIFIED"]
+        and not issues
+        else "CLOSED"
+    )
     with Path(summary).open("a", encoding="utf-8") as handle:
-        handle.write("### Dual-verifier source-scope audit\n\n")
+        handle.write("### Dual-verifier source proof results\n\n")
         handle.write("| Metric | Result |\n|---|---:|\n")
         handle.write(f"| Tracked Rust source files | {total} |\n")
         handle.write(f"| Proof scopes declared IMPLEMENTED | {counts['IMPLEMENTED']} |\n")
+        handle.write(f"| Kani successful source proofs | {counts['KANI_PROVEN']} |\n")
+        handle.write(f"| Verus successful source proofs | {counts['VERUS_PROVEN']} |\n")
+        handle.write(f"| Proven by both Kani and Verus | {counts['PROVEN']} |\n")
+        handle.write(f"| Failed by at least one verifier | {counts['FAILED']} |\n")
+        handle.write(f"| Awaiting one or both verifier results | {counts['UNVERIFIED']} |\n")
         handle.write(f"| Proof scopes still PLANNED | {counts['PLANNED']} |\n")
-        handle.write(f"| Sources without a manifest mapping | {counts['UNMAPPED']} |\n")
+        handle.write(f"| Sources without a valid mapping | {counts['UNMAPPED']} |\n")
         handle.write(f"| Manifest / ownership issues | {len(issues)} |\n")
         handle.write(f"| Formal coverage gate | **{gate}** |\n\n")
         handle.write(
-            "This preflight checks source ownership and entrypoint linkage only. "
-            "It never reports PROVEN: IMPLEMENTED entries remain UNVERIFIED here "
-            "until their dedicated Kani and Verus executions succeed. PLANNED "
-            "entries remain NOT_IN_SCOPE. The gate stays closed while any source "
-            "is planned or unmapped.\n\n"
+            "PROVEN requires successful Kani and Verus results for the same "
+            "tracked source. One verifier cannot substitute for the other. "
+            "IMPLEMENTED is a declaration that proof entrypoints exist; it is "
+            "not proof evidence. PLANNED and missing results keep the gate closed.\n\n"
         )
 
 
@@ -197,11 +261,19 @@ def main() -> int:
         )
     if counts["UNMAPPED"]:
         issues.append(f"{counts['UNMAPPED']} tracked Rust source files are unmapped.")
+    if counts["FAILED"]:
+        issues.append(f"{counts['FAILED']} source scopes failed at least one formal verifier.")
+    if counts["UNVERIFIED"]:
+        issues.append(
+            f"{counts['UNVERIFIED']} implemented source scopes lack successful results "
+            "from both Kani and Verus."
+        )
     write_summary(counts, len(sources), issues)
 
     print(
         f"Audited {len(sources)} tracked Rust sources: "
-        f"{counts['IMPLEMENTED']} declared proof scopes implemented, "
+        f"{counts['PROVEN']} proven by both tools, "
+        f"{counts['FAILED']} failed, {counts['UNVERIFIED']} unverified, "
         f"{counts['PLANNED']} planned, {counts['UNMAPPED']} unmapped."
     )
     if issues:
@@ -210,8 +282,8 @@ def main() -> int:
         return 1
 
     print(
-        "Every tracked Rust source has an implemented and connected proof scope. "
-        "Verifier results are reported only by the Kani and Verus execution jobs."
+        "Every tracked Rust source is proven by both Kani and Verus. "
+        "No manifest declaration alone is treated as proof evidence."
     )
     return 0
 

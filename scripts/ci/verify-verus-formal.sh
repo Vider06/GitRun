@@ -20,6 +20,7 @@ readonly -a production_sources=(
   "crates/gitrun-scheduler/src/docker.rs"
   "crates/gitrun-management/src/control_manager.rs"
   "crates/gitrun-core/src/github_auth.rs"
+  "crates/gitrun-core/src/config.rs"
 )
 phase=preflight
 

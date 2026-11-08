@@ -9,6 +9,7 @@ readonly -a production_sources=(
   "crates/gitrun-recovery/src/json_recovery.rs"
   "crates/gitrun-scheduler/src/backoff.rs"
   "crates/gitrun-smart-scheduler/src/queueing.rs"
+  "crates/gitrun-core/src/workflow_validation.rs"
 )
 
 if [[ ! -x "$verus" ]]; then

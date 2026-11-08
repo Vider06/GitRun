@@ -99,6 +99,7 @@ def write_report(
         "PROVEN": 0,
         "FAILED": 0,
         "UNVERIFIED": 0,
+        "NOT_APPLICABLE": 0,
         "KANI_PROVEN": 0,
         "VERUS_PROVEN": 0,
     }
@@ -116,6 +117,12 @@ def write_report(
                 continue
 
             scope = mapping[7]
+            if scope == "NOT_APPLICABLE":
+                counts["NOT_APPLICABLE"] += 1
+                writer.writerow(
+                    [source, "NOT_APPLICABLE", "NOT_APPLICABLE", "NOT_APPLICABLE"]
+                )
+                continue
             if scope == "PLANNED":
                 counts["PLANNED"] += 1
                 writer.writerow([source, "NOT_IN_SCOPE", "NOT_IN_SCOPE", "PLANNED"])
@@ -152,7 +159,7 @@ def write_summary(counts: dict[str, int], total: int, issues: list[str]) -> None
         return
     gate = (
         "OPEN"
-        if counts["PROVEN"] == total
+        if counts["PROVEN"] + counts["NOT_APPLICABLE"] == total
         and not counts["PLANNED"]
         and not counts["UNMAPPED"]
         and not counts["FAILED"]
@@ -170,6 +177,7 @@ def write_summary(counts: dict[str, int], total: int, issues: list[str]) -> None
         handle.write(f"| Proven by both Kani and Verus | {counts['PROVEN']} |\n")
         handle.write(f"| Failed by at least one verifier | {counts['FAILED']} |\n")
         handle.write(f"| Awaiting one or both verifier results | {counts['UNVERIFIED']} |\n")
+        handle.write(f"| Formally NOT_APPLICABLE with documented reason | {counts['NOT_APPLICABLE']} |\n")
         handle.write(f"| Proof scopes still PLANNED | {counts['PLANNED']} |\n")
         handle.write(f"| Sources without a valid mapping | {counts['UNMAPPED']} |\n")
         handle.write(f"| Manifest / ownership issues | {len(issues)} |\n")
@@ -178,7 +186,9 @@ def write_summary(counts: dict[str, int], total: int, issues: list[str]) -> None
             "PROVEN requires successful Kani and Verus results for the same "
             "tracked source. One verifier cannot substitute for the other. "
             "IMPLEMENTED is a declaration that proof entrypoints exist; it is "
-            "not proof evidence. PLANNED and missing results keep the gate closed.\n\n"
+            "not proof evidence. NOT_APPLICABLE entries are never counted as "
+            "PROVEN and require a documented tool-scope limitation. PLANNED and "
+            "missing results keep the gate closed.\n\n"
         )
 
 
@@ -224,8 +234,18 @@ def main() -> int:
                 issues.append(
                     f"Manifest line {line}: source and all proof-scope descriptions are required."
                 )
-            if status not in {"PLANNED", "IMPLEMENTED"}:
+            if status not in {"PLANNED", "IMPLEMENTED", "NOT_APPLICABLE"}:
                 issues.append(f"Manifest line {line}: invalid scope status {status!r}.")
+            if status == "NOT_APPLICABLE":
+                if kani or verus:
+                    issues.append(
+                        f"Manifest line {line}: NOT_APPLICABLE scopes must not declare verifier entrypoints."
+                    )
+                rationale = " ".join((scope, kani_obligations, kani_cases, verus_obligations)).lower()
+                if "not applicable" not in rationale:
+                    issues.append(
+                        f"Manifest line {line}: NOT_APPLICABLE scope lacks an explicit tool limitation."
+                    )
             if status == "IMPLEMENTED":
                 for tool, entrypoint in (("KANI", kani), ("VERUS", verus)):
                     if not entrypoint:
@@ -274,7 +294,8 @@ def main() -> int:
         f"Audited {len(sources)} tracked Rust sources: "
         f"{counts['PROVEN']} proven by both tools, "
         f"{counts['FAILED']} failed, {counts['UNVERIFIED']} unverified, "
-        f"{counts['PLANNED']} planned, {counts['UNMAPPED']} unmapped."
+        f"{counts['NOT_APPLICABLE']} not applicable, {counts['PLANNED']} planned, "
+        f"{counts['UNMAPPED']} unmapped."
     )
     if issues:
         for issue in issues[:200]:
@@ -282,7 +303,8 @@ def main() -> int:
         return 1
 
     print(
-        "Every tracked Rust source is proven by both Kani and Verus. "
+        "Every applicable tracked Rust source is proven by both Kani and Verus; "
+        "non-applicable files have explicit tool-scope rationales. "
         "No manifest declaration alone is treated as proof evidence."
     )
     return 0

@@ -65,6 +65,7 @@ readonly required_harnesses=(
   "repository_identity_requires_exactly_two_safe_segments"
   "setup_nonce_hex_alphabet_is_exact"
   "setup_complete_flag_requires_exact_prefix_and_32_hex_bytes"
+  "noop_backend_rejects_every_declared_api_operation_pair"
   "platform_abi_and_package_manager_names_are_stable"
   "managed_service_names_do_not_cross_service_boundaries"
   "ban_expiry_timestamp_saturates_for_all_u64_inputs"
@@ -226,6 +227,7 @@ readonly -a proof_sources=(
   "crates/gitrun-scheduler/src/lib.rs"
   "crates/gitrun-scheduler/src/state.rs"
   "crates/gitrun-setup/src/lib.rs"
+  "crates/gitrun-exe/src/lib.rs"
   "crates/gitrun-scheduler/src/gsr_poll.rs"
 )
 

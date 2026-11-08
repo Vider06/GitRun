@@ -33,6 +33,7 @@ readonly required_harnesses=(
   "repository_component_byte_alphabet_is_exact"
   "config_id_and_repository_boundaries_are_exact"
   "bounded_runner_target_respects_limits_for_all_u32_inputs"
+  "only_rfc1918_ipv4_octets_are_accepted"
 )
 readonly policy_harness="verification/kani/updater_policy.rs"
 readonly inventory="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-rust-source-inventory.tsv"
@@ -166,6 +167,7 @@ readonly -a proof_sources=(
   "crates/gitrun-core/src/github_auth.rs"
   "crates/gitrun-core/src/config.rs"
   "crates/gitrun-scheduler/src/reconcile.rs"
+  "crates/gitrun-scheduler/src/vm_resolution.rs"
 )
 
 for source in "${proof_sources[@]}"; do

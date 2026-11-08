@@ -92,6 +92,8 @@ record_result() {
   printf '%s\t%s\n' "$source" "$status" >> "$results"
 }
 
+proof_failures=0
+
 run_kani_target() {
   local entrypoint="$1"
   shift
@@ -103,11 +105,13 @@ run_kani_target() {
     done
   else
     local rc=$?
+    proof_failures=$((proof_failures + 1))
     for source in "${sources[@]}"; do
       record_result "$source" FAILED
     done
-    return "$rc"
+    echo "Kani target failed: $entrypoint (exit $rc); continuing to inspect remaining production proof targets." >&2
   fi
+  return 0
 }
 
 finish_formal_report() {
@@ -289,5 +293,10 @@ run_kani_target "$policy_harness" \
 for source in "${proof_sources[@]}"; do
   run_kani_target "$source" "$source"
 done
+
+if [ "$proof_failures" -ne 0 ]; then
+  echo "Kani found $proof_failures failing production proof target(s); see the per-source diagnostics above." >&2
+  exit 1
+fi
 
 phase=complete

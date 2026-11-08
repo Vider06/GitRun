@@ -62,6 +62,13 @@ def build_server_package(args: argparse.Namespace) -> Path:
             f"XBPS REMOVE hook for {args.package_id} does not stop runit services before removal"
         )
 
+    # xbps-create derives install-script/remove-script metadata from these
+    # files at the root of its package staging directory. Checking the source
+    # files alone is insufficient: without staging them the archive has no
+    # lifecycle metadata and upgrades/removals silently skip the runit hooks.
+    shutil.copy2(install_hook, stage / "INSTALL")
+    shutil.copy2(remove_hook, stage / "REMOVE")
+
     output.mkdir(parents=True, exist_ok=True)
     if repository.exists():
         shutil.rmtree(repository)

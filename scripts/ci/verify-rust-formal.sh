@@ -70,6 +70,7 @@ readonly required_harnesses=(
   "workload_routing_id_is_canonical_lowercase_hex"
   "sha256_digest_byte_alphabet_is_exact"
   "sha256_digest_requires_prefix_length_and_hex_payload"
+  "updater_policy_choice_vocabulary_is_closed"
   "platform_abi_and_package_manager_names_are_stable"
   "managed_service_names_do_not_cross_service_boundaries"
   "ban_expiry_timestamp_saturates_for_all_u64_inputs"
@@ -234,6 +235,7 @@ readonly -a proof_sources=(
   "crates/gitrun-exe/src/lib.rs"
   "crates/gitrun-smart-scheduler/src/lib.rs"
   "crates/gitrun-updater/src/lib.rs"
+  "crates/gitrun-updater/src/state.rs"
   "crates/gitrun-scheduler/src/gsr_poll.rs"
 )
 

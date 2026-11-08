@@ -56,6 +56,7 @@ readonly required_harnesses=(
   "registry_separator_is_exact_over_all_bytes"
   "image_pull_decision_distinguishes_local_and_registry_references"
   "wait_status_classification_is_exact_and_exclusive"
+  "state_store_accepts_only_its_two_fixed_leaf_names"
   "platform_abi_and_package_manager_names_are_stable"
   "managed_service_names_do_not_cross_service_boundaries"
   "ban_expiry_timestamp_saturates_for_all_u64_inputs"
@@ -211,6 +212,7 @@ readonly -a proof_sources=(
   "crates/gitrun-scheduler/src/github.rs"
   "crates/gitrun-scheduler/src/gtuu.rs"
   "crates/gitrun-gsr/src/exec_supervisor.rs"
+  "crates/gitrun-core/src/state.rs"
   "crates/gitrun-scheduler/src/gsr_poll.rs"
 )
 

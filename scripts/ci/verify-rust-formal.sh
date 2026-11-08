@@ -15,6 +15,7 @@ readonly required_harnesses=(
   "dock_operation_wire_names_are_total"
   "runner_floor_predicate_matches_the_capacity_contract"
   "automation_action_wire_names_are_total"
+  "repository_component_byte_alphabet_is_closed"
   "violation_action_config_mapping_is_total"
 )
 readonly policy_harness="verification/kani/updater_policy.rs"

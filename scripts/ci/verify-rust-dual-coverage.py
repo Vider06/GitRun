@@ -54,7 +54,7 @@ def write_report(
         for source in sorted(sources):
             mapping = rows[source]
             scope = mapping[6]
-            counts[scope] += 1
+            if scope in counts:\n                counts[scope] += 1
             # Manifest declarations are plans, not proof evidence. A source is
             # never labelled PROVEN by this inventory/audit step.
             status = "UNVERIFIED" if scope == "IMPLEMENTED" else "NOT_IN_SCOPE"

@@ -228,10 +228,9 @@ mod verus_verification {
         proof fn matching_quote_bytes_is_exact_over_all_byte_pairs(first: u8, last: u8)
             ensures
                 has_matching_quote_bytes(first, last)
-                    == ((first == b'"' && last == b'"') || (first == b'\'' && last == b'\\''))
+                    == ((first == 34 && last == 34) || (first == 39 && last == 39)),
         {
-        }
-    }
+        }    }
 }
 
 #[cfg(kani)]

@@ -238,7 +238,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
         result = DUAL_COVERAGE.main()
 
         self.assertEqual(result, 1)
-        self.assertIn("Manifest / ownership issues | 1", self.summary.read_text())
+        self.assertIn("Manifest / ownership issues | 2", self.summary.read_text())
 
 
 if __name__ == "__main__":

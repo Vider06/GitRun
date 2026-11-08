@@ -5,10 +5,14 @@
 //! unavailable, or in shadow mode. This crate emits only a bounded runner-floor
 //! recommendation; it has no GitHub, Docker, shell, secret-store, or GSR authority.
 
+#[cfg(not(any(kani, verus)))]
 pub mod future_mapping;
+#[cfg(not(any(kani, verus)))]
 pub mod queueing;
 
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -17,40 +21,72 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
+#[cfg(not(any(kani, verus)))]
 pub const SETTINGS_RELATIVE_PATH: &str = "kitty/settings.json";
+#[cfg(not(any(kani, verus)))]
 pub const BUCKET_SECONDS: u64 = 300;
+#[cfg(not(any(kani, verus)))]
 pub const MODEL_VERSION: u32 = 1;
+#[cfg(not(any(kani, verus)))]
 pub const SETTINGS_SCHEMA_VERSION: u32 = 1;
+#[cfg(not(any(kani, verus)))]
 const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
+#[cfg(not(any(kani, verus)))]
 const MAX_MODEL_BYTES: u64 = 1024 * 1024;
+#[cfg(not(any(kani, verus)))]
 const MAX_HISTORY_BUCKETS: usize = 2016; // Seven days, sampled every five minutes.
+#[cfg(not(any(kani, verus)))]
 const MAX_MODELS: usize = 64;
+#[cfg(not(any(kani, verus)))]
 const MAX_DASHBOARD_REPOSITORIES: usize = 64;
+#[cfg(not(any(kani, verus)))]
 const MAX_JOB_PATTERNS: usize = 24;
+#[cfg(not(any(kani, verus)))]
 const MAX_JOB_OCCURRENCES: usize = 256;
+#[cfg(not(any(kani, verus)))]
 const MAX_WORKLOAD_PREDICTIONS: usize = 256;
+#[cfg(not(any(kani, verus)))]
 const MAX_WORKLOAD_RESOURCE_OBSERVATIONS: usize = 512;
+#[cfg(not(any(kani, verus)))]
 const RESOURCE_SAMPLE_INTERVAL_SECONDS: u64 = 30;
+#[cfg(not(any(kani, verus)))]
 const MIN_RESOURCE_PROFILE_JOBS: usize = 3;
+#[cfg(not(any(kani, verus)))]
 const MAX_DASHBOARD_JOB_OCCURRENCES: usize = 32;
+#[cfg(not(any(kani, verus)))]
 const MAX_AUDIT_RECORDS: usize = 64;
+#[cfg(not(any(kani, verus)))]
 const MAX_EVALUATED_FORECASTS: usize = 256;
+#[cfg(not(any(kani, verus)))]
 const FORECAST_HORIZON_SECONDS: u64 = 3600;
+#[cfg(not(any(kani, verus)))]
 const WEEK_SECONDS: u64 = 7 * 24 * 60 * 60;
+#[cfg(not(any(kani, verus)))]
 const COMPACT_MONTH_SECONDS: u64 = WEEK_SECONDS * 4;
+#[cfg(not(any(kani, verus)))]
 const COMPACT_YEAR_SECONDS: u64 = COMPACT_MONTH_SECONDS * 12;
+#[cfg(not(any(kani, verus)))]
 const MAX_WEEKLY_SUMMARIES: usize = 4;
+#[cfg(not(any(kani, verus)))]
 const MAX_MONTHLY_SUMMARIES: usize = 12;
+#[cfg(not(any(kani, verus)))]
 const MAX_YEARLY_SUMMARIES: usize = 16;
+#[cfg(not(any(kani, verus)))]
 const TEMPORAL_SLOT_COUNT: usize = 7 * 24;
+#[cfg(not(any(kani, verus)))]
 const MIN_SEASONAL_OCCURRENCES: f64 = 4.0;
+#[cfg(not(any(kani, verus)))]
 const DEFAULT_WARM_POOL_LEAD_SECONDS: u64 = 300;
+#[cfg(not(any(kani, verus)))]
 const SETTINGS_RELOAD_INTERVAL: Duration = Duration::from_secs(30);
+#[cfg(not(any(kani, verus)))]
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum KittyError {
     #[error("Kitty storage I/O failed: {0}")]
     Io(#[from] std::io::Error),
@@ -64,6 +100,7 @@ pub enum KittyError {
     ModelLimit,
 }
 
+#[cfg(not(any(kani, verus)))]
 pub type Result<T> = std::result::Result<T, KittyError>;
 
 /// Operator-controlled capabilities. Missing settings means all Kitty activity
@@ -71,6 +108,7 @@ pub type Result<T> = std::result::Result<T, KittyError>;
 /// automated capacity growth also requires its own switch and shadow mode off.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
+#[cfg(not(any(kani, verus)))]
 pub struct KittySettings {
     pub schema_version: u32,
     pub enabled: bool,
@@ -118,6 +156,7 @@ pub struct KittySettings {
     pub minimum_quality_score: f64,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Default for KittySettings {
     fn default() -> Self {
         Self {
@@ -147,6 +186,7 @@ impl Default for KittySettings {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 impl KittySettings {
     pub fn validate(&self) -> Result<()> {
         if self.schema_version != SETTINGS_SCHEMA_VERSION {
@@ -282,6 +322,7 @@ impl KittySettings {
 /// to this repository or to a specific workload.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+#[cfg(not(any(kani, verus)))]
 pub struct Observation {
     pub bucket_epoch: u64,
     pub queued_jobs: u32,
@@ -295,10 +336,12 @@ pub struct Observation {
     pub snapshots_in_bucket: u32,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn one() -> u32 {
     1
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Observation {
     pub fn demand(&self) -> u32 {
         self.queued_jobs.saturating_add(self.busy_runners)
@@ -343,6 +386,7 @@ impl Observation {
 /// One compact demand aggregate for a recurring weekday/hour slot.
 /// Tuple serialization keeps old-history JSON substantially smaller.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct TemporalDemandSlot(
     pub u64, // five-minute observations
     pub u64, // sum of observed demand
@@ -354,6 +398,7 @@ pub struct TemporalDemandSlot(
 /// to Monday 00:00 through Sunday 23:00 in the scheduler host's local time.
 /// Periods themselves use stable epoch-aligned 7-day, 4-week and 48-week spans.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct PeriodSummary {
     pub period_start_epoch: u64,
     pub period_end_epoch: u64,
@@ -364,6 +409,7 @@ pub struct PeriodSummary {
     pub slots: Vec<TemporalDemandSlot>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl PeriodSummary {
     fn new(period_start_epoch: u64, period_seconds: u64) -> Self {
         Self {
@@ -410,11 +456,13 @@ impl PeriodSummary {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn default_forecast_horizon_seconds() -> u64 {
     FORECAST_HORIZON_SECONDS
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct Forecast {
     pub model_version: u32,
     pub generated_at_epoch: u64,
@@ -444,6 +492,7 @@ pub struct Forecast {
     pub confidence_score: f64,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn forecast_actionable_quality(forecast: &Forecast) -> f64 {
     if forecast.seasonal_predicted_peak_concurrency.is_some() {
         forecast.seasonal_quality_score.unwrap_or(0.0)
@@ -453,6 +502,7 @@ fn forecast_actionable_quality(forecast: &Forecast) -> f64 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct PredictionRecord {
     pub issued_at_bucket: u64,
     pub target_bucket: u64,
@@ -469,6 +519,7 @@ pub struct PredictionRecord {
 /// Bounded metadata for one GitHub Actions job, from either the live queue
 /// or the authoritative recent-start sample.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct QueuedJobOccurrence {
     pub run_id: u64,
     pub job_id: u64,
@@ -485,6 +536,7 @@ pub struct QueuedJobOccurrence {
 /// reports as running on a GitRun-managed container. CPU is expressed in
 /// consumed cores (Docker's 100% equals one core); memory is bytes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct ActiveJobResourceSample {
     pub job: QueuedJobOccurrence,
     pub cpu_cores: f64,
@@ -496,6 +548,7 @@ pub struct ActiveJobResourceSample {
 /// Several samples of the same run/job update this record rather than
 /// inflating the number of independent workload observations.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct WorkloadResourceObservation {
     pub workload_id: String,
     pub occurrence_code: String,
@@ -512,6 +565,7 @@ pub struct WorkloadResourceObservation {
 /// ceiling, not reserved physical capacity; the scheduler still clamps it
 /// against per-runner operator limits and a shared per-cycle host budget.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct ResourceDemandEstimate {
     pub workload_id: String,
     pub cpu_cores: f64,
@@ -522,6 +576,7 @@ pub struct ResourceDemandEstimate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct WorkloadPattern {
     #[serde(alias = "workload_code", alias = "gitrun_job_id")]
     pub workload_id: String,
@@ -540,6 +595,7 @@ pub struct WorkloadPattern {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct RecentJobOccurrence {
     /// Unique GitRun-generated ID for this one observed job occurrence. It is
     /// assigned once and remains stable regardless of provider IDs or polling.
@@ -567,6 +623,7 @@ pub struct RecentJobOccurrence {
 /// Per-workload prediction made before a recurring weekday/hour slot. It is
 /// evaluated against unique job start timestamps in the following hour.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct WorkloadPredictionRecord {
     #[serde(alias = "workload_code", alias = "gitrun_job_id")]
     pub workload_id: String,
@@ -584,6 +641,7 @@ pub struct WorkloadPredictionRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct WorkloadSlotSummary {
     pub weekday: String,
     pub hour: u8,
@@ -592,6 +650,7 @@ pub struct WorkloadSlotSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct WorkloadPredictionStatus {
     pub target_epoch: u64,
     pub predicted_occurrences: u32,
@@ -602,6 +661,7 @@ pub struct WorkloadPredictionStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct WorkloadPatternStatus {
     #[serde(alias = "workload_code", alias = "gitrun_job_id")]
     pub workload_id: String,
@@ -637,6 +697,7 @@ pub struct WorkloadPatternStatus {
 /// workload. This profiles a job type, not a future GitHub run/job ID (those
 /// IDs do not exist until GitHub creates that run and job).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct WorkloadPrewarm {
     #[serde(alias = "workload_code", alias = "gitrun_job_id")]
     pub workload_id: String,
@@ -659,6 +720,7 @@ pub struct WorkloadPrewarm {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct DecisionAudit {
     pub bucket_epoch: u64,
     pub model_version: u32,
@@ -686,6 +748,7 @@ pub struct DecisionAudit {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[cfg(not(any(kani, verus)))]
 pub enum DecisionStatus {
     Disabled,
     TelemetryDisabled,
@@ -700,6 +763,7 @@ pub enum DecisionStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct WorkflowModel {
     pub schema_version: u32,
     pub model_version: u32,
@@ -742,18 +806,25 @@ pub struct WorkflowModel {
 /// Canonical identity of a logical workload, generated by GitRun from the
 /// workflow/job metadata. It is stable across queue polls and independent of
 /// GitHub's per-run/per-job IDs; those remain external occurrence references.
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(returns byte.is_ascii_digit() || (byte >= b'a' && byte <= b'f'))
+)]
+fn workload_id_byte_is_valid(byte: u8) -> bool {
+    byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+}
+
 fn valid_workload_id(code: &str) -> bool {
     let Some(digest) = code.strip_prefix("wk-") else {
         return false;
     };
-    digest.len() == 16
-        && digest
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    digest.len() == 16 && digest.bytes().all(workload_id_byte_is_valid)
 }
 
 /// True if a job asks GitRun to route it using a known workload-family label.
 /// Any malformed/conflicting label with this reserved prefix must fail closed.
+#[cfg(not(any(kani, verus)))]
 pub fn has_workload_routing_marker(labels: &[String]) -> bool {
     labels
         .iter()
@@ -763,6 +834,7 @@ pub fn has_workload_routing_marker(labels: &[String]) -> bool {
 /// True if a job carries a per-occurrence Kitty dispatch route label.
 /// Malformed reserved-prefix labels still count as markers so they cannot
 /// silently fall back to a generic runner.
+#[cfg(not(any(kani, verus)))]
 pub fn has_dispatch_routing_marker(labels: &[String]) -> bool {
     labels.iter().any(|label| {
         label
@@ -773,6 +845,7 @@ pub fn has_dispatch_routing_marker(labels: &[String]) -> bool {
 }
 
 /// Resolve exactly one canonical per-occurrence route ID (128-bit lowercase hex).
+#[cfg(not(any(kani, verus)))]
 pub fn dispatch_route_id_from_labels(labels: &[String]) -> Option<String> {
     let candidates: Vec<String> = labels
         .iter()
@@ -793,6 +866,7 @@ pub fn dispatch_route_id_from_labels(labels: &[String]) -> Option<String> {
 }
 
 /// Resolve exactly one canonical GitRun workload-family label.
+#[cfg(not(any(kani, verus)))]
 pub fn workload_id_from_routing_labels(labels: &[String]) -> Option<String> {
     let candidates: Vec<String> = labels
         .iter()
@@ -808,6 +882,7 @@ pub fn workload_id_from_routing_labels(labels: &[String]) -> Option<String> {
     valid_workload_id(workload_id).then(|| workload_id.to_owned())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn provider_occurrence_key(workload_id: &str, run_id: u64, job_id: u64) -> String {
     let canonical = format!("{workload_id}|{run_id}|{job_id}");
     let mut hash = 0xcbf29ce484222325u64;
@@ -818,12 +893,14 @@ fn provider_occurrence_key(workload_id: &str, run_id: u64, job_id: u64) -> Strin
     format!("gr-occ-{hash:016x}")
 }
 
+#[cfg(not(any(kani, verus)))]
 fn default_next_gitrun_job_sequence() -> u64 {
     1
 }
 
 /// A per-repository monotonic sequence keeps each occurrence ID unique while
 /// avoiding GitHub's run_id/job_id in the GitRun identifier itself.
+#[cfg(not(any(kani, verus)))]
 fn repository_identity_hash(repository: &str) -> Option<String> {
     if !valid_repository(repository) {
         return None;
@@ -836,6 +913,7 @@ fn repository_identity_hash(repository: &str) -> Option<String> {
     Some(format!("{hash:016x}"))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn generate_occurrence_id(repository: &str, sequence: u64) -> Option<String> {
     // Keep room for the persisted next-sequence value; never wrap on overflow.
     if sequence == 0 || sequence == u64::MAX {
@@ -847,6 +925,7 @@ fn generate_occurrence_id(repository: &str, sequence: u64) -> Option<String> {
     ))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn generated_gitrun_job_sequence_for_repository(code: &str, repository: &str) -> Option<u64> {
     let repo_hash = code.strip_prefix("grj-")?.split_once('-')?.0;
     if repository_identity_hash(repository)?.as_str() != repo_hash {
@@ -855,10 +934,12 @@ fn generated_gitrun_job_sequence_for_repository(code: &str, repository: &str) ->
     generated_gitrun_job_sequence(code)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn valid_generated_gitrun_job_id_for_repository(code: &str, repository: &str) -> bool {
     generated_gitrun_job_sequence_for_repository(code, repository).is_some()
 }
 
+#[cfg(not(any(kani, verus)))]
 fn generated_gitrun_job_sequence(code: &str) -> Option<u64> {
     let (repo_hash, sequence) = code.strip_prefix("grj-")?.split_once('-')?;
     if repo_hash.len() != 16
@@ -877,10 +958,12 @@ fn generated_gitrun_job_sequence(code: &str) -> Option<u64> {
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 fn valid_generated_gitrun_job_id(code: &str) -> bool {
     generated_gitrun_job_sequence(code).is_some()
 }
 
+#[cfg(not(any(kani, verus)))]
 fn migrate_job_identity(model: &mut WorkflowModel) -> bool {
     let mut changed = false;
     if model.next_gitrun_job_sequence == 0 {
@@ -983,6 +1066,7 @@ fn migrate_job_identity(model: &mut WorkflowModel) -> bool {
     changed
 }
 
+#[cfg(not(any(kani, verus)))]
 fn valid_occurrence_id(code: &str, workload_id: &str, run_id: u64, job_id: u64) -> bool {
     code == provider_occurrence_key(workload_id, run_id, job_id)
         // Migration compatibility for model files written before GitRun
@@ -990,6 +1074,7 @@ fn valid_occurrence_id(code: &str, workload_id: &str, run_id: u64, job_id: u64) 
         || code == format!("run-{run_id}-job-{job_id}")
 }
 
+#[cfg(not(any(kani, verus)))]
 fn prune_stale_resource_observations(model: &mut WorkflowModel, now_epoch: u64) -> bool {
     const RESOURCE_OBSERVATION_RETENTION_SECONDS: u64 = 180 * 86_400;
     let cutoff = now_epoch.saturating_sub(RESOURCE_OBSERVATION_RETENTION_SECONDS);
@@ -1000,6 +1085,7 @@ fn prune_stale_resource_observations(model: &mut WorkflowModel, now_epoch: u64) 
     before != model.resource_observations.len()
 }
 
+#[cfg(not(any(kani, verus)))]
 impl WorkflowModel {
     fn empty(repository: &str) -> Self {
         Self {
@@ -1297,6 +1383,7 @@ impl WorkflowModel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct KittyDecision {
     pub repository: String,
     pub status: DecisionStatus,
@@ -1317,6 +1404,7 @@ pub struct KittyDecision {
     pub workload_prewarms: Vec<WorkloadPrewarm>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl KittyDecision {
     pub fn fallback(
         repository: &str,
@@ -1343,6 +1431,7 @@ impl KittyDecision {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 pub struct ObservationInput {
     pub repository: String,
     pub observed_at_epoch: u64,
@@ -1366,6 +1455,7 @@ pub struct ObservationInput {
     pub operator_memory_limit_bytes: u64,
 }
 
+#[cfg(not(any(kani, verus)))]
 pub struct KittyRuntime {
     state_dir: PathBuf,
     settings: KittySettings,
@@ -1378,6 +1468,7 @@ pub struct KittyRuntime {
     dirty_models: HashSet<String>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl KittyRuntime {
     pub fn new(state_dir: impl Into<PathBuf>) -> Self {
         Self {
@@ -2862,6 +2953,7 @@ impl KittyRuntime {
 /// Privacy-minimized model status suitable for the operator dashboard. Raw
 /// five-minute history and per-forecast records never leave the private files.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct KittyRepositoryStatus {
     pub repository: String,
     pub sample_count: usize,
@@ -2881,6 +2973,7 @@ pub struct KittyRepositoryStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct KittyDashboardStatus {
     pub schema_version: u32,
     pub generated_at_epoch: u64,
@@ -2893,6 +2986,7 @@ pub struct KittyDashboardStatus {
     pub repositories: Vec<KittyRepositoryStatus>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl KittyDashboardStatus {
     fn empty(settings: &KittySettings) -> Self {
         Self {
@@ -2909,6 +3003,7 @@ impl KittyDashboardStatus {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn load_settings_for_dashboard(state_dir: &Path) -> Result<KittySettings> {
     let path = KittyRuntime::settings_path(state_dir);
     if KittyRuntime::uses_system_settings_path(state_dir) {
@@ -2921,6 +3016,7 @@ pub fn load_settings_for_dashboard(state_dir: &Path) -> Result<KittySettings> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn save_settings_for_local_state_dir(state_dir: &Path, settings: &KittySettings) -> Result<()> {
     settings.validate()?;
     if KittyRuntime::uses_system_settings_path(state_dir) {
@@ -2940,6 +3036,7 @@ pub fn save_settings_for_local_state_dir(state_dir: &Path, settings: &KittySetti
 /// Save system Kitty settings from the trusted, persistent Control Manager.
 /// Unlike the legacy pkexec staging path this writes as the already-privileged
 /// service identity and keeps the file root-only; unprivileged UIs must use IPC.
+#[cfg(not(any(kani, verus)))]
 pub fn save_system_settings_for_state_dir(
     state_dir: &Path,
     settings: &KittySettings,
@@ -3025,6 +3122,7 @@ pub fn save_system_settings_for_state_dir(
 
 /// Root-only writer called by the authenticated internal CLI command. The CLI
 /// then grants the desktop user's primary group read-only access.
+#[cfg(not(any(kani, verus)))]
 pub fn load_dashboard_status(state_dir: &Path) -> Result<KittyDashboardStatus> {
     let settings = load_settings_for_dashboard(state_dir)?;
     let path = KittyRuntime::dashboard_status_path(state_dir);
@@ -3055,6 +3153,7 @@ pub fn load_dashboard_status(state_dir: &Path) -> Result<KittyDashboardStatus> {
     Ok(status)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_settings(path: &Path) -> Result<KittySettings> {
     if is_system_settings_path(path) {
         let settings =
@@ -3078,10 +3177,12 @@ fn read_settings(path: &Path) -> Result<KittySettings> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_system_settings_path(path: &Path) -> bool {
     path == Path::new("/etc/gitrun/kitty.json")
 }
 
+#[cfg(not(any(kani, verus)))]
 fn trusted_system_state_dir() -> Option<PathBuf> {
     #[cfg(target_os = "linux")]
     {
@@ -3126,6 +3227,7 @@ fn trusted_system_state_dir() -> Option<PathBuf> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn system_settings_group(path: &Path) -> Result<u32> {
     #[cfg(unix)]
     {
@@ -3141,6 +3243,7 @@ fn system_settings_group(path: &Path) -> Result<u32> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_system_parent(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
@@ -3177,6 +3280,7 @@ fn validate_system_parent(path: &Path) -> Result<()> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_system_json<T: for<'de> Deserialize<'de>>(
     path: &Path,
     max_bytes: u64,
@@ -3188,6 +3292,7 @@ fn read_system_json<T: for<'de> Deserialize<'de>>(
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn read_system_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
     validate_system_parent(path)?;
@@ -3237,6 +3342,7 @@ fn read_system_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
 }
 
 #[cfg(not(unix))]
+#[cfg(not(any(kani, verus)))]
 fn read_system_checked(_path: &Path, _max_bytes: u64) -> Result<Option<Vec<u8>>> {
     Err(KittyError::Invalid(
         "system Kitty settings are supported only on Unix".into(),
@@ -3244,6 +3350,7 @@ fn read_system_checked(_path: &Path, _max_bytes: u64) -> Result<Option<Vec<u8>>>
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn atomic_write_system_readable(path: &Path, bytes: &[u8], group: u32) -> Result<()> {
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
@@ -3298,12 +3405,14 @@ fn atomic_write_system_readable(path: &Path, bytes: &[u8], group: u32) -> Result
 }
 
 #[cfg(not(unix))]
+#[cfg(not(any(kani, verus)))]
 fn atomic_write_system_readable(_path: &Path, _bytes: &[u8], _group: u32) -> Result<()> {
     Err(KittyError::Invalid(
         "system Kitty status persistence is supported only on Unix".into(),
     ))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_period_summary(
     summary: &PeriodSummary,
     expected_period_seconds: Option<u64>,
@@ -3326,6 +3435,7 @@ fn validate_period_summary(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn utc_weekday_hour_slot(epoch: u64) -> usize {
     let days = epoch / 86_400;
     let weekday = ((days + 3) % 7) as usize; // Monday = 0; 1970-01-01 was Thursday.
@@ -3334,10 +3444,13 @@ fn utc_weekday_hour_slot(epoch: u64) -> usize {
 }
 
 #[cfg(all(unix, target_env = "musl"))]
+#[cfg(not(any(kani, verus)))]
 type SchedulerTimeT = i64;
 #[cfg(all(unix, not(target_env = "musl")))]
+#[cfg(not(any(kani, verus)))]
 type SchedulerTimeT = libc::time_t;
 
+#[cfg(not(any(kani, verus)))]
 fn weekday_hour_slot(epoch: u64) -> usize {
     #[cfg(unix)]
     {
@@ -3354,12 +3467,14 @@ fn weekday_hour_slot(epoch: u64) -> usize {
     utc_weekday_hour_slot(epoch)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn weekly_period_start(epoch: u64) -> u64 {
     // Epoch-aligned week starts keep period keys divisible by the fixed
     // seven-day duration; weekday/hour slots are tracked separately.
     epoch / WEEK_SECONDS * WEEK_SECONDS
 }
 
+#[cfg(not(any(kani, verus)))]
 fn compact_model_history(model: &mut WorkflowModel, now_epoch: u64, history_limit: usize) -> bool {
     let history_limit = history_limit.clamp(24, MAX_HISTORY_BUCKETS);
     let raw_window_seconds = (history_limit as u64).saturating_mul(BUCKET_SECONDS);
@@ -3494,6 +3609,7 @@ fn compact_model_history(model: &mut WorkflowModel, now_epoch: u64, history_limi
 }
 
 #[derive(Default)]
+#[cfg(not(any(kani, verus)))]
 struct SeasonalSlotStats {
     weighted_samples: f64,
     weighted_demand_sum: f64,
@@ -3501,6 +3617,7 @@ struct SeasonalSlotStats {
     occurrences: f64,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn seasonal_slot_stats(
     model: &WorkflowModel,
     slot_index: usize,
@@ -3555,6 +3672,7 @@ fn seasonal_slot_stats(
 /// This ID does not depend on GitHub's per-run or per-job IDs, which are absent
 /// until a concrete workflow execution exists. It can be generated as soon as
 /// repository, workflow path, job name and runner labels are known.
+#[cfg(not(any(kani, verus)))]
 pub fn generate_workload_id(
     repository: &str,
     workflow_path: &str,
@@ -3602,6 +3720,7 @@ pub fn generate_workload_id(
     Some(format!("wk-{hash:016x}"))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn workload_id_for(repository: &str, job: &QueuedJobOccurrence) -> Option<String> {
     if has_workload_routing_marker(&job.labels) {
         return workload_id_from_routing_labels(&job.labels);
@@ -3609,6 +3728,7 @@ fn workload_id_for(repository: &str, job: &QueuedJobOccurrence) -> Option<String
     generate_workload_id(repository, &job.workflow_path, &job.name, &job.labels)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn resource_prior_workload_id(repository: &str, job_name: &str, labels: &[String]) -> String {
     let canonical = format!(
         "resource-prior|{}|{}|{}",
@@ -3624,6 +3744,7 @@ fn resource_prior_workload_id(repository: &str, job_name: &str, labels: &[String
     format!("wk-{hash:016x}")
 }
 
+#[cfg(not(any(kani, verus)))]
 fn canonical_resource_labels(labels: &[String]) -> Vec<String> {
     let mut canonical: Vec<_> = labels
         .iter()
@@ -3635,6 +3756,7 @@ fn canonical_resource_labels(labels: &[String]) -> Vec<String> {
     canonical
 }
 
+#[cfg(not(any(kani, verus)))]
 fn valid_resource_sample(sample: &ActiveJobResourceSample, observed_at_epoch: u64) -> bool {
     valid_queued_job(&sample.job)
         && sample
@@ -3649,6 +3771,7 @@ fn valid_resource_sample(sample: &ActiveJobResourceSample, observed_at_epoch: u6
         && sample.memory_bytes <= (1u64 << 60)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn heuristic_resource_demand(
     workload_id: &str,
     workflow_path: &str,
@@ -3720,6 +3843,7 @@ fn heuristic_resource_demand(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn valid_queued_job(job: &QueuedJobOccurrence) -> bool {
     job.run_id > 0
         && job.job_id > 0
@@ -3739,6 +3863,7 @@ fn valid_queued_job(job: &QueuedJobOccurrence) -> bool {
 /// Assign a persistent GitRun ID as soon as a job enters the observed queue.
 /// GitHub's run/job IDs are only correlation keys used to recognize the same
 /// provider record across polls; they never generate the GitRun identity.
+#[cfg(not(any(kani, verus)))]
 fn record_queued_job_occurrences(
     model: &mut WorkflowModel,
     jobs: &[QueuedJobOccurrence],
@@ -3890,6 +4015,7 @@ fn record_queued_job_occurrences(
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 fn record_started_job_occurrences(
     model: &mut WorkflowModel,
     jobs: &[QueuedJobOccurrence],
@@ -3898,6 +4024,7 @@ fn record_started_job_occurrences(
     record_started_job_occurrences_with_coverage(model, jobs, observed_at_epoch, true)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn record_started_job_occurrences_with_coverage(
     model: &mut WorkflowModel,
     jobs: &[QueuedJobOccurrence],
@@ -4129,6 +4256,7 @@ fn record_started_job_occurrences_with_coverage(
     changed
 }
 
+#[cfg(not(any(kani, verus)))]
 fn workload_prediction_bias(model: &WorkflowModel, workload_id: &str) -> Option<f64> {
     let residuals: Vec<f64> = model
         .workload_predictions
@@ -4145,6 +4273,7 @@ fn workload_prediction_bias(model: &WorkflowModel, workload_id: &str) -> Option<
     (residuals.len() >= 4).then(|| mean(&residuals))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn upcoming_schedule_target(
     bucket_epoch: u64,
     lead_seconds: u64,
@@ -4167,6 +4296,7 @@ fn upcoming_schedule_target(
         .then_some(target)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn forecast_workload_prewarms(
     model: &WorkflowModel,
     bucket_epoch: u64,
@@ -4287,6 +4417,7 @@ fn forecast_workload_prewarms(
         .collect()
 }
 
+#[cfg(not(any(kani, verus)))]
 fn estimated_resources_for_pattern(
     model: &WorkflowModel,
     pattern: &WorkloadPattern,
@@ -4357,6 +4488,7 @@ fn estimated_resources_for_pattern(
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 fn workload_pattern_status(model: &WorkflowModel) -> Vec<WorkloadPatternStatus> {
     let recent_slot_cutoff =
         weekly_period_start(model.generated_at_epoch.saturating_sub(90 * 86_400));
@@ -4431,6 +4563,7 @@ fn workload_pattern_status(model: &WorkflowModel) -> Vec<WorkloadPatternStatus> 
     patterns
 }
 
+#[cfg(not(any(kani, verus)))]
 fn compute_forecast(
     model: &WorkflowModel,
     settings: &KittySettings,
@@ -4660,6 +4793,7 @@ fn compute_forecast(
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn retained_warm_pool_floor(
     model: &WorkflowModel,
     current_bucket: u64,
@@ -4690,6 +4824,7 @@ fn retained_warm_pool_floor(
     (previous > configured_min_runners).then_some(previous)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn evaluate_matured_predictions(model: &mut WorkflowModel, current_bucket: u64) {
     let actuals: HashMap<u64, u32> = model
         .history
@@ -4708,6 +4843,7 @@ fn evaluate_matured_predictions(model: &mut WorkflowModel, current_bucket: u64) 
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn percentile(values: &[f64], quantile: f64) -> f64 {
     if values.is_empty() {
         return 0.0;
@@ -4719,6 +4855,7 @@ fn percentile(values: &[f64], quantile: f64) -> f64 {
     sorted[index.min(sorted.len() - 1)]
 }
 
+#[cfg(not(any(kani, verus)))]
 fn mean(values: &[f64]) -> f64 {
     if values.is_empty() {
         0.0
@@ -4727,6 +4864,7 @@ fn mean(values: &[f64]) -> f64 {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn valid_repository(repository: &str) -> bool {
     let mut parts = repository.split('/');
     let (Some(owner), Some(name), None) = (parts.next(), parts.next(), parts.next()) else {
@@ -4743,6 +4881,7 @@ fn valid_repository(repository: &str) -> bool {
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn repository_key(repository: &str) -> String {
     // Stable, non-cryptographic filename hash. The repository name is verified
     // inside the model before use; this hash is only a bounded path component.
@@ -4754,6 +4893,7 @@ fn repository_key(repository: &str) -> String {
     format!("{hash:016x}")
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_read_data_dir(path: &Path) -> Result<bool> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -4779,6 +4919,7 @@ fn validate_read_data_dir(path: &Path) -> Result<bool> {
     Ok(true)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -4844,6 +4985,7 @@ fn read_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
     Ok(Some(bytes))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn ensure_private_data_dir(path: &Path) -> Result<()> {
     match fs::create_dir(path) {
         Ok(()) => {}
@@ -4871,6 +5013,7 @@ fn ensure_private_data_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn atomic_write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path
         .parent()
@@ -4926,6 +5069,7 @@ fn atomic_write_private(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -6924,3 +7068,50 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{valid_workload_id, workload_id_byte_is_valid};
+
+    #[kani::proof]
+    fn workload_id_hex_byte_alphabet_is_exact() {
+        let byte: u8 = kani::any();
+        assert_eq!(
+            workload_id_byte_is_valid(byte),
+            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+        );
+    }
+
+    #[kani::proof]
+    fn workload_routing_id_is_canonical_lowercase_hex() {
+        assert!(valid_workload_id("wk-0123456789abcdef"));
+        assert!(valid_workload_id("wk-abcdef0123456789"));
+        assert!(!valid_workload_id("wk-0123456789abcde"));
+        assert!(!valid_workload_id("wk-0123456789abcdef0"));
+        assert!(!valid_workload_id("wk-0123456789abcdeG"));
+        assert!(!valid_workload_id("wk-0123456789ABCDEF"));
+        assert!(!valid_workload_id("WK-0123456789abcdef"));
+        assert!(!valid_workload_id("wk-"));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::workload_id_byte_is_valid;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn workload_id_hex_byte_alphabet_is_exact(byte: u8)
+            ensures
+                workload_id_byte_is_valid(byte)
+                    == (byte.is_ascii_digit() || (byte >= b'a' && byte <= b'f')),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

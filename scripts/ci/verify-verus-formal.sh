@@ -13,6 +13,7 @@ readonly -a production_sources=(
   "crates/gitrun-core/src/workflow_validation.rs"
   "crates/gitrun-gsr/src/automation_gate.rs"
   "crates/gitrun-core/src/command_policy.rs"
+  "crates/gitrun-core/src/hypervisor_decision.rs"
 )
 phase=preflight
 

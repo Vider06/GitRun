@@ -5,11 +5,16 @@
 //! Detection is deliberately conservative: unknown libc ABIs and unknown
 //! service/package managers remain unknown instead of being guessed.
 
+#[cfg(not(any(kani, verus)))]
 use std::env;
+#[cfg(not(any(kani, verus)))]
 use std::fs;
+#[cfg(not(any(kani, verus)))]
 use std::path::Path;
+#[cfg(not(any(kani, verus)))]
 use std::process::Command;
 
+#[cfg(not(any(kani, verus)))]
 pub const ANDROID_UNSUPPORTED_MESSAGE: &str =
     "GitRun cannot run on Android. Android, Termux and Android-based proot environments are not supported.";
 
@@ -20,6 +25,7 @@ pub enum LinuxAbi {
 }
 
 impl LinuxAbi {
+    #[cfg_attr(verus, verus_verify)]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Gnu => "gnu",
@@ -54,6 +60,7 @@ impl PackageManager {
         }
     }
 
+    #[cfg_attr(verus, verus_verify)]
     const fn command(self) -> &'static str {
         match self {
             Self::Apt => "apt-get",
@@ -82,6 +89,7 @@ pub enum ManagedService {
 }
 
 impl ManagedService {
+    #[cfg_attr(verus, verus_verify)]
     pub const fn systemd_unit(self) -> &'static str {
         match self {
             Self::Scheduler => "gitrun.service",
@@ -89,6 +97,7 @@ impl ManagedService {
         }
     }
 
+    #[cfg_attr(verus, verus_verify)]
     pub const fn openrc_service(self) -> &'static str {
         match self {
             Self::Scheduler => "gitrun",
@@ -96,6 +105,7 @@ impl ManagedService {
         }
     }
 
+    #[cfg_attr(verus, verus_verify)]
     pub const fn runit_service_path(self) -> &'static str {
         match self {
             Self::Scheduler => "/var/service/gitrun",
@@ -134,6 +144,7 @@ impl ManagedService {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub enum ServiceAction {
     Start,
     Stop,
@@ -141,11 +152,13 @@ pub enum ServiceAction {
     Status,
 }
 
+#[cfg(not(any(kani, verus)))]
 pub struct ServiceCommand {
     pub candidates: &'static [&'static str],
     pub args: Vec<String>,
 }
 
+#[cfg_attr(verus, verus_verify)]
 pub const fn service_command_candidates(manager: ServiceManager) -> &'static [&'static str] {
     match manager {
         ServiceManager::Systemd => &["/usr/bin/systemctl", "/bin/systemctl"],
@@ -158,6 +171,7 @@ pub const fn service_command_candidates(manager: ServiceManager) -> &'static [&'
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn trusted_service_manager_binary(manager: ServiceManager) -> Option<std::path::PathBuf> {
     service_command_candidates(manager)
         .iter()
@@ -166,11 +180,13 @@ pub fn trusted_service_manager_binary(manager: ServiceManager) -> Option<std::pa
         .map(Path::to_path_buf)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub const fn privilege_escalation_candidates() -> &'static [&'static str] {
     &["/usr/bin/sudo", "/usr/bin/doas", "/usr/bin/pkexec"]
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 pub fn trusted_privilege_escalation_binary() -> Option<std::path::PathBuf> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -187,10 +203,12 @@ pub fn trusted_privilege_escalation_binary() -> Option<std::path::PathBuf> {
 }
 
 #[cfg(not(unix))]
+#[cfg(not(any(kani, verus)))]
 pub fn trusted_privilege_escalation_binary() -> Option<std::path::PathBuf> {
     None
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn service_command(
     manager: ServiceManager,
     action: ServiceAction,
@@ -239,11 +257,13 @@ pub fn service_command(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn trusted_service_mode_is_safe(mode: u32, require_executable: bool) -> bool {
     mode & 0o022 == 0 && (!require_executable || mode & 0o111 != 0)
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn trusted_service_definition(path: &Path, require_executable: bool) -> bool {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
@@ -275,10 +295,12 @@ fn trusted_service_definition(path: &Path, require_executable: bool) -> bool {
 }
 
 #[cfg(not(unix))]
+#[cfg(not(any(kani, verus)))]
 fn trusted_service_definition(_path: &Path, _require_executable: bool) -> bool {
     false
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn service_is_installed(manager: ServiceManager, service: ManagedService) -> bool {
     let paths = match manager {
         ServiceManager::Systemd => service.systemd_unit_paths(),
@@ -291,6 +313,7 @@ pub fn service_is_installed(manager: ServiceManager, service: ManagedService) ->
         .any(|path| trusted_service_definition(Path::new(path), require_executable))
 }
 
+#[cfg(not(any(kani, verus)))]
 impl ServiceManager {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -305,6 +328,7 @@ impl ServiceManager {
 /// Exposed as a small value type so the detection rules can be tested without
 /// depending on the machine on which the tests happen to run.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct AndroidRuntimeSignals {
     pub target_is_android: bool,
     pub termux_version: Option<String>,
@@ -317,6 +341,7 @@ pub struct AndroidRuntimeSignals {
     pub system_build_prop_present: bool,
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn is_android_runtime(signals: &AndroidRuntimeSignals) -> bool {
     if signals.target_is_android
         || signals.termux_version.as_deref().is_some_and(non_empty)
@@ -345,10 +370,12 @@ pub fn is_android_runtime(signals: &AndroidRuntimeSignals) -> bool {
         || (android_root && android_data && signals.proot_marker_present)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn non_empty(value: &str) -> bool {
     !value.trim().is_empty()
 }
 
+#[cfg(not(any(kani, verus)))]
 fn current_android_signals() -> AndroidRuntimeSignals {
     let value = |name: &str| env::var(name).ok();
     AndroidRuntimeSignals {
@@ -364,10 +391,12 @@ fn current_android_signals() -> AndroidRuntimeSignals {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn is_android() -> bool {
     is_android_runtime(&current_android_signals())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn ensure_supported_runtime() -> Result<(), &'static str> {
     if is_android() {
         Err(ANDROID_UNSUPPORTED_MESSAGE)
@@ -376,6 +405,7 @@ pub fn ensure_supported_runtime() -> Result<(), &'static str> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn parse_os_release(contents: &str, key: &str) -> Option<String> {
     contents.lines().find_map(|line| {
         let (name, raw_value) = line.split_once('=')?;
@@ -396,22 +426,26 @@ pub fn parse_os_release(contents: &str, key: &str) -> Option<String> {
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn os_release_value(key: &str) -> Option<String> {
     let contents = fs::read_to_string("/etc/os-release").ok()?;
     parse_os_release(&contents, key)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn command_on_path(command: &str) -> bool {
     env::split_paths(&env::var_os("PATH").unwrap_or_default())
         .any(|directory| directory.join(command).is_file())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn push_unique(values: &mut Vec<PackageManager>, value: PackageManager) {
     if !values.contains(&value) {
         values.push(value);
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn preferred_package_managers(distro_id: &str, id_like: &str) -> Vec<PackageManager> {
     let mut ordered = Vec::new();
     for id in std::iter::once(distro_id).chain(id_like.split_ascii_whitespace()) {
@@ -440,12 +474,14 @@ fn preferred_package_managers(distro_id: &str, id_like: &str) -> Vec<PackageMana
     ordered
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn detect_package_manager(distro_id: &str, id_like: &str) -> Option<PackageManager> {
     preferred_package_managers(distro_id, id_like)
         .into_iter()
         .find(|manager| command_on_path(manager.command()))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn detect_service_manager_from_signals(
     init_name: &str,
     systemd_runtime: bool,
@@ -472,6 +508,7 @@ fn detect_service_manager_from_signals(
     }
 }
 // Detect the init system actually running on the host, not merely installed service-manager tools.
+#[cfg(not(any(kani, verus)))]
 pub fn detect_service_manager() -> Option<ServiceManager> {
     // Prefer the active PID 1/init runtime over installed management commands.
     // A host may have systemctl, rc-service or sv installed without running
@@ -489,6 +526,7 @@ pub fn detect_service_manager() -> Option<ServiceManager> {
     detect_service_manager_from_signals(&init_name, systemd_runtime, openrc_runtime, runit_runtime)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn contains_musl_loader(directory: &Path) -> bool {
     fs::read_dir(directory)
         .ok()
@@ -498,6 +536,7 @@ fn contains_musl_loader(directory: &Path) -> bool {
         .any(|entry| entry.file_name().to_string_lossy().starts_with("ld-musl-"))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn has_glibc_loader() -> bool {
     [
         "/lib64/ld-linux-x86-64.so.2",
@@ -515,6 +554,7 @@ fn has_glibc_loader() -> bool {
     .any(|path| Path::new(path).is_file())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn detect_linux_abi() -> Result<LinuxAbi, String> {
     if env::consts::OS != "linux" {
         return Err(format!(
@@ -562,6 +602,7 @@ pub fn detect_linux_abi() -> Result<LinuxAbi, String> {
     Err("unable to identify the Linux libc ABI; refusing to assume glibc or musl".into())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn linux_target_triple_for(architecture: &str, abi: LinuxAbi) -> Result<String, String> {
     let environment = abi.as_str();
     match (architecture, abi) {
@@ -575,6 +616,7 @@ pub fn linux_target_triple_for(architecture: &str, abi: LinuxAbi) -> Result<Stri
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn linux_target_triple() -> Result<String, String> {
     if env::consts::OS != "linux" {
         return Err(format!(
@@ -587,6 +629,7 @@ pub fn linux_target_triple() -> Result<String, String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct LinuxPlatformInfo {
     pub distribution: Option<String>,
     pub architecture: String,
@@ -596,6 +639,7 @@ pub struct LinuxPlatformInfo {
     pub service_manager: Option<ServiceManager>,
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn inspect_linux() -> Option<LinuxPlatformInfo> {
     if env::consts::OS != "linux" {
         return None;
@@ -956,3 +1000,82 @@ mod tests {
         assert!(linux_target_triple_for("arm", LinuxAbi::Musl).is_err());
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{service_command_candidates, LinuxAbi, ManagedService, PackageManager, ServiceManager};
+
+    #[kani::proof]
+    fn platform_abi_and_package_manager_names_are_stable() {
+        assert!(LinuxAbi::Gnu.as_str() == "gnu");
+        assert!(LinuxAbi::Musl.as_str() == "musl");
+
+        assert!(PackageManager::Apt.as_str() == "apt/dpkg");
+        assert!(PackageManager::Dnf.as_str() == "dnf/rpm");
+        assert!(PackageManager::Zypper.as_str() == "zypper/rpm");
+        assert!(PackageManager::Pacman.as_str() == "pacman");
+        assert!(PackageManager::Apk.as_str() == "apk");
+        assert!(PackageManager::Xbps.as_str() == "xbps");
+        assert!(PackageManager::Emerge.as_str() == "emerge");
+        assert!(PackageManager::Rpm.as_str() == "rpm");
+
+        assert!(PackageManager::Apt.command() == "apt-get");
+        assert!(PackageManager::Xbps.command() == "xbps-install");
+    }
+
+    #[kani::proof]
+    fn managed_service_names_do_not_cross_service_boundaries() {
+        assert!(ManagedService::Scheduler.systemd_unit() == "gitrun.service");
+        assert!(ManagedService::Gsr.systemd_unit() == "gitrun-gsr.service");
+        assert!(ManagedService::Scheduler.openrc_service() == "gitrun");
+        assert!(ManagedService::Gsr.openrc_service() == "gitrun-gsr");
+        assert!(ManagedService::Scheduler.runit_service_path() == "/var/service/gitrun");
+        assert!(ManagedService::Gsr.runit_service_path() == "/var/service/gitrun-gsr");
+        assert!(service_command_candidates(ServiceManager::Systemd)[0] == "/usr/bin/systemctl");
+        assert!(service_command_candidates(ServiceManager::OpenRc)[0] == "/sbin/rc-service");
+        assert!(service_command_candidates(ServiceManager::Runit)[0] == "/usr/bin/sv");
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{service_command_candidates, LinuxAbi, ManagedService, PackageManager, ServiceManager};
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn platform_abi_and_package_manager_names_are_stable() {
+            assert(LinuxAbi::Gnu.as_str() == "gnu");
+            assert(LinuxAbi::Musl.as_str() == "musl");
+
+            assert(PackageManager::Apt.as_str() == "apt/dpkg");
+            assert(PackageManager::Dnf.as_str() == "dnf/rpm");
+            assert(PackageManager::Zypper.as_str() == "zypper/rpm");
+            assert(PackageManager::Pacman.as_str() == "pacman");
+            assert(PackageManager::Apk.as_str() == "apk");
+            assert(PackageManager::Xbps.as_str() == "xbps");
+            assert(PackageManager::Emerge.as_str() == "emerge");
+            assert(PackageManager::Rpm.as_str() == "rpm");
+
+            assert(PackageManager::Apt.command() == "apt-get");
+            assert(PackageManager::Xbps.command() == "xbps-install");
+        }
+
+        proof fn managed_service_names_do_not_cross_service_boundaries() {
+            assert(ManagedService::Scheduler.systemd_unit() == "gitrun.service");
+            assert(ManagedService::Gsr.systemd_unit() == "gitrun-gsr.service");
+            assert(ManagedService::Scheduler.openrc_service() == "gitrun");
+            assert(ManagedService::Gsr.openrc_service() == "gitrun-gsr");
+            assert(ManagedService::Scheduler.runit_service_path() == "/var/service/gitrun");
+            assert(ManagedService::Gsr.runit_service_path() == "/var/service/gitrun-gsr");
+            assert(service_command_candidates(ServiceManager::Systemd)[0] == "/usr/bin/systemctl");
+            assert(service_command_candidates(ServiceManager::OpenRc)[0] == "/sbin/rc-service");
+            assert(service_command_candidates(ServiceManager::Runit)[0] == "/usr/bin/sv");
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

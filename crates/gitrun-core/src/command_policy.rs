@@ -913,10 +913,7 @@ mod kani_verification {
             ViolationAction::from_config_str("unknown"),
             ViolationAction::Kill
         );
-        assert_eq!(
-            ViolationAction::from_config_str(""),
-            ViolationAction::Kill
-        );
+        assert_eq!(ViolationAction::from_config_str(""), ViolationAction::Kill);
         assert!(ViolationAction::LogOnly.as_config_str() == "log_only");
         assert!(ViolationAction::Kill.as_config_str() == "kill");
         assert!(ViolationAction::KillAndBan.as_config_str() == "kill_and_ban");

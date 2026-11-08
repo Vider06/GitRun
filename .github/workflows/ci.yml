@@ -3001,6 +3001,14 @@ jobs:
           path: ${{ runner.temp }}/gitrun-kani-source-coverage.tsv
           if-no-files-found: ignore
           retention-days: 7
+      - name: Upload Verus per-source proof results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: verus-source-proof-results
+          path: ${{ runner.temp }}/gitrun-verus-proof-results.tsv
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload dual-verifier source coverage
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

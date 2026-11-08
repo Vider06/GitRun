@@ -12,6 +12,7 @@ readonly required_harnesses=(
   "recovery_action_names_are_total_and_exact"
   "cooldown_seconds_are_bounded"
   "growth_ceiling_is_bounded_and_saturating"
+  "dock_operation_wire_names_are_total"
 )
 readonly policy_harness="verification/kani/updater_policy.rs"
 readonly inventory="\${RUNNER_TEMP:-\${TMPDIR:-/tmp}}/gitrun-rust-source-inventory.tsv"
@@ -133,6 +134,7 @@ readonly -a proof_sources=(
   "crates/gitrun-recovery/src/json_recovery.rs"
   "crates/gitrun-scheduler/src/backoff.rs"
   "crates/gitrun-smart-scheduler/src/queueing.rs"
+  "crates/gitrun-core/src/workflow_validation.rs"
 )
 
 for source in "\${proof_sources[@]}"; do

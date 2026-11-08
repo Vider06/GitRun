@@ -201,6 +201,33 @@ class DualVerifierCoverageTests(unittest.TestCase):
         self.assertEqual(row["SCOPE_STATUS"], "PLANNED")
         self.assertIn("Formal coverage gate | **CLOSED**", self.summary.read_text())
 
+    def test_not_applicable_scope_is_documented_and_never_reported_as_proven(self) -> None:
+        self.write_manifest(
+            [
+                (
+                    "src/policy.rs",
+                    "",
+                    "",
+                    "Build-time integration is NOT APPLICABLE to formal runtime proof",
+                    "NOT APPLICABLE: Cargo owns the host environment and build-script execution",
+                    "cargo build executes and validates the build script",
+                    "NOT APPLICABLE: Verus does not model Cargo host orchestration",
+                    "NOT_APPLICABLE",
+                )
+            ]
+        )
+
+        result = DUAL_COVERAGE.main()
+
+        self.assertEqual(result, 0)
+        row = self.read_report()[0]
+        self.assertEqual(row["KANI_STATUS"], "NOT_APPLICABLE")
+        self.assertEqual(row["VERUS_STATUS"], "NOT_APPLICABLE")
+        self.assertEqual(row["SCOPE_STATUS"], "NOT_APPLICABLE")
+        summary = self.summary.read_text(encoding="utf-8")
+        self.assertIn("Proven by both Kani and Verus | 0", summary)
+        self.assertIn("Formally NOT_APPLICABLE with documented reason | 1", summary)
+
     def test_missing_source_mapping_keeps_gate_closed_and_is_reported(self) -> None:
         (self.root / "src/other.rs").write_text(
             "pub fn other() {}\n", encoding="utf-8"

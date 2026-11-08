@@ -4,6 +4,10 @@
 //! typed operations already implemented by the dashboard backend; it does not
 //! provide a shell, arbitrary executable launch, or arbitrary file access.
 
+// Verus compiles this production module as a standalone verification crate and
+// supplies synthetic cfg values outside Cargo's normal check-cfg registry.
+#![allow(unexpected_cfgs)]
+
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 #[cfg(not(any(kani, verus)))]
@@ -22,62 +26,63 @@ const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 /// dispatcher for arbitrary backend strings.
 #[cfg_attr(verus, verus_verify)]
 fn action_is_allowed(operation: &str, action: &str) -> bool {
-    match operation {
-        "read" => {
-            matches!(
-                action,
-                "first_run"
-                    | "overview"
-                    | "health"
-                    | "runners"
-                    | "host_resources"
-                    | "repository_activity"
-                    | "repo_detail"
-                    | "repo_bootstrap"
-                    | "config"
-                    | "gitrun_settings"
-                    | "security_summary"
-                    | "vault_secrets"
-                    | "gsr_status"
-                    | "gsr_events"
-                    | "service_logs"
-                    | "zizmor"
-                    | "logic_rules"
-                    | "vm_configs"
-                    | "hypervisor_decisions"
-                    | "kitty"
-                    | "repo_api_policies"
-                    | "dock_requirements"
-                    | "updates"
-                    | "updater_settings"
-                    | "updater_info"
-            ) || (cfg!(test) && action == "ipc_ping")
-        }
-        "write" => {
-            matches!(
-                action,
-                "connect_repository"
-                    | "vm_configs_replace"
-                    | "fast_stop"
-                    | "vault_set"
-                    | "vault_delete"
-                    | "zizmor_install"
-                    | "zizmor_disable"
-                    | "logic_rules_save"
-                    | "vm_save"
-                    | "vm_delete"
-                    | "hypervisor_respond"
-                    | "kitty_save"
-                    | "gitrun_settings_save"
-                    | "config_save"
-                    | "dashboard_settings_save"
-                    | "updater_settings_save"
-                    | "updater_operation_record"
-                    | "service_control"
-                    | "maintenance_task"
-                    | "json_recovery"
-            ) || (cfg!(test) && action == "ipc_test_write")
-        }
+    // Match byte patterns instead of str equality / matches!(str, ...).
+    // The latter lowers to memcmp, which creates an expensive CBMC builtin
+    // proof path for this closed, finite protocol vocabulary.
+    match operation.as_bytes() {
+        [b'r', b'e', b'a', b'd'] => matches!(
+            action.as_bytes(),
+            [b'f', b'i', b'r', b's', b't', b'_', b'r', b'u', b'n']
+                | [b'o', b'v', b'e', b'r', b'v', b'i', b'e', b'w']
+                | [b'h', b'e', b'a', b'l', b't', b'h']
+                | [b'r', b'u', b'n', b'n', b'e', b'r', b's']
+                | [b'h', b'o', b's', b't', b'_', b'r', b'e', b's', b'o', b'u', b'r', b'c', b'e', b's']
+                | [b'r', b'e', b'p', b'o', b's', b'i', b't', b'o', b'r', b'y', b'_', b'a', b'c', b't', b'i', b'v', b'i', b't', b'y']
+                | [b'r', b'e', b'p', b'o', b'_', b'd', b'e', b't', b'a', b'i', b'l']
+                | [b'r', b'e', b'p', b'o', b'_', b'b', b'o', b'o', b't', b's', b't', b'r', b'a', b'p']
+                | [b'c', b'o', b'n', b'f', b'i', b'g']
+                | [b'g', b'i', b't', b'r', b'u', b'n', b'_', b's', b'e', b't', b't', b'i', b'n', b'g', b's']
+                | [b's', b'e', b'c', b'u', b'r', b'i', b't', b'y', b'_', b's', b'u', b'm', b'm', b'a', b'r', b'y']
+                | [b'v', b'a', b'u', b'l', b't', b'_', b's', b'e', b'c', b'r', b'e', b't', b's']
+                | [b'g', b's', b'r', b'_', b's', b't', b'a', b't', b'u', b's']
+                | [b'g', b's', b'r', b'_', b'e', b'v', b'e', b'n', b't', b's']
+                | [b's', b'e', b'r', b'v', b'i', b'c', b'e', b'_', b'l', b'o', b'g', b's']
+                | [b'z', b'i', b'z', b'm', b'o', b'r']
+                | [b'l', b'o', b'g', b'i', b'c', b'_', b'r', b'u', b'l', b'e', b's']
+                | [b'v', b'm', b'_', b'c', b'o', b'n', b'f', b'i', b'g', b's']
+                | [b'h', b'y', b'p', b'e', b'r', b'v', b'i', b's', b'o', b'r', b'_', b'd', b'e', b'c', b'i', b's', b'i', b'o', b'n', b's']
+                | [b'k', b'i', b't', b't', b'y']
+                | [b'r', b'e', b'p', b'o', b'_', b'a', b'p', b'i', b'_', b'p', b'o', b'l', b'i', b'c', b'i', b'e', b's']
+                | [b'd', b'o', b'c', b'k', b'_', b'r', b'e', b'q', b'u', b'i', b'r', b'e', b'm', b'e', b'n', b't', b's']
+                | [b'u', b'p', b'd', b'a', b't', b'e', b's']
+                | [b'u', b'p', b'd', b'a', b't', b'e', b'r', b'_', b's', b'e', b't', b't', b'i', b'n', b'g', b's']
+                | [b'u', b'p', b'd', b'a', b't', b'e', b'r', b'_', b'i', b'n', b'f', b'o']
+                | [b'i', b'p', b'c', b'_', b'p', b'i', b'n', b'g'] if cfg!(test)
+        ),
+        [b'w', b'r', b'i', b't', b'e'] => matches!(
+            action.as_bytes(),
+            [b'c', b'o', b'n', b'n', b'e', b'c', b't', b'_', b'r', b'e', b'p', b'o', b's', b'i', b't', b'o', b'r', b'y']
+                | [b'v', b'm', b'_', b'c', b'o', b'n', b'f', b'i', b'g', b's', b'_', b'r', b'e', b'p', b'l', b'a', b'c', b'e']
+                | [b'f', b'a', b's', b't', b'_', b's', b't', b'o', b'p']
+                | [b'v', b'a', b'u', b'l', b't', b'_', b's', b'e', b't']
+                | [b'v', b'a', b'u', b'l', b't', b'_', b'd', b'e', b'l', b'e', b't', b'e']
+                | [b'z', b'i', b'z', b'm', b'o', b'r', b'_', b'i', b'n', b's', b't', b'a', b'l', b'l']
+                | [b'z', b'i', b'z', b'm', b'o', b'r', b'_', b'd', b'i', b's', b'a', b'b', b'l', b'e']
+                | [b'l', b'o', b'g', b'i', b'c', b'_', b'r', b'u', b'l', b'e', b's', b'_', b's', b'a', b'v', b'e']
+                | [b'v', b'm', b'_', b's', b'a', b'v', b'e']
+                | [b'v', b'm', b'_', b'd', b'e', b'l', b'e', b't', b'e']
+                | [b'h', b'y', b'p', b'e', b'r', b'v', b'i', b's', b'o', b'r', b'_', b'r', b'e', b's', b'p', b'o', b'n', b'd']
+                | [b'k', b'i', b't', b't', b'y', b'_', b's', b'a', b'v', b'e']
+                | [b'g', b'i', b't', b'r', b'u', b'n', b'_', b's', b'e', b't', b't', b'i', b'n', b'g', b's', b'_', b's', b'a', b'v', b'e']
+                | [b'c', b'o', b'n', b'f', b'i', b'g', b'_', b's', b'a', b'v', b'e']
+                | [b'd', b'a', b's', b'h', b'b', b'o', b'a', b'r', b'd', b'_', b's', b'e', b't', b't', b'i', b'n', b'g', b's', b'_', b's', b'a', b'v', b'e']
+                | [b'u', b'p', b'd', b'a', b't', b'e', b'r', b'_', b's', b'e', b't', b't', b'i', b'n', b'g', b's', b'_', b's', b'a', b'v', b'e']
+                | [b'u', b'p', b'd', b'a', b't', b'e', b'r', b'_', b'o', b'p', b'e', b'r', b'a', b't', b'i', b'o', b'n', b'_', b'r', b'e', b'c', b'o', b'r', b'd']
+                | [b's', b'e', b'r', b'v', b'i', b'c', b'e', b'_', b'c', b'o', b'n', b't', b'r', b'o', b'l']
+                | [b'm', b'a', b'i', b'n', b't', b'e', b'n', b'a', b'n', b'c', b'e', b'_', b't', b'a', b's', b'k']
+                | [b'j', b's', b'o', b'n', b'_', b'r', b'e', b'c', b'o', b'v', b'e', b'r', b'y']
+                | [b'i', b'p', b'c', b'_', b't', b'e', b's', b't', b'_', b'w', b'r', b'i', b't', b'e'] if cfg!(test)
+        ),
         _ => false,
     }
 }
@@ -912,7 +917,9 @@ mod verus_verification {
 }
 
 #[cfg(kani)]
+#[allow(dead_code)]
 fn main() {}
 
 #[cfg(verus)]
+#[allow(dead_code)]
 fn main() {}

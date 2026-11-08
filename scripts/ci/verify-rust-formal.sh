@@ -49,6 +49,8 @@ readonly required_harnesses=(
   "release_type_marker_is_a_closed_three_value_contract"
   "vm_name_shape_is_fail_closed_for_all_boolean_inputs"
   "cat_output_is_interactive_only"
+  "platform_abi_and_package_manager_names_are_stable"
+  "managed_service_names_do_not_cross_service_boundaries"
   "snapshot_name_length_is_bounded_for_all_usize_values"
 )
 readonly policy_harness="verification/kani/updater_policy.rs"
@@ -196,6 +198,7 @@ readonly -a proof_sources=(
   "crates/gitrun-updater/src/release_policy.rs"
   "crates/gitrun-scheduler/src/vm.rs"
   "crates/gitrun-cli/src/presenter.rs"
+  "crates/gitrun-platform/src/lib.rs"
 )
 
 for source in "${proof_sources[@]}"; do

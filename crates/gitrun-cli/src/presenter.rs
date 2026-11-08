@@ -1,36 +1,58 @@
+#[cfg(not(any(kani, verus)))]
 use crossterm::{cursor::MoveToNextLine, execute, terminal};
+#[cfg(not(any(kani, verus)))]
 use ratatui::{
     backend::CrosstermBackend,
     layout::Position,
     widgets::{Clear, Paragraph, Widget, Wrap},
     Terminal, TerminalOptions, Viewport,
 };
+#[cfg(not(any(kani, verus)))]
 use serde::Deserialize;
+#[cfg(not(any(kani, verus)))]
 use std::collections::BTreeMap;
+#[cfg(not(any(kani, verus)))]
 use std::fmt;
+#[cfg(not(any(kani, verus)))]
 use std::io::{self, IsTerminal, Write};
+#[cfg(not(any(kani, verus)))]
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[cfg(not(any(kani, verus)))]
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
+#[cfg(not(any(kani, verus)))]
 use std::thread::{self, JoinHandle};
+#[cfg(not(any(kani, verus)))]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[cfg(not(any(kani, verus)))]
 const CAT_STATES: &str = include_str!("cat/cat_states.json");
+#[cfg(not(any(kani, verus)))]
 const SECRET_ROLL_RANGE: u64 = 2_000;
+#[cfg(not(any(kani, verus)))]
 const KEBAB_ROLL_LIMIT: u64 = 3;
+#[cfg(not(any(kani, verus)))]
 const SECRET_ROLL_LIMIT: u64 = 1;
+#[cfg(not(any(kani, verus)))]
 const LIVE_REFRESH: Duration = Duration::from_millis(900);
+#[cfg(not(any(kani, verus)))]
 const LIVE_PANEL_HEIGHT: u16 = 4;
+#[cfg(not(any(kani, verus)))]
 const LIVE_MIN_ROWS: u16 = LIVE_PANEL_HEIGHT + 4;
 
+#[cfg(not(any(kani, verus)))]
 static ROLL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(not(any(kani, verus)))]
 type LiveTerminal = Terminal<CrosstermBackend<io::Stdout>>;
+#[cfg(not(any(kani, verus)))]
 type SharedTerminal = Arc<Mutex<LiveTerminal>>;
 
+#[cfg(not(any(kani, verus)))]
 static ACTIVE_TERMINAL: OnceLock<Mutex<Option<SharedTerminal>>> = OnceLock::new();
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub(crate) enum ValidationState {
     Ready,
     Reading,
@@ -55,6 +77,7 @@ pub(crate) enum ValidationState {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[cfg(not(any(kani, verus)))]
 struct CatStates {
     width: usize,
     height: usize,
@@ -63,16 +86,19 @@ struct CatStates {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[cfg(not(any(kani, verus)))]
 struct CatSprite {
     lines: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 enum LiveSelection {
     Validation(ValidationState),
     Named(String),
 }
 
+#[cfg(not(any(kani, verus)))]
 struct LiveHandle {
     stop: Arc<AtomicBool>,
     wake: Arc<Condvar>,
@@ -82,18 +108,21 @@ struct LiveHandle {
     signal_join: Option<JoinHandle<()>>,
 }
 
+#[cfg(not(any(kani, verus)))]
 pub(crate) struct CatPresenter {
     states: Option<Arc<CatStates>>,
     last_state: Option<ValidationState>,
     live: Option<LiveHandle>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Drop for CatPresenter {
     fn drop(&mut self) {
         self.stop_live();
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 impl CatPresenter {
     pub(crate) fn new(no_cat_override: bool) -> Self {
         if no_cat_override || !cat_allowed() {
@@ -354,6 +383,7 @@ impl CatPresenter {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub(crate) fn terminal_print(args: fmt::Arguments<'_>, stderr: bool, newline: bool) {
     let mut text = args.to_string();
     if newline {
@@ -383,6 +413,7 @@ pub(crate) fn terminal_print(args: fmt::Arguments<'_>, stderr: bool, newline: bo
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn cat_allowed() -> bool {
     cat_allowed_with(
         io::stdout().is_terminal(),
@@ -393,6 +424,24 @@ fn cat_allowed() -> bool {
     )
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns stdout_is_terminal && stderr_is_terminal && !no_cat && !ci && !term_is_dumb
+    )
+)]
+fn cat_is_allowed(
+    stdout_is_terminal: bool,
+    stderr_is_terminal: bool,
+    no_cat: bool,
+    ci: bool,
+    term_is_dumb: bool,
+) -> bool {
+    stdout_is_terminal && stderr_is_terminal && !no_cat && !ci && !term_is_dumb
+}
+
+#[cfg(not(any(kani, verus)))]
 fn cat_allowed_with(
     stdout_is_terminal: bool,
     stderr_is_terminal: bool,
@@ -400,9 +449,16 @@ fn cat_allowed_with(
     ci: bool,
     term: Option<&str>,
 ) -> bool {
-    !no_cat && !ci && term != Some("dumb") && stdout_is_terminal && stderr_is_terminal
+    cat_is_allowed(
+        stdout_is_terminal,
+        stderr_is_terminal,
+        no_cat,
+        ci,
+        term == Some("dumb"),
+    )
 }
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn spawn_signal_watcher(
     terminal: SharedTerminal,
     stop: Arc<AtomicBool>,
@@ -439,18 +495,21 @@ fn spawn_signal_watcher(
     }))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn restore_terminal_cursor(terminal: &SharedTerminal) {
     if let Ok(mut terminal) = terminal.lock() {
         let _ = terminal.show_cursor();
         let _ = terminal.backend_mut().flush();
     }
 }
+#[cfg(not(any(kani, verus)))]
 fn active_terminal() -> Option<SharedTerminal> {
     ACTIVE_TERMINAL
         .get()
         .and_then(|slot| slot.lock().ok().and_then(|active| active.clone()))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn activate_terminal(terminal: SharedTerminal) {
     let slot = ACTIVE_TERMINAL.get_or_init(|| Mutex::new(None));
     if let Ok(mut active) = slot.lock() {
@@ -458,6 +517,7 @@ fn activate_terminal(terminal: SharedTerminal) {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn deactivate_terminal(terminal: &SharedTerminal) {
     let Some(slot) = ACTIVE_TERMINAL.get() else {
         return;
@@ -477,6 +537,7 @@ fn deactivate_terminal(terminal: &SharedTerminal) {
 /// Return a validated ASCII sprite from the canonical cat-state catalogue.
 /// The management TUI uses this accessor so both interfaces share the same
 /// sprite definitions without reparsing the JSON on each redraw.
+#[cfg(not(any(kani, verus)))]
 pub(crate) fn cat_state_lines(state_name: &str) -> Option<Vec<String>> {
     static MASCOT_STATES: OnceLock<Option<CatStates>> = OnceLock::new();
 
@@ -493,6 +554,7 @@ pub(crate) fn cat_state_lines(state_name: &str) -> Option<Vec<String>> {
         .map(|sprite| sprite.lines.clone())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_states(states: &CatStates) -> bool {
     if states.width == 0 || states.height == 0 {
         return false;
@@ -509,6 +571,7 @@ fn validate_states(states: &CatStates) -> bool {
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn choose_cat_state(state: ValidationState) -> &'static str {
     if state == ValidationState::Success {
         match roll(SECRET_ROLL_RANGE) {
@@ -544,6 +607,7 @@ fn choose_cat_state(state: ValidationState) -> &'static str {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn live_state_name(state: ValidationState, tick: usize) -> &'static str {
     let sequence: &'static [&'static str] = match state {
         ValidationState::Ready => &["kitty", "seated", "cute"],
@@ -570,6 +634,7 @@ fn live_state_name(state: ValidationState, tick: usize) -> &'static str {
     sequence[tick % sequence.len()]
 }
 
+#[cfg(not(any(kani, verus)))]
 fn render_live_frame(
     terminal: &SharedTerminal,
     states: &CatStates,
@@ -632,6 +697,7 @@ fn render_live_frame(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn roll(max: u64) -> u64 {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -759,3 +825,68 @@ mod tests {
         );
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::cat_is_allowed;
+
+    #[kani::proof]
+    fn cat_output_is_interactive_only() {
+        let stdout_is_terminal: bool = kani::any();
+        let stderr_is_terminal: bool = kani::any();
+        let no_cat: bool = kani::any();
+        let ci: bool = kani::any();
+        let term_is_dumb: bool = kani::any();
+
+        let allowed = cat_is_allowed(
+            stdout_is_terminal,
+            stderr_is_terminal,
+            no_cat,
+            ci,
+            term_is_dumb,
+        );
+        assert_eq!(
+            allowed,
+            stdout_is_terminal && stderr_is_terminal && !no_cat && !ci && !term_is_dumb
+        );
+        assert!(!cat_is_allowed(false, true, false, false, false));
+        assert!(!cat_is_allowed(true, false, false, false, false));
+        assert!(!cat_is_allowed(true, true, true, false, false));
+        assert!(!cat_is_allowed(true, true, false, true, false));
+        assert!(!cat_is_allowed(true, true, false, false, true));
+        assert!(cat_is_allowed(true, true, false, false, false));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::cat_is_allowed;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn cat_output_is_interactive_only(
+            stdout_is_terminal: bool,
+            stderr_is_terminal: bool,
+            no_cat: bool,
+            ci: bool,
+            term_is_dumb: bool,
+        )
+            ensures
+                cat_is_allowed(
+                    stdout_is_terminal,
+                    stderr_is_terminal,
+                    no_cat,
+                    ci,
+                    term_is_dumb,
+                )
+                    == (stdout_is_terminal && stderr_is_terminal && !no_cat && !ci && !term_is_dumb),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

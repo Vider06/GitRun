@@ -27,6 +27,8 @@ readonly required_harnesses=(
   "workload_routing_byte_alphabet_is_exact"
   "workload_routing_id_requires_canonical_prefix_length_and_hex_case"
   "control_manager_action_allowlist_is_closed"
+  "matching_quote_bytes_is_exact_over_all_byte_pairs"
+  "env_token_unquoting_preserves_unmatched_and_unquoted_values"
 )
 readonly policy_harness="verification/kani/updater_policy.rs"
 readonly inventory="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-rust-source-inventory.tsv"
@@ -157,6 +159,7 @@ readonly -a proof_sources=(
   "crates/gitrun-gsr/src/agent.rs"
   "crates/gitrun-scheduler/src/docker.rs"
   "crates/gitrun-management/src/control_manager.rs"
+  "crates/gitrun-core/src/github_auth.rs"
 )
 
 for source in "${proof_sources[@]}"; do

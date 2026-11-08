@@ -16,17 +16,26 @@
 //!    queued workflow runs. This client follows the `Link: rel="next"`
 //!    header until exhausted.
 
+#[cfg(not(any(kani, verus)))]
 use gitrun_core::AppAuth;
+#[cfg(not(any(kani, verus)))]
 use serde::Deserialize;
+#[cfg(not(any(kani, verus)))]
 use std::collections::HashSet;
+#[cfg(not(any(kani, verus)))]
 use std::time::Duration;
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
+#[cfg(not(any(kani, verus)))]
 const API_BASE: &str = "https://api.github.com";
+#[cfg(not(any(kani, verus)))]
 const API_VERSION: &str = "2026-03-10";
+#[cfg(not(any(kani, verus)))]
 const USER_AGENT: &str = concat!("GitRun/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum GitHubError {
     #[error("GITHUB_TOKEN is not configured")]
     MissingToken,
@@ -48,10 +57,12 @@ pub enum GitHubError {
     Decode(#[from] serde_json::Error),
 }
 
+#[cfg(not(any(kani, verus)))]
 pub type Result<T> = std::result::Result<T, GitHubError>;
 
 /// Prevent malformed/repeated Link headers from trapping the scheduler in an
 /// infinite pagination loop. URLs have already been restricted to api.github.com.
+#[cfg(not(any(kani, verus)))]
 fn record_page_url(seen: &mut HashSet<String>, url: &str) -> Result<()> {
     if !seen.insert(url.to_owned()) {
         return Err(GitHubError::PaginationLoop(url.to_owned()));
@@ -60,6 +71,7 @@ fn record_page_url(seen: &mut HashSet<String>, url: &str) -> Result<()> {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct Runner {
     pub id: u64,
     pub name: String,
@@ -68,6 +80,7 @@ pub struct Runner {
     pub busy: bool,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Runner {
     pub fn is_online(&self) -> bool {
         self.status == "online"
@@ -75,12 +88,14 @@ impl Runner {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct RunnersResponse {
     #[serde(default)]
     runners: Vec<Runner>,
 }
 
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 pub struct RepositoryActivitySummary {
     pub repository: String,
     pub stars: u64,
@@ -91,6 +106,7 @@ pub struct RepositoryActivitySummary {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct RepositoryMetadataResponse {
     #[serde(default)]
     stargazers_count: u64,
@@ -100,23 +116,27 @@ struct RepositoryMetadataResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct SearchCountResponse {
     #[serde(default)]
     total_count: u64,
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct RegistrationTokenResponse {
     token: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct WorkflowRunsResponse {
     #[serde(default)]
     workflow_runs: Vec<WorkflowRun>,
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct WorkflowRun {
     id: u64,
     #[serde(default)]
@@ -134,6 +154,7 @@ struct WorkflowRun {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct WorkflowRunSummary {
     pub total: u32,
     pub queued: u32,
@@ -146,12 +167,14 @@ pub struct WorkflowRunSummary {
 /// An active self-hosted job paired with the exact registered runner name
 /// reported by GitHub. Used only for optional per-container resource telemetry.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct ActiveJobOnRunner {
     pub runner_name: String,
     pub job: QueuedJobInfo,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct QueuedJobInfo {
     pub run_id: u64,
     pub job_id: u64,
@@ -164,12 +187,14 @@ pub struct QueuedJobInfo {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct JobsResponse {
     #[serde(default)]
     jobs: Vec<Job>,
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct Job {
     #[serde(default)]
     id: u64,
@@ -190,6 +215,7 @@ struct Job {
 /// current workflow run back to the GitRun-managed runner container that
 /// hosted it.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct WorkflowJobInfo {
     pub id: u64,
     pub name: String,
@@ -201,6 +227,7 @@ pub struct WorkflowJobInfo {
 /// Authoritative workflow-run identity fetched from GitHub. Request-supplied
 /// workflow metadata is never accepted as authoritative without this lookup.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct WorkflowRunInfo {
     pub id: u64,
     pub name: String,
@@ -209,6 +236,7 @@ pub struct WorkflowRunInfo {
 
 /// Parse GitHub's RFC3339 run_started_at timestamp into Unix seconds without
 /// accepting partial dates, invalid calendar values, or unbounded numeric fields.
+#[cfg(not(any(kani, verus)))]
 fn job_targets_gitrun_runner(labels: &[String]) -> bool {
     labels
         .iter()
@@ -216,6 +244,7 @@ fn job_targets_gitrun_runner(labels: &[String]) -> bool {
         || gitrun_smart_scheduler::has_workload_routing_marker(labels)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn parse_github_timestamp_epoch(raw: &str) -> Option<u64> {
     let (date, time) = raw.trim().split_once('T')?;
     let mut date_parts = date.split('-');
@@ -308,6 +337,7 @@ mod timestamp_tests {
 
 /// Splits "owner/repo" into its two parts, validating the shape up front so
 /// every call site doesn't have to re-check it.
+#[cfg(not(any(kani, verus)))]
 fn split_repo(repo: &str) -> Result<(&str, &str)> {
     let mut parts = repo.splitn(2, '/');
     match (parts.next(), parts.next()) {
@@ -320,10 +350,12 @@ fn split_repo(repo: &str) -> Result<(&str, &str)> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_valid_owner_segment(segment: &str) -> bool {
     segment.len() <= 39 && is_valid_repo_segment(segment)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_valid_repo_segment(segment: &str) -> bool {
     !segment.is_empty()
         && segment != "."
@@ -334,6 +366,7 @@ fn is_valid_repo_segment(segment: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn encode_path_segment(segment: &str) -> String {
     let mut encoded = String::with_capacity(segment.len());
     for byte in segment.bytes() {
@@ -350,11 +383,13 @@ fn encode_path_segment(segment: &str) -> String {
 /// Where a `GitHubClient` gets its bearer token from. Either a static PAT
 /// (unchanged behavior from before GitHub App support existed) or a GitHub
 /// App installation, which mints and auto-refreshes short-lived tokens.
+#[cfg(not(any(kani, verus)))]
 enum TokenSource {
     StaticToken(String),
     App(AppAuth),
 }
 
+#[cfg(not(any(kani, verus)))]
 impl TokenSource {
     fn current_token(&self) -> Result<String> {
         match self {
@@ -367,6 +402,7 @@ impl TokenSource {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub struct GitHubClient {
     http: reqwest::blocking::Client,
     token: TokenSource,
@@ -382,28 +418,52 @@ pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const DEFAULT_API_ATTEMPTS: usize = 3;
 const MAX_API_ATTEMPTS: usize = 10;
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns attempts.clamp(1, MAX_API_ATTEMPTS)))]
+fn clamp_api_attempts(attempts: usize) -> usize {
+    attempts.clamp(1, MAX_API_ATTEMPTS)
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns matches!(status, 408 | 500 | 502 | 503 | 504)))]
+fn retryable_http_status(status: u16) -> bool {
+    matches!(status, 408 | 500 | 502 | 503 | 504)
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns 2u64.saturating_pow(attempt.saturating_sub(1) as u32).min(8)))]
+fn retry_delay_seconds(attempt: usize) -> u64 {
+    2_u64.saturating_pow(attempt.saturating_sub(1) as u32).min(8)
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(returns reset_epoch.saturating_sub(now_epoch).max(1) as u64)
+)]
+fn rate_limit_reset_seconds(reset_epoch: i64, now_epoch: i64) -> u64 {
+    reset_epoch.saturating_sub(now_epoch).max(1) as u64
+}
+
+#[cfg(not(any(kani, verus)))]
 fn parse_api_attempts(value: Option<&str>) -> usize {
     value
         .and_then(|value| value.trim().parse::<usize>().ok())
+        .map(clamp_api_attempts)
         .unwrap_or(DEFAULT_API_ATTEMPTS)
-        .clamp(1, MAX_API_ATTEMPTS)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn api_attempts() -> usize {
     parse_api_attempts(std::env::var("GITRUN_API_RETRIES").ok().as_deref())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn retryable_status(status: reqwest::StatusCode) -> bool {
-    matches!(
-        status,
-        reqwest::StatusCode::REQUEST_TIMEOUT
-            | reqwest::StatusCode::INTERNAL_SERVER_ERROR
-            | reqwest::StatusCode::BAD_GATEWAY
-            | reqwest::StatusCode::SERVICE_UNAVAILABLE
-            | reqwest::StatusCode::GATEWAY_TIMEOUT
-    )
+    retryable_http_status(status.as_u16())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn repository_runner_permission_hint(
     method: &reqwest::Method,
     url: &str,
@@ -434,20 +494,19 @@ fn repository_runner_permission_hint(
         _ => None,
     }
 }
+#[cfg(not(any(kani, verus)))]
 fn retry_delay(attempt: usize) -> Duration {
-    Duration::from_secs(
-        2_u64
-            .saturating_pow(attempt.saturating_sub(1) as u32)
-            .min(8),
-    )
+    Duration::from_secs(retry_delay_seconds(attempt))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn rate_limit_reset_delay(reset_epoch: i64, now_epoch: i64) -> Duration {
     // Header values are untrusted response data. Saturation avoids a debug
     // panic (or release-mode wrap) if reset_epoch is i64::MIN.
-    Duration::from_secs(reset_epoch.saturating_sub(now_epoch).max(1) as u64)
+    Duration::from_secs(rate_limit_reset_seconds(reset_epoch, now_epoch))
 }
 
+#[cfg(not(any(kani, verus)))]
 impl GitHubClient {
     pub fn new(token: impl Into<String>) -> Result<Self> {
         Self::with_timeouts(token, DEFAULT_CONNECT_TIMEOUT, DEFAULT_REQUEST_TIMEOUT)
@@ -1322,6 +1381,7 @@ impl GitHubClient {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct ContentsEntry {
     name: String,
     #[serde(rename = "type")]
@@ -1329,6 +1389,7 @@ struct ContentsEntry {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct ContentsFile {
     /// Base64-encoded file content, GitHub-style: whitespace/newlines
     /// interspersed for readability in raw API responses, so this must be
@@ -1342,6 +1403,7 @@ struct ContentsFile {
 /// for readability in raw API responses). Returns the decoding error to the
 /// caller so a workflow that was not actually retrieved is never mistaken for
 /// an empty, successfully fetched file.
+#[cfg(not(any(kani, verus)))]
 fn decode_contents_base64(raw: &str) -> std::result::Result<String, String> {
     use base64::Engine;
     let cleaned: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
@@ -1353,6 +1415,7 @@ fn decode_contents_base64(raw: &str) -> std::result::Result<String, String> {
 
 /// Parses the `Link` header for a `rel="next"` URL, GitHub's standard
 /// pagination mechanism (RFC 8288). Returns `None` when there is no next page.
+#[cfg(not(any(kani, verus)))]
 fn parse_next_link(headers: &reqwest::header::HeaderMap) -> Option<String> {
     let raw = headers.get(reqwest::header::LINK)?.to_str().ok()?;
     split_link_values(raw).into_iter().find_map(|part| {
@@ -1392,6 +1455,7 @@ fn parse_next_link(headers: &reqwest::header::HeaderMap) -> Option<String> {
 /// Splits a Link header into link-values while respecting quoted strings.
 /// A comma inside a quoted parameter value therefore cannot accidentally
 /// terminate the current link-value.
+#[cfg(not(any(kani, verus)))]
 fn split_link_values(raw: &str) -> Vec<&str> {
     let mut values = Vec::new();
     let mut start = 0;
@@ -1678,3 +1742,84 @@ mod tests {
         );
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{clamp_api_attempts, rate_limit_reset_seconds, retry_delay_seconds, retryable_http_status, MAX_API_ATTEMPTS};
+
+    #[kani::proof]
+    fn api_retry_count_is_clamped_for_all_usize_inputs() {
+        let attempts: usize = kani::any();
+        let actual = clamp_api_attempts(attempts);
+        assert!(actual >= 1);
+        assert!(actual <= MAX_API_ATTEMPTS);
+        assert_eq!(actual, attempts.clamp(1, MAX_API_ATTEMPTS));
+    }
+
+    #[kani::proof]
+    fn retryable_http_statuses_are_a_closed_set() {
+        let status: u16 = kani::any();
+        let expected = matches!(status, 408 | 500 | 502 | 503 | 504);
+        assert_eq!(retryable_http_status(status), expected);
+    }
+
+    #[kani::proof]
+    fn retry_backoff_is_bounded_to_one_through_eight_seconds() {
+        let attempt: usize = kani::any();
+        let delay = retry_delay_seconds(attempt);
+        assert!(delay >= 1);
+        assert!(delay <= 8);
+        assert_eq!(delay, 2_u64.saturating_pow(attempt.saturating_sub(1) as u32).min(8));
+    }
+
+    #[kani::proof]
+    fn rate_limit_wait_is_saturating_and_at_least_one_second() {
+        let reset: i64 = kani::any();
+        let now: i64 = kani::any();
+        let delay = rate_limit_reset_seconds(reset, now);
+        assert!(delay >= 1);
+        assert_eq!(delay, reset.saturating_sub(now).max(1) as u64);
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{clamp_api_attempts, rate_limit_reset_seconds, retry_delay_seconds, retryable_http_status, MAX_API_ATTEMPTS};
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn api_retry_count_is_clamped_for_all_usize_inputs(attempts: usize)
+            ensures
+                clamp_api_attempts(attempts) >= 1,
+                clamp_api_attempts(attempts) <= MAX_API_ATTEMPTS,
+        {
+        }
+
+        proof fn retryable_http_statuses_are_a_closed_set(status: u16)
+            ensures
+                retryable_http_status(status) == matches!(status, 408 | 500 | 502 | 503 | 504),
+        {
+        }
+
+        proof fn retry_backoff_is_bounded_to_one_through_eight_seconds(attempt: usize)
+            ensures
+                retry_delay_seconds(attempt) >= 1,
+                retry_delay_seconds(attempt) <= 8,
+        {
+        }
+
+        proof fn rate_limit_wait_is_saturating_and_at_least_one_second(reset: i64, now: i64)
+            ensures
+                rate_limit_reset_seconds(reset, now) >= 1,
+                rate_limit_reset_seconds(reset, now)
+                    == reset.saturating_sub(now).max(1) as u64,
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

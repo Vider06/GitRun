@@ -184,7 +184,7 @@ fn estimate_peak(values: &[u32]) -> u32 {
     let trend = recent_mean
         .saturating_sub(older_mean)
         .min(u64::from(p90 / 2 + 2)) as u32;
-    p90.saturating_add(trend).min(100_000)
+    bounded_peak_demand(p90, trend)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

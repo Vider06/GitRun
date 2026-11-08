@@ -89,33 +89,33 @@ impl GitRunApi {
         verus_spec(returns self.supports_operation(operation))
     )]
     pub const fn supports_operation(self, operation: GitRunOperation) -> bool {
-        match (self, operation) {
+        matches!(
+            (self, operation),
             (Self::GitVaultRun, GitRunOperation::Read)
-            | (Self::GitVaultRun, GitRunOperation::Write)
-            | (Self::GitVaultRun, GitRunOperation::Exists)
-            | (Self::GitVaultRun, GitRunOperation::Delete)
-            | (Self::GitVaultRun, GitRunOperation::List)
-            | (Self::GitDockRun, GitRunOperation::Connect)
-            | (Self::GitDockRun, GitRunOperation::Disconnect)
-            | (Self::GitDockRun, GitRunOperation::Read)
-            | (Self::GitDockRun, GitRunOperation::Write)
-            | (Self::GitDockRun, GitRunOperation::Execute)
-            | (Self::GitDockRun, GitRunOperation::Melt)
-            | (Self::GitDockRun, GitRunOperation::Mount)
-            | (Self::GitDockRun, GitRunOperation::Unmount)
-            | (Self::GitSaveRun, GitRunOperation::File)
-            | (Self::GitSaveRun, GitRunOperation::Logs)
-            | (Self::GitRegisterRun, GitRunOperation::Register)
-            | (Self::GitInstallRun, GitRunOperation::Install)
-            | (Self::GitInstallRun, GitRunOperation::Remove)
-            | (Self::GitInstallRun, GitRunOperation::Update)
-            | (Self::GitReadRun, GitRunOperation::Read)
-            | (Self::GitWriteRun, GitRunOperation::Write)
-            | (Self::GitVerifyRun, GitRunOperation::Verify)
-            | (Self::GitStatusRun, GitRunOperation::Status)
-            | (Self::GitDispatchRun, GitRunOperation::Plan) => true,
-            _ => false,
-        }
+                | (Self::GitVaultRun, GitRunOperation::Write)
+                | (Self::GitVaultRun, GitRunOperation::Exists)
+                | (Self::GitVaultRun, GitRunOperation::Delete)
+                | (Self::GitVaultRun, GitRunOperation::List)
+                | (Self::GitDockRun, GitRunOperation::Connect)
+                | (Self::GitDockRun, GitRunOperation::Disconnect)
+                | (Self::GitDockRun, GitRunOperation::Read)
+                | (Self::GitDockRun, GitRunOperation::Write)
+                | (Self::GitDockRun, GitRunOperation::Execute)
+                | (Self::GitDockRun, GitRunOperation::Melt)
+                | (Self::GitDockRun, GitRunOperation::Mount)
+                | (Self::GitDockRun, GitRunOperation::Unmount)
+                | (Self::GitSaveRun, GitRunOperation::File)
+                | (Self::GitSaveRun, GitRunOperation::Logs)
+                | (Self::GitRegisterRun, GitRunOperation::Register)
+                | (Self::GitInstallRun, GitRunOperation::Install)
+                | (Self::GitInstallRun, GitRunOperation::Remove)
+                | (Self::GitInstallRun, GitRunOperation::Update)
+                | (Self::GitReadRun, GitRunOperation::Read)
+                | (Self::GitWriteRun, GitRunOperation::Write)
+                | (Self::GitVerifyRun, GitRunOperation::Verify)
+                | (Self::GitStatusRun, GitRunOperation::Status)
+                | (Self::GitDispatchRun, GitRunOperation::Plan)
+        )
     }
 }
 

@@ -244,6 +244,7 @@ def main() -> int:
                 if (
                     "not applicable" not in kani_obligations.lower()
                     or "not applicable" not in verus_obligations.lower()
+                    or kani_obligations.casefold() == verus_obligations.casefold()
                 ):
                     issues.append(
                         f"Manifest line {line}: NOT_APPLICABLE requires separate Kani and Verus limitation statements."

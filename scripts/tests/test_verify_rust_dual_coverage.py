@@ -187,13 +187,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
         result = DUAL_COVERAGE.main()
 
         self.assertEqual(result, 1)
-        self.assertIn(
-            "KANI entrypoint does not exist",
-            self.capture_summary_errors(),
-        )
-
-    def capture_summary_errors(self) -> str:
-        return self.summary.read_text(encoding="utf-8") if self.summary.exists() else ""
+        self.assertIn("Manifest / ownership issues | 1", self.summary.read_text())
 
 
 if __name__ == "__main__":

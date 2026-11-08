@@ -56,6 +56,10 @@ The current Kani proof targets are:
   `decision_filename_literal_alphabet_is_closed` in
   `crates/gitrun-core/src/hypervisor_decision.rs`: the VM decision filename
   byte encoding is injective and keeps escaped bytes outside the literal range.
+- `github_app_numeric_id_must_be_positive` and
+  `github_app_id_string_validation_rejects_invalid_values` in
+  `crates/gitrun-core/src/app_auth.rs`: App IDs must be positive decimal
+  integers, with explicit zero, non-decimal, and overflow boundary cases.
 - The standalone `verification/kani/updater_policy.rs` harness also proves
   representative allow/deny outcomes using the imported production policy.
 
@@ -82,7 +86,7 @@ Verus is pinned to `0.2026.11.02.8bf68ee` and installed by
 Rust toolchain (`1.99.0`).
 
 The toolchain smoke proof in `verification/verus/smoke.rs` remains separate
-from source coverage. Production Verus properties now cover the updater policy and ten additional
+from source coverage. Production Verus properties now cover the updater policy and eleven additional
 source modules:
 
 - `UpdatePolicy::accepts_release_type` in
@@ -115,6 +119,8 @@ source modules:
 - The hypervisor decision protocol in
   `crates/gitrun-core/src/hypervisor_decision.rs`, proving the injective
   byte-code mapping and separation of literal and escaped values.
+- The GitHub App identity policy in `crates/gitrun-core/src/app_auth.rs`,
+  proving the positive-ID predicate for all u64 values.
 
 The standalone updater-policy entrypoint also checks representative policy
 outcomes through its imported production module.
@@ -142,13 +148,14 @@ both verifier processes completed successfully for every mapped source; a
 smoke proof, compilation, inventory entry, or lint result cannot substitute.
 
 **Coverage at this PR revision:** the repository has 75 tracked Rust source
-files. Twelve rows are marked `IMPLEMENTED`: eleven production source modules
+files. Thirteen rows are marked `IMPLEMENTED`: twelve production source modules
 and the standalone updater verifier harness. The implemented production
 properties cover updater policy, API-operation authorization, runner bounds,
 watchdog PID conversion, JSON recovery action names, scheduler cooldown
 clamping, predictive queue growth, Dock operation wire names, Kitty automation
-bounds and action names, command-policy action/byte rules, and hypervisor
-filename byte encoding. The remaining 63 rows are still `PLANNED`. These
+bounds and action names, command-policy action/byte rules, hypervisor filename
+byte encoding, and GitHub App identifier validation. The remaining 62 rows
+are still `PLANNED`. These
 entries describe authored proof targets, not `PROVEN` results: both verifier
 processes must complete successfully before a source is reported as covered. The gate
 remains intentionally red until every tracked Rust file has a reviewed,

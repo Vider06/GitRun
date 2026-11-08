@@ -61,6 +61,8 @@ readonly required_harnesses=(
   "recovery_critical_severity_classification_is_exact"
   "environment_variable_byte_alphabet_is_exact"
   "environment_variable_names_follow_shell_identifier_rules"
+  "repository_identity_byte_alphabet_is_exact"
+  "repository_identity_requires_exactly_two_safe_segments"
   "platform_abi_and_package_manager_names_are_stable"
   "managed_service_names_do_not_cross_service_boundaries"
   "ban_expiry_timestamp_saturates_for_all_u64_inputs"
@@ -220,6 +222,7 @@ readonly -a proof_sources=(
   "crates/gitrun-management/src/backend.rs"
   "crates/gitrun-recovery/src/lib.rs"
   "crates/gitrun-scheduler/src/lib.rs"
+  "crates/gitrun-scheduler/src/state.rs"
   "crates/gitrun-scheduler/src/gsr_poll.rs"
 )
 

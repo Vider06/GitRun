@@ -53,6 +53,8 @@ readonly required_harnesses=(
   "retryable_http_statuses_are_a_closed_set"
   "retry_backoff_is_bounded_to_one_through_eight_seconds"
   "rate_limit_wait_is_saturating_and_at_least_one_second"
+  "registry_separator_is_exact_over_all_bytes"
+  "image_pull_decision_distinguishes_local_and_registry_references"
   "platform_abi_and_package_manager_names_are_stable"
   "managed_service_names_do_not_cross_service_boundaries"
   "ban_expiry_timestamp_saturates_for_all_u64_inputs"
@@ -206,6 +208,7 @@ readonly -a proof_sources=(
   "crates/gitrun-cli/src/presenter.rs"
   "crates/gitrun-platform/src/lib.rs"
   "crates/gitrun-scheduler/src/github.rs"
+  "crates/gitrun-scheduler/src/gtuu.rs"
   "crates/gitrun-scheduler/src/gsr_poll.rs"
 )
 

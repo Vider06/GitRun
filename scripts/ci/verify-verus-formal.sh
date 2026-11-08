@@ -41,6 +41,7 @@ readonly -a production_sources=(
   "crates/gitrun-gsr/src/exec_supervisor.rs"
   "crates/gitrun-core/src/state.rs"
   "crates/gitrun-management/src/backend.rs"
+  "crates/gitrun-recovery/src/lib.rs"
   "crates/gitrun-scheduler/src/gsr_poll.rs"
 )
 phase=preflight

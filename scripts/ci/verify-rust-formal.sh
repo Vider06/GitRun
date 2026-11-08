@@ -24,9 +24,9 @@ readonly required_harnesses=(
   "github_app_id_string_validation_rejects_invalid_values"
 )
 readonly policy_harness="verification/kani/updater_policy.rs"
-readonly inventory="\${RUNNER_TEMP:-\${TMPDIR:-/tmp}}/gitrun-rust-source-inventory.tsv"
-readonly coverage="\${RUNNER_TEMP:-\${TMPDIR:-/tmp}}/gitrun-kani-source-coverage.tsv"
-readonly results="\${RUNNER_TEMP:-\${TMPDIR:-/tmp}}/gitrun-kani-proof-results.tsv"
+readonly inventory="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-rust-source-inventory.tsv"
+readonly coverage="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-kani-source-coverage.tsv"
+readonly results="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-kani-proof-results.tsv"
 phase=preflight
 
 record_result() {
@@ -41,12 +41,12 @@ run_kani_target() {
   local -a sources=("$@")
   local source
   if kani "$entrypoint"; then
-    for source in "\${sources[@]}"; do
+    for source in "${sources[@]}"; do
       record_result "$source" PROVEN
     done
   else
     local rc=$?
-    for source in "\${sources[@]}"; do
+    for source in "${sources[@]}"; do
       record_result "$source" FAILED
     done
     return "$rc"
@@ -86,7 +86,7 @@ with open(inventory, newline="", encoding="utf-8") as source, open(
 PY
   fi
 
-  if [ -n "\${GITHUB_STEP_SUMMARY:-}" ]; then
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     python3 - "$results" "$GITHUB_STEP_SUMMARY" "$phase" "$rc" <<'PY'
 import csv
 import sys
@@ -150,7 +150,7 @@ readonly -a proof_sources=(
   "crates/gitrun-core/src/app_auth.rs"
 )
 
-for source in "\${proof_sources[@]}"; do
+for source in "${proof_sources[@]}"; do
   if ! test -s "$source"; then
     echo "Required Kani proof source is missing: $source" >&2
     exit 1
@@ -163,9 +163,9 @@ if ! test -s "$policy_harness"; then
 fi
 
 phase=coverage
-for harness in "\${required_harnesses[@]}"; do
+for harness in "${required_harnesses[@]}"; do
   found=false
-  for source in "\${proof_sources[@]}" "crates/gitrun-updater/src/policy_logic.rs"; do
+  for source in "${proof_sources[@]}" "crates/gitrun-updater/src/policy_logic.rs"; do
     if grep -B5 -F "fn $harness()" "$source" | grep -Fq "#[kani::proof]"; then
       found=true
       break
@@ -178,13 +178,13 @@ for harness in "\${required_harnesses[@]}"; do
 done
 
 proof_count="$(grep -Rho --include='*.rs' '#\[kani::proof\]' crates | wc -l | tr -d '[:space:]')"
-if [[ "$proof_count" -lt "\${#required_harnesses[@]}" ]]; then
+if [[ "$proof_count" -lt "${#required_harnesses[@]}" ]]; then
   echo "Formal verification has too few proof harnesses: $proof_count." >&2
   exit 1
 fi
 
 echo "Kani version: $kani_version"
-echo "Required production proof harnesses: \${required_harnesses[*]}"
+echo "Required production proof harnesses: ${required_harnesses[*]}"
 echo "Total source proof annotations: $proof_count"
 
 phase=proof
@@ -192,7 +192,7 @@ run_kani_target "$policy_harness" \
   "crates/gitrun-updater/src/policy_logic.rs" \
   "verification/kani/updater_policy.rs"
 
-for source in "\${proof_sources[@]}"; do
+for source in "${proof_sources[@]}"; do
   run_kani_target "$source" "$source"
 done
 

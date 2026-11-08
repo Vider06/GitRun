@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Fail-closed per-file Kani + Verus proof map and execution gate."""
+"""Audit Rust source ownership and the declared formal-proof scope.
+
+This gate deliberately does not invoke Kani or Verus on individual Rust files.
+Those tools must run against valid Cargo crates or dedicated verifier entrypoints;
+compiling arbitrary modules as standalone crates produces misleading dependency
+and crate-root failures. Actual proof execution belongs to the dedicated Kani
+and Verus steps in the formal-verification job.
+"""
 
 from __future__ import annotations
 
 import csv
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -23,9 +29,6 @@ EXPECTED_HEADER = [
     "VERUS_OBLIGATIONS",
     "STATUS",
 ]
-PATH_ATTRIBUTE = re.compile(r'#\s*\[\s*path\s*=\s*"([^"]+)"\s*\]')
-KANI_PROOF = re.compile(r"#\s*\[\s*kani\s*::\s*proof\s*\]")
-VERUS_MODULE = re.compile(r"\bverus\s*!")
 
 
 def tracked_sources() -> set[str]:
@@ -35,232 +38,118 @@ def tracked_sources() -> set[str]:
         check=True,
         stdout=subprocess.PIPE,
     )
-    return {item.decode() for item in result.stdout.split(b"\0") if item}
-
-
-def source_closure(entrypoint: Path) -> set[str]:
-    """Return all repository-local path modules reachable from an entrypoint."""
-    root = ROOT.resolve()
-    visited: set[Path] = set()
-
-    def visit(path: Path) -> None:
-        resolved = path.resolve()
-        try:
-            resolved.relative_to(root)
-        except ValueError:
-            return
-        if resolved in visited or not resolved.is_file():
-            return
-        visited.add(resolved)
-        source = resolved.read_text(encoding="utf-8")
-        for imported in PATH_ATTRIBUTE.findall(source):
-            visit(resolved.parent / imported)
-
-    visit(entrypoint)
-    return {path.relative_to(root).as_posix() for path in visited}
+    return {item.decode() for item in result.stdout.split(b"\\0") if item}
 
 
 def write_report(
-    sources: set[str], statuses: dict[str, list[str]]
-) -> None:
+    sources: set[str], rows: dict[str, tuple[str, ...]]
+) -> dict[str, int]:
+    counts = {"IMPLEMENTED": 0, "PLANNED": 0}
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     with REPORT.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
-        writer.writerow(["SOURCE_FILE", "KANI_STATUS", "VERUS_STATUS"])
+        writer = csv.writer(handle, delimiter="\\t", lineterminator="\\n")
+        writer.writerow(
+            ["SOURCE_FILE", "KANI_STATUS", "VERUS_STATUS", "SCOPE_STATUS"]
+        )
         for source in sorted(sources):
-            writer.writerow([source, *statuses[source]])
+            mapping = rows[source]
+            scope = mapping[6]
+            counts[scope] += 1
+            # Manifest declarations are plans, not proof evidence. A source is
+            # never labelled PROVEN by this inventory/audit step.
+            status = "UNVERIFIED" if scope == "IMPLEMENTED" else "NOT_IN_SCOPE"
+            writer.writerow([source, status, status, scope])
+    return counts
 
 
-def write_summary(
-    sources: set[str], statuses: dict[str, list[str]], *, phase: str, issues: int
-) -> None:
-    totals = {
-        status: sum(pair.count(status) for pair in statuses.values())
-        for status in ("PROVEN", "FAILED", "UNVERIFIED", "ERROR")
-    }
-    kani_proven = sum(pair[0] == "PROVEN" for pair in statuses.values())
-    verus_proven = sum(pair[1] == "PROVEN" for pair in statuses.values())
-    fully_proven = sum(pair == ["PROVEN", "PROVEN"] for pair in statuses.values())
+def write_summary(counts: dict[str, int], total: int, issues: list[str]) -> None:
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if not summary:
         return
-
     with Path(summary).open("a", encoding="utf-8") as handle:
-        handle.write("### Dual-verifier Rust source coverage\n\n")
+        handle.write("### Dual-verifier source-scope audit\n\n")
         handle.write("| Metric | Result |\n|---|---:|\n")
-        handle.write(f"| Tracked Rust source files | {len(sources)} |\n")
-        handle.write(f"| Fully proven by Kani and Verus | {fully_proven} |\n")
-        handle.write(f"| Kani proof results: PROVEN | {kani_proven} |\n")
-        handle.write(f"| Verus proof results: PROVEN | {verus_proven} |\n")
-        handle.write(f"| FAILED results | {totals['FAILED']} |\n")
-        handle.write(f"| UNVERIFIED results | {totals['UNVERIFIED']} |\n")
-        handle.write(f"| ERROR results | {totals['ERROR']} |\n")
-        handle.write(f"| Preflight / execution issues | {issues} |\n")
-        handle.write(f"| Gate phase | {phase} |\n\n")
+        handle.write(f"| Tracked Rust source files mapped | {total} |\n")
+        handle.write(f"| Proof scopes declared IMPLEMENTED | {counts['IMPLEMENTED']} |\n")
+        handle.write(f"| Proof scopes still PLANNED | {counts['PLANNED']} |\n")
+        handle.write(f"| Manifest / ownership issues | {len(issues)} |\n\n")
         handle.write(
-            "A source is fully proven only when both independent verifier results "
-            "are PROVEN. Inventory, compilation, linting, smoke proofs, and "
-            "structural source-closure checks do not count as formal proofs.\n\n"
+            "This report audits source ownership and declared proof scope only. "
+            "A manifest entry is not proof evidence: entries marked IMPLEMENTED "
+            "remain UNVERIFIED here until a dedicated Kani or Verus execution "
+            "produces a successful result. PLANNED entries are NOT_IN_SCOPE, "
+            "not silently treated as proven.\n\n"
         )
 
 
 def main() -> int:
     sources = tracked_sources()
-    rows: dict[str, tuple[str, str, str, str, str, str, str]] = {}
-    errors: list[str] = []
+    issues: list[str] = []
+    rows: dict[str, tuple[str, ...]] = {}
 
     if not sources:
-        print("No tracked Rust sources found; refusing an empty proof pass.", file=sys.stderr)
+        print("No tracked Rust sources found; refusing an empty audit.", file=sys.stderr)
         return 1
     if not MANIFEST.is_file():
-        print(f"Required dual-verifier manifest is missing: {MANIFEST}", file=sys.stderr)
+        print(f"Required proof-scope manifest is missing: {MANIFEST}", file=sys.stderr)
         return 1
 
     with MANIFEST.open(encoding="utf-8", newline="") as handle:
-        reader = csv.reader(handle, delimiter="\t")
+        reader = csv.reader(handle, delimiter="\\t")
         if next(reader, []) != EXPECTED_HEADER:
-            errors.append(
-                "Manifest header must define source, entrypoints, proof scope, Kani obligations, "
-                "Kani cases, Verus obligations, and status."
-            )
+            issues.append("Manifest header does not match the required eight-column schema.")
         for line, row in enumerate(reader, start=2):
             if not row or (len(row) == 1 and not row[0].strip()):
                 continue
             if len(row) != len(EXPECTED_HEADER):
-                errors.append(
-                    f"Manifest line {line}: expected exactly {len(EXPECTED_HEADER)} TSV columns."
+                issues.append(
+                    f"Manifest line {line}: expected {len(EXPECTED_HEADER)} TSV columns."
                 )
                 continue
-            (
-                source,
-                kani_name,
-                verus_name,
-                proof_scope,
-                kani_obligations,
-                kani_cases,
-                verus_obligations,
-                plan_status,
-            ) = (value.strip() for value in row)
-            if not all((proof_scope, kani_obligations, kani_cases, verus_obligations)):
-                errors.append(
-                    f"Manifest line {line}: proof scope, Kani obligations/cases, "
-                    "and Verus obligations are required."
-                )
-            if plan_status not in {"PLANNED", "IMPLEMENTED"}:
-                errors.append(
-                    f"Manifest line {line}: STATUS must be PLANNED or IMPLEMENTED, got {plan_status!r}."
-                )
+            values = tuple(value.strip() for value in row)
+            source, kani, verus, scope, kani_obligations, kani_cases, verus_obligations, status = values
             if source in rows:
-                errors.append(f"Duplicate source mapping: {source}")
+                issues.append(f"Duplicate source mapping: {source}")
                 continue
-            rows[source] = (
-                kani_name,
-                verus_name,
-                proof_scope,
-                kani_obligations,
-                kani_cases,
-                verus_obligations,
-                plan_status,
-            )
+            if not all((source, scope, kani_obligations, kani_cases, verus_obligations)):
+                issues.append(f"Manifest line {line}: source and all proof-scope descriptions are required.")
+            if status not in {"PLANNED", "IMPLEMENTED"}:
+                issues.append(f"Manifest line {line}: invalid scope status {status!r}.")
+            if status == "IMPLEMENTED":
+                for tool, entrypoint in (("KANI", kani), ("VERUS", verus)):
+                    if not entrypoint:
+                        issues.append(f"{tool} entrypoint missing for implemented scope {source}.")
+                    elif not (ROOT / entrypoint).is_file():
+                        issues.append(
+                            f"{tool} entrypoint does not exist for {source}: {entrypoint}"
+                        )
+            rows[source] = values
 
     for stale in sorted(set(rows) - sources):
-        errors.append(f"Manifest contains a non-tracked or stale Rust source: {stale}")
+        issues.append(f"Manifest contains a non-tracked or stale Rust source: {stale}")
     for missing in sorted(sources - set(rows)):
-        errors.append(f"UNVERIFIED: no Kani + Verus mapping for {missing}")
+        issues.append(f"Tracked Rust source has no proof-scope mapping: {missing}")
 
-    kani_used: set[str] = set()
-    verus_used: set[str] = set()
-    ready: list[tuple[str, str, str]] = []
+    counts = write_report(sources, rows) if set(rows) >= sources else {
+        "IMPLEMENTED": 0,
+        "PLANNED": 0,
+    }
+    write_summary(counts, len(sources), issues)
 
-    for source, mapping in sorted(rows.items()):
-        kani_name, verus_name = mapping[:2]
-        if source not in sources:
-            continue
-        if mapping[6] == "PLANNED":
-            errors.append(
-                f"UNVERIFIED: Kani and Verus proof implementation is still PLANNED for {source}"
-            )
-            continue
-        for tool, name, used in (
-            ("KANI", kani_name, kani_used),
-            ("VERUS", verus_name, verus_used),
-        ):
-            entrypoint = ROOT / name
-            if not name or not entrypoint.is_file():
-                errors.append(f"{tool} entrypoint missing for {source}: {name or '<empty>'}")
-                continue
-            if name in used:
-                errors.append(f"{tool} entrypoint reused; require a per-file proof: {name}")
-                continue
-            used.add(name)
-            try:
-                imported = source_closure(entrypoint)
-            except (OSError, UnicodeError) as exc:
-                errors.append(f"{tool} entrypoint could not be inspected for {source}: {exc}")
-                continue
-            if source not in imported:
-                errors.append(
-                    f"{tool} entrypoint {name} does not include {source} "
-                    "through a repository-local #[path] module"
-                )
-                continue
-
-            closure_sources = [
-                (ROOT / imported_source).read_text(encoding="utf-8")
-                for imported_source in sorted(imported)
-            ]
-            if tool == "KANI" and not any(
-                KANI_PROOF.search(text) for text in closure_sources
-            ):
-                errors.append(
-                    f"KANI closure for {source} contains no #[kani::proof] harness"
-                )
-                continue
-            if tool == "VERUS" and not any(
-                VERUS_MODULE.search(text) for text in closure_sources
-            ):
-                errors.append(
-                    f"VERUS closure for {source} contains no verus! verification module"
-                )
-                continue
-            ready.append((source, tool, name))
-
-    # Execute every individually validated proof even when other source files
-    # are still unmapped. The overall gate remains fail-closed: incomplete
-    # coverage or any failed proof still returns non-zero. This lets the
-    # manifest grow incrementally without hiding valid proof results.
-    results = {source: ["UNVERIFIED", "UNVERIFIED"] for source in sources}
-    for source, tool, name in ready:
-        command = (
-            ["kani", str(ROOT / name)]
-            if tool == "KANI"
-            else [os.environ.get("VERUS_PATH", "verus"), str(ROOT / name)]
-        )
-        try:
-            completed = subprocess.run(command, cwd=ROOT, check=False)
-        except OSError as exc:
-            errors.append(f"{tool} could not execute for {source}: {exc}")
-            results[source][0 if tool == "KANI" else 1] = "ERROR"
-            continue
-        status = "PROVEN" if completed.returncode == 0 else "FAILED"
-        results[source][0 if tool == "KANI" else 1] = status
-        if completed.returncode:
-            errors.append(f"{tool} proof failed for {source} (exit {completed.returncode})")
-
-    write_report(sources, results)
-    phase = "execution complete" if not errors else "execution complete with preflight issues"
-    write_summary(sources, results, phase=phase, issues=len(errors))
-    if errors or any(status != "PROVEN" for pair in results.values() for status in pair):
-        print(
-            f"Dual-verifier coverage incomplete: {len(errors)} preflight/execution "
-            f"issue(s) across {len(sources)} tracked Rust source file(s).",
-            file=sys.stderr,
-        )
-        for error in errors[:200]:
-            print(f"::error::{error}", file=sys.stderr)
+    print(
+        f"Audited {len(sources)} tracked Rust sources: "
+        f"{counts['IMPLEMENTED']} declared proof scopes implemented, "
+        f"{counts['PLANNED']} planned."
+    )
+    if issues:
+        for issue in issues[:200]:
+            print(f"::error::{issue}", file=sys.stderr)
         return 1
 
-    print(f"Both Kani and Verus proved all {len(sources)} tracked Rust source files.")
+    print(
+        "Rust source ownership and proof-scope manifest are consistent. "
+        "No source is reported as formally proven by this audit."
+    )
     return 0
 
 

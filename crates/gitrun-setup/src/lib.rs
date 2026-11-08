@@ -4110,7 +4110,8 @@ mod kani_verification {
             "GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdeg"
         ));
         assert!(setup_nonce_is_valid("0123456789abcdef0123456789ABCDEF"));
-        assert!(!setup_nonce_is_valid("0123456789abcdef0123456789abcde"));
+        let short_nonce = "a".repeat(31);
+        assert!(!setup_nonce_is_valid(&short_nonce));
     }
 }
 

@@ -38,22 +38,36 @@
 //!   a `base_disk_image` that already has Docker configured and listening on
 //!   `docker_port`.
 
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::collections::HashSet;
+#[cfg(not(any(kani, verus)))]
 use std::fs;
+#[cfg(not(any(kani, verus)))]
 use std::io::Read;
+#[cfg(not(any(kani, verus)))]
 use std::path::{Path, PathBuf};
+#[cfg(not(any(kani, verus)))]
 use std::process::{Command, Output, Stdio};
+#[cfg(not(any(kani, verus)))]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(any(kani, verus)))]
 use std::thread;
+#[cfg(not(any(kani, verus)))]
 use std::time::{Duration, Instant};
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
+#[cfg(not(any(kani, verus)))]
 const HYPERVISOR_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+#[cfg(not(any(kani, verus)))]
 const IMAGE_CLONE_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+#[cfg(not(any(kani, verus)))]
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum VmError {
     #[error("{0:?} is not installed or not usable on this host")]
     HypervisorUnavailable(HypervisorKind),
@@ -73,15 +87,18 @@ pub enum VmError {
     NoIpAddress(String),
 }
 
+#[cfg(not(any(kani, verus)))]
 pub type Result<T> = std::result::Result<T, VmError>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub enum HypervisorKind {
     Kvm,
     VirtualBox,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub enum ActivationMode {
     /// VM starts on first use and remains running. Automatic idle shutdown is
     /// not implemented yet because the scheduler does not own a reliable
@@ -99,6 +116,7 @@ pub enum ActivationMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct VmConfig {
     /// VM name (also how Logic Containers rules reference it via
     /// `Backend::Vm { vm_name }`). Must be unique across both hypervisors —
@@ -152,6 +170,7 @@ pub struct VmConfig {
 /// anything an operator configured through the dashboard would have been
 /// silently invisible to the scheduler. Switched to share the dashboard's
 /// file/format instead of inventing a second, disconnected one.
+#[cfg(not(any(kani, verus)))]
 pub fn load_vm_configs(state_dir: &Path) -> Result<Vec<VmConfig>> {
     let path = state_dir.join("vm-configs.json");
     let configs = match fs::read_to_string(&path) {
@@ -163,18 +182,19 @@ pub fn load_vm_configs(state_dir: &Path) -> Result<Vec<VmConfig>> {
     Ok(configs)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_vm_configs(configs: &[VmConfig]) -> Result<()> {
     let mut names = HashSet::with_capacity(configs.len());
     let mut virtualbox_ports = HashSet::new();
 
     for config in configs {
         let name = config.name.trim();
-        if name.is_empty()
-            || name != config.name
-            || config.name.chars().any(char::is_control)
-            || config.name.contains('/')
-            || config.name.contains('\\')
-        {
+        if !vm_name_shape_is_valid(
+            !name.is_empty(),
+            name == config.name,
+            config.name.chars().any(char::is_control),
+            config.name.contains('/') || config.name.contains('\\'),
+        ) {
             return Err(VmError::InvalidConfig(format!(
                 "VM name '{}' is empty, has surrounding whitespace, control characters, or path separators",
                 config.name
@@ -289,6 +309,29 @@ fn validate_vm_configs(configs: &[VmConfig]) -> Result<()> {
 /// Validates one VM definition before it enters an asynchronous lifecycle
 /// operation. Kept crate-visible so the resolver can reject bad dashboard
 /// configuration before creating background state or waiting for operator input.
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns nonempty && already_trimmed && !has_control && !has_path_separator
+    )
+)]
+fn vm_name_shape_is_valid(
+    nonempty: bool,
+    already_trimmed: bool,
+    has_control: bool,
+    has_path_separator: bool,
+) -> bool {
+    nonempty && already_trimmed && !has_control && !has_path_separator
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns length > 0 && length <= 128))]
+fn snapshot_name_length_is_valid(length: usize) -> bool {
+    length > 0 && length <= 128
+}
+
+#[cfg(not(any(kani, verus)))]
 pub(crate) fn validate_vm_config(config: &VmConfig) -> Result<()> {
     validate_vm_configs(std::slice::from_ref(config))
 }
@@ -300,6 +343,7 @@ pub(crate) fn validate_vm_config(config: &VmConfig) -> Result<()> {
 /// here so any other future caller (e.g. `gitrun setup`, or a CLI command)
 /// has a single correct implementation to share rather than reinventing
 /// the atomic-write dance.
+#[cfg(not(any(kani, verus)))]
 pub fn save_vm_configs(state_dir: &Path, configs: &[VmConfig]) -> Result<()> {
     validate_vm_configs(configs)?;
 
@@ -351,6 +395,7 @@ pub fn save_vm_configs(state_dir: &Path, configs: &[VmConfig]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn find_vm_config<'a>(definitions: &'a [VmConfig], name: &str) -> Option<&'a VmConfig> {
     definitions.iter().find(|v| v.name == name)
 }
@@ -360,6 +405,7 @@ pub fn find_vm_config<'a>(definitions: &'a [VmConfig], name: &str) -> Option<&'a
 /// VirtualBox instead?" framing — the dashboard/CLI calls
 /// `resolve_hypervisor_choice()` and acts on the result, rather than any
 /// caller hardcoding a hypervisor or silently switching between them.
+#[cfg(not(any(kani, verus)))]
 pub enum HypervisorChoice {
     /// KVM is available and should be used without asking.
     UseKvm,
@@ -376,6 +422,7 @@ pub enum HypervisorChoice {
 
 /// Checks the host and returns what choice should be presented/acted on.
 /// Does not install anything or make the decision itself.
+#[cfg(not(any(kani, verus)))]
 pub fn resolve_hypervisor_choice() -> HypervisorChoice {
     if is_kvm_available() {
         return HypervisorChoice::UseKvm;
@@ -393,10 +440,12 @@ pub fn resolve_hypervisor_choice() -> HypervisorChoice {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn kvm_device_exists() -> bool {
     std::path::Path::new("/dev/kvm").exists()
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_kvm_available() -> bool {
     kvm_device_exists()
         && run(HypervisorKind::Kvm, &["list", "--all", "--name"])
@@ -404,6 +453,7 @@ fn is_kvm_available() -> bool {
             .unwrap_or(false)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn is_virtualbox_installed() -> bool {
     run_tool("VBoxManage", &["--version"])
         .map(|output| output.status.success())
@@ -418,6 +468,7 @@ pub fn is_virtualbox_installed() -> bool {
 /// behalf. A security/licensing-relevant action like this should be an
 /// explicit, visible step, not something buried in a background
 /// provisioning routine (same reasoning as `docs/SECURITY_MODEL.md`).
+#[cfg(not(any(kani, verus)))]
 pub fn install_instructions(kind: HypervisorKind) -> &'static str {
     match kind {
         HypervisorKind::Kvm => {
@@ -433,6 +484,7 @@ pub fn install_instructions(kind: HypervisorKind) -> &'static str {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run(kind: HypervisorKind, args: &[&str]) -> Result<Output> {
     let program = match kind {
         HypervisorKind::Kvm => "virsh",
@@ -444,10 +496,12 @@ fn run(kind: HypervisorKind, args: &[&str]) -> Result<Output> {
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run_tool(program: &str, args: &[&str]) -> Result<Output> {
     run_tool_with_timeout(program, args, HYPERVISOR_COMMAND_TIMEOUT)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run_tool_with_timeout(program: &str, args: &[&str], timeout: Duration) -> Result<Output> {
     let mut child = Command::new(program)
         .args(args)
@@ -512,6 +566,7 @@ fn run_tool_with_timeout(program: &str, args: &[&str], timeout: Duration) -> Res
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run_checked(kind: HypervisorKind, args: &[&str]) -> Result<String> {
     let output = run(kind, args)?;
     if !output.status.success() {
@@ -525,6 +580,7 @@ fn run_checked(kind: HypervisorKind, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run_tool_checked_with_timeout(program: &str, args: &[&str], timeout: Duration) -> Result<()> {
     let output = run_tool_with_timeout(program, args, timeout)?;
     if !output.status.success() {
@@ -538,6 +594,7 @@ fn run_tool_checked_with_timeout(program: &str, args: &[&str], timeout: Duration
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn stable_hash(input: &str) -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
     for byte in input.as_bytes() {
@@ -547,6 +604,7 @@ fn stable_hash(input: &str) -> u64 {
     hash
 }
 
+#[cfg(not(any(kani, verus)))]
 fn managed_disk_path(config: &VmConfig, extension: &str) -> PathBuf {
     let base = Path::new(&config.base_disk_image);
     let parent = base.parent().unwrap_or_else(|| Path::new("."));
@@ -566,6 +624,7 @@ fn managed_disk_path(config: &VmConfig, extension: &str) -> PathBuf {
     parent.join(format!("{stem}-gitrun-{safe_name}-{hash:016x}.{extension}"))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn xml_escape_attr(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -575,6 +634,7 @@ fn xml_escape_attr(value: &str) -> String {
         .replace('"', "&quot;")
 }
 
+#[cfg(not(any(kani, verus)))]
 fn ensure_clone_path_safe(config: &VmConfig, clone: &Path) -> Result<()> {
     let base = Path::new(&config.base_disk_image);
     let base_canonical = fs::canonicalize(base)?;
@@ -608,6 +668,7 @@ fn ensure_clone_path_safe(config: &VmConfig, clone: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn ensure_base_disk(config: &VmConfig) -> Result<()> {
     let path = Path::new(&config.base_disk_image);
     if !path.is_file() {
@@ -619,6 +680,7 @@ fn ensure_base_disk(config: &VmConfig) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn create_kvm_disk_clone(config: &VmConfig) -> Result<(PathBuf, bool)> {
     ensure_base_disk(config)?;
     let clone = managed_disk_path(config, "qcow2");
@@ -650,6 +712,7 @@ fn create_kvm_disk_clone(config: &VmConfig) -> Result<(PathBuf, bool)> {
     Ok((clone, true))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn create_virtualbox_disk_clone(config: &VmConfig) -> Result<(PathBuf, bool)> {
     ensure_base_disk(config)?;
     let clone = managed_disk_path(config, "vdi");
@@ -680,6 +743,7 @@ fn create_virtualbox_disk_clone(config: &VmConfig) -> Result<(PathBuf, bool)> {
     Ok((clone, true))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn cleanup_created_disk(path: &Path, created: bool) {
     if created {
         let _ = fs::remove_file(path);
@@ -689,6 +753,7 @@ fn cleanup_created_disk(path: &Path, created: bool) {
 /// Creates a VM from `config` if it doesn't already exist, using whichever
 /// hypervisor `config.hypervisor` names. Idempotent: safe to call on every
 /// GitRun startup for every configured VM.
+#[cfg(not(any(kani, verus)))]
 pub fn ensure_vm(config: &VmConfig) -> Result<()> {
     match config.hypervisor {
         HypervisorKind::Kvm => ensure_vm_kvm(config),
@@ -696,6 +761,7 @@ pub fn ensure_vm(config: &VmConfig) -> Result<()> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn ensure_vm_kvm(config: &VmConfig) -> Result<()> {
     validate_vm_configs(std::slice::from_ref(config))?;
     if vm_exists(HypervisorKind::Kvm, &config.name)? {
@@ -781,6 +847,7 @@ fn ensure_vm_kvm(config: &VmConfig) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn ensure_vm_virtualbox(config: &VmConfig) -> Result<()> {
     validate_vm_configs(std::slice::from_ref(config))?;
     if vm_exists(HypervisorKind::VirtualBox, &config.name)? {
@@ -877,6 +944,7 @@ fn ensure_vm_virtualbox(config: &VmConfig) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn vm_exists(kind: HypervisorKind, name: &str) -> Result<bool> {
     match kind {
         HypervisorKind::Kvm => {
@@ -892,6 +960,7 @@ fn vm_exists(kind: HypervisorKind, name: &str) -> Result<bool> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn is_running(kind: HypervisorKind, name: &str) -> Result<bool> {
     match kind {
         HypervisorKind::Kvm => {
@@ -907,6 +976,7 @@ pub fn is_running(kind: HypervisorKind, name: &str) -> Result<bool> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn start(kind: HypervisorKind, name: &str) -> Result<()> {
     if is_running(kind, name)? {
         return Ok(());
@@ -918,6 +988,7 @@ pub fn start(kind: HypervisorKind, name: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn stop(kind: HypervisorKind, name: &str) -> Result<()> {
     if !is_running(kind, name)? {
         return Ok(());
@@ -931,6 +1002,7 @@ pub fn stop(kind: HypervisorKind, name: &str) -> Result<()> {
 
 /// Starts a VM, runs the supplied lifecycle closure, then stops it and optionally
 /// restores its clean snapshot before the next workload can be admitted.
+#[cfg(not(any(kani, verus)))]
 pub fn with_vm_lifecycle<F>(
     config: &VmConfig,
     clean_snapshot: Option<&str>,
@@ -963,6 +1035,7 @@ where
 /// escalate to this after a timeout.
 /// Creates a named VM snapshot. Callers should snapshot a known-good,
 /// stopped or quiesced guest according to the hypervisor's guarantees.
+#[cfg(not(any(kani, verus)))]
 pub fn create_snapshot(kind: HypervisorKind, name: &str, snapshot: &str) -> Result<()> {
     validate_snapshot_name(snapshot)?;
     match kind {
@@ -978,6 +1051,7 @@ pub fn create_snapshot(kind: HypervisorKind, name: &str, snapshot: &str) -> Resu
 
 /// Restores a previously-created snapshot. The caller must own the VM
 /// lifecycle and must not restore a VM that has an active runner workload.
+#[cfg(not(any(kani, verus)))]
 pub fn restore_snapshot(kind: HypervisorKind, name: &str, snapshot: &str) -> Result<()> {
     validate_snapshot_name(snapshot)?;
     match kind {
@@ -991,16 +1065,18 @@ pub fn restore_snapshot(kind: HypervisorKind, name: &str, snapshot: &str) -> Res
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_snapshot_name(value: &str) -> Result<()> {
     if value.trim().is_empty()
         || value.chars().any(|c| c.is_control() || c.is_whitespace())
-        || value.len() > 128
+        || !snapshot_name_length_is_valid(value.len())
     {
         return Err(VmError::InvalidConfig("invalid snapshot name".into()));
     }
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn force_stop(kind: HypervisorKind, name: &str) -> Result<()> {
     match kind {
         HypervisorKind::Kvm => run_checked(kind, &["destroy", name])?,
@@ -1014,6 +1090,7 @@ pub fn force_stop(kind: HypervisorKind, name: &str) -> Result<()> {
 /// (`qemu-guest-agent`) running inside the guest; VirtualBox requires Guest
 /// Additions — both are the standard mechanism for each hypervisor and are
 /// not installed by this module (part of preparing `base_disk_image`).
+#[cfg(not(any(kani, verus)))]
 pub fn wait_for_ip(kind: HypervisorKind, name: &str, timeout: Duration) -> Result<String> {
     let deadline = Instant::now()
         .checked_add(timeout)
@@ -1071,6 +1148,7 @@ pub fn wait_for_ip(kind: HypervisorKind, name: &str, timeout: Duration) -> Resul
 /// -------------------------------------------------------------------------------
 ///  vnet0      52:54:00:aa:bb:cc    ipv4         192.168.122.45/24
 /// ```
+#[cfg(not(any(kani, verus)))]
 fn extract_kvm_ip(output: &str) -> Option<String> {
     output.lines().find_map(|line| {
         let cidr = line.split_whitespace().last()?;
@@ -1079,6 +1157,7 @@ fn extract_kvm_ip(output: &str) -> Option<String> {
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn extract_virtualbox_ip(output: &str) -> Option<String> {
     output
         .strip_prefix("Value: ")
@@ -1087,6 +1166,7 @@ fn extract_virtualbox_ip(output: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_usable_guest_ip(ip: &str) -> bool {
     let Ok(ip) = ip.parse::<std::net::Ipv4Addr>() else {
         return false;
@@ -1101,6 +1181,7 @@ fn is_usable_guest_ip(ip: &str) -> bool {
 /// Builds the Docker endpoint for a VM's Docker daemon.
 /// KVM uses the guest IP directly. VirtualBox uses the host-side NAT
 /// forwarding rule configured by `ensure_vm_virtualbox`.
+#[cfg(not(any(kani, verus)))]
 pub fn docker_host_address(kind: HypervisorKind, ip: &str, docker_port: u16) -> String {
     match kind {
         HypervisorKind::Kvm => format!("tcp://{ip}:{docker_port}"),
@@ -1372,3 +1453,58 @@ mod tests {
         assert!(!install_instructions(HypervisorKind::VirtualBox).is_empty());
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{snapshot_name_length_is_valid, vm_name_shape_is_valid};
+
+    #[kani::proof]
+    fn vm_name_shape_is_fail_closed_for_all_boolean_inputs() {
+        let nonempty: bool = kani::any();
+        let already_trimmed: bool = kani::any();
+        let has_control: bool = kani::any();
+        let has_path_separator: bool = kani::any();
+        assert_eq!(
+            vm_name_shape_is_valid(nonempty, already_trimmed, has_control, has_path_separator),
+            nonempty && already_trimmed && !has_control && !has_path_separator
+        );
+    }
+
+    #[kani::proof]
+    fn snapshot_name_length_is_bounded_for_all_usize_values() {
+        let length: usize = kani::any();
+        assert_eq!(snapshot_name_length_is_valid(length), length > 0 && length <= 128);
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{snapshot_name_length_is_valid, vm_name_shape_is_valid};
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn vm_name_shape_is_fail_closed_for_all_boolean_inputs(
+            nonempty: bool,
+            already_trimmed: bool,
+            has_control: bool,
+            has_path_separator: bool,
+        )
+            ensures
+                vm_name_shape_is_valid(nonempty, already_trimmed, has_control, has_path_separator)
+                    == (nonempty && already_trimmed && !has_control && !has_path_separator),
+        {
+        }
+
+        proof fn snapshot_name_length_is_bounded_for_all_usize_values(length: usize)
+            ensures
+                snapshot_name_length_is_valid(length) == (length > 0 && length <= 128),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

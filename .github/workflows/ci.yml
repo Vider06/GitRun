@@ -2986,10 +2986,9 @@ jobs:
       - name: Install pinned Verus verifier
         shell: bash
         run: bash scripts/ci/install-verus.sh
-      - name: Verify Verus toolchain and proof runner
+      - name: Verify Verus smoke and production proofs
         shell: bash
-        run: |
-          "${RUNNER_TEMP}/verus/installed/verus" verification/verus/smoke.rs
+        run: bash scripts/ci/verify-verus-formal.sh
       - name: Audit dual-verifier proof scope
         shell: bash
         run: python3 scripts/ci/verify-rust-dual-coverage.py

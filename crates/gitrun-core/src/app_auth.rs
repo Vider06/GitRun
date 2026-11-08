@@ -206,12 +206,32 @@ fn is_positive_github_id_value(id: u64) -> bool {
     id > 0
 }
 
+/// Checks a GitHub numeric identifier without allocation or parser machinery.
+fn is_valid_github_id(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+
+    let mut parsed = 0_u64;
+    for &byte in bytes {
+        if !byte.is_ascii_digit() {
+            return false;
+        }
+        let Some(next) = parsed
+            .checked_mul(10)
+            .and_then(|number| number.checked_add(u64::from(byte - b'0')))
+        else {
+            return false;
+        };
+        parsed = next;
+    }
+    is_positive_github_id_value(parsed)
+}
+
 #[cfg(not(verus))]
 fn validate_github_id(value: String, field: &'static str) -> Result<String> {
-    if value.is_empty()
-        || !value.bytes().all(|byte| byte.is_ascii_digit())
-        || !value.parse::<u64>().is_ok_and(is_positive_github_id_value)
-    {
+    if !is_valid_github_id(&value) {
         return Err(AppAuthError::InvalidIdentifier(field));
     }
     Ok(value)
@@ -428,7 +448,7 @@ mod tests {
 
 #[cfg(kani)]
 mod kani_verification {
-    use super::{is_positive_github_id_value, validate_github_id};
+    use super::{is_positive_github_id_value, is_valid_github_id};
 
     /// Proves the production positive-ID predicate across the full u64 domain.
     #[kani::proof]
@@ -437,31 +457,21 @@ mod kani_verification {
         assert_eq!(is_positive_github_id_value(id), id > 0);
     }
 
-    /// Covers the string-validation boundaries, including u64 overflow.
+    /// Proves the production byte parser on malformed and boundary identifiers.
+    /// These cases deliberately avoid allocating String values inside Kani.
     #[kani::proof]
-    #[kani::unwind(9)]
     fn github_app_id_string_validation_rejects_invalid_values() {
-        for value in [
-            "",
-            "0",
-            "0000",
-            "-1",
-            "+1",
-            "1x",
-            "1 ",
-            "18446744073709551616",
-        ] {
-            assert!(validate_github_id(value.to_owned(), "App ID").is_err());
-        }
-        assert_eq!(validate_github_id("1".to_owned(), "App ID").unwrap(), "1");
-        assert_eq!(
-            validate_github_id("0001".to_owned(), "App ID").unwrap(),
-            "0001"
-        );
-        assert_eq!(
-            validate_github_id("18446744073709551615".to_owned(), "App ID").unwrap(),
-            "18446744073709551615"
-        );
+        assert!(!is_valid_github_id(""));
+        assert!(!is_valid_github_id("0"));
+        assert!(!is_valid_github_id("0000"));
+        assert!(!is_valid_github_id("-1"));
+        assert!(!is_valid_github_id("+1"));
+        assert!(!is_valid_github_id("1x"));
+        assert!(!is_valid_github_id("1 "));
+        assert!(!is_valid_github_id("18446744073709551616"));
+        assert!(is_valid_github_id("1"));
+        assert!(is_valid_github_id("0001"));
+        assert!(is_valid_github_id("18446744073709551615"));
     }
 }
 

@@ -88,12 +88,12 @@ pub struct ExecutionResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(any(kani, verus)), derive(Error))]
 pub enum ExecutionError {
-    #[error("execution backend does not implement {api:?}/{operation:?}")]
+    #[cfg_attr(not(any(kani, verus)), error("execution backend does not implement {api:?}/{operation:?}"))]
     Unsupported {
         api: GitRunApi,
         operation: GitRunOperation,
     },
-    #[error("execution failed: {0}")]
+    #[cfg_attr(not(any(kani, verus)), error("execution failed: {0}"))]
     Failed(String),
 }
 

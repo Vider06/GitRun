@@ -452,10 +452,7 @@ mod kani_verification {
         ] {
             assert!(validate_github_id(value.to_owned(), "App ID").is_err());
         }
-        assert_eq!(
-            validate_github_id("1".to_owned(), "App ID").unwrap(),
-            "1"
-        );
+        assert_eq!(validate_github_id("1".to_owned(), "App ID").unwrap(), "1");
         assert_eq!(
             validate_github_id("0001".to_owned(), "App ID").unwrap(),
             "0001"

@@ -300,7 +300,9 @@ mod tests {
 
 #[cfg(kani)]
 mod kani_verification {
-    use super::{is_bash_invocation, real_shell_for_invocation, REAL_BASH_FALLBACK, REAL_SHELL_FALLBACK};
+    use super::{
+        is_bash_invocation, real_shell_for_invocation, REAL_BASH_FALLBACK, REAL_SHELL_FALLBACK,
+    };
 
     #[kani::proof]
     fn shell_dispatch_never_crosses_shell_families() {
@@ -320,7 +322,9 @@ mod kani_verification {
 
 #[cfg(verus)]
 mod verus_verification {
-    use super::{is_bash_invocation, real_shell_for_invocation, REAL_BASH_FALLBACK, REAL_SHELL_FALLBACK};
+    use super::{
+        is_bash_invocation, real_shell_for_invocation, REAL_BASH_FALLBACK, REAL_SHELL_FALLBACK,
+    };
     use vstd::prelude::*;
 
     verus! {

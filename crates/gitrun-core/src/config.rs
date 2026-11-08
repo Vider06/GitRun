@@ -1037,7 +1037,10 @@ fn is_positive_decimal_integer(value: &str) -> bool {
 }
 
 fn is_positive_u64(value: &str) -> bool {
-    value.trim().parse::<u64>().map(|n| n > 0).unwrap_or(false)
+    // Keep the legacy surrounding-whitespace behavior without delegating to
+    // FromStr (whose parser pulls in an unnecessarily expensive proof path).
+    let value = value.trim_matches(char::is_whitespace);
+    is_positive_decimal_integer(value)
 }
 
 #[cfg(not(any(kani, verus)))]
@@ -1118,12 +1121,25 @@ fn valid_repository_component(part: &str) -> bool {
 }
 
 fn is_repository(value: &str) -> bool {
-    let mut parts = value.split('/');
-    matches!(
-        (parts.next(), parts.next(), parts.next()),
-        (Some(owner), Some(repo), None)
-            if valid_repository_component(owner) && valid_repository_component(repo)
-    )
+    // Scan bytes directly: str::split('/') routes through the standard
+    // pattern-search implementation, which is costly for this Kani harness.
+    let bytes = value.as_bytes();
+    let mut separator = None;
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte == b'/' {
+            if separator.is_some() {
+                return false;
+            }
+            separator = Some(index);
+        }
+    }
+
+    let Some(separator) = separator else {
+        return false;
+    };
+    let owner = &value[..separator];
+    let repository = &value[separator + 1..];
+    valid_repository_component(owner) && valid_repository_component(repository)
 }
 #[cfg(not(any(kani, verus)))]
 fn value_u32(value: &Option<String>, key: &str, default: u32) -> Result<u32, ConfigError> {
@@ -1656,7 +1672,11 @@ mod kani_verification {
         assert!(!is_positive_decimal_integer("1 "));
         assert!(!is_positive_decimal_integer("18446744073709551616"));
         assert!(is_positive_u64(" 1 "));
+        assert!(is_positive_u64("\t0001\n"));
         assert!(!is_positive_u64("0"));
+        assert!(!is_positive_u64(" 0 "));
+        assert!(!is_positive_u64("+1"));
+        assert!(!is_positive_u64("18446744073709551616"));
         assert!(valid_repository_component("owner"));
         assert!(valid_repository_component("repo.name_1"));
         assert!(!valid_repository_component(""));
@@ -1664,7 +1684,11 @@ mod kani_verification {
         assert!(!valid_repository_component(".."));
         assert!(!valid_repository_component("owner/repo"));
         assert!(is_repository("owner/repo"));
+        assert!(is_repository("owner/repo.name_1"));
+        assert!(!is_repository(""));
         assert!(!is_repository("owner"));
+        assert!(!is_repository("/repo"));
+        assert!(!is_repository("owner/"));
         assert!(!is_repository("owner/repo/extra"));
         assert!(!is_repository("../repo"));
     }

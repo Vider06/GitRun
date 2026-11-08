@@ -4,7 +4,6 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from subprocess import CompletedProcess
 from unittest.mock import patch
 
 
@@ -23,7 +22,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         (self.root / "src").mkdir()
-        (self.root / "verification").mkdir()
+        self.root.joinpath("verification").mkdir()
         self.summary = self.root / "step-summary.md"
         self.report = self.root / "gitrun-dual-verifier-coverage.tsv"
 
@@ -38,7 +37,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
         )
         (self.root / "verus.rs").write_text(
             '#[path = "src/policy.rs"] mod policy;\n'
-            "verus! { fn policy_is_accepted() { assert(true); } }\n",
+            "verus! { proof fn policy_is_accepted() { assert(true); } }\n",
             encoding="utf-8",
         )
 
@@ -102,30 +101,29 @@ class DualVerifierCoverageTests(unittest.TestCase):
         self.assertEqual(rows[1][5], "finite Kani cases")
         self.assertEqual(rows[1][7], "IMPLEMENTED")
 
-    def test_reports_proven_only_after_both_verifiers_succeed(self) -> None:
-        with patch.object(
-            DUAL_COVERAGE.subprocess,
-            "run",
-            side_effect=[
-                CompletedProcess(["kani"], 0),
-                CompletedProcess(["verus"], 0),
-            ],
-        ) as run:
+    def test_implemented_scope_stays_unverified_until_verifier_jobs_run(self) -> None:
+        with patch.object(DUAL_COVERAGE.subprocess, "run") as run:
             result = DUAL_COVERAGE.main()
 
         self.assertEqual(result, 0)
-        self.assertEqual(run.call_count, 2)
+        run.assert_not_called()
         self.assertEqual(
             self.read_report(),
-            [{
-                "SOURCE_FILE": "src/policy.rs",
-                "KANI_STATUS": "PROVEN",
-                "VERUS_STATUS": "PROVEN",
-            }],
+            [
+                {
+                    "SOURCE_FILE": "src/policy.rs",
+                    "KANI_STATUS": "UNVERIFIED",
+                    "VERUS_STATUS": "UNVERIFIED",
+                    "SCOPE_STATUS": "IMPLEMENTED",
+                }
+            ],
         )
-        self.assertIn("Fully proven by Kani and Verus | 1", self.summary.read_text())
+        summary = self.summary.read_text(encoding="utf-8")
+        self.assertIn("Formal coverage gate | **OPEN**", summary)
+        self.assertIn("remain UNVERIFIED here", summary)
+        self.assertNotIn("PROVEN", self.report.read_text(encoding="utf-8"))
 
-    def test_planned_source_proof_remains_unverified_and_is_not_executed(self) -> None:
+    def test_planned_source_keeps_gate_closed_and_is_never_reported_as_proven(self) -> None:
         self.write_manifest(
             [
                 (
@@ -147,52 +145,55 @@ class DualVerifierCoverageTests(unittest.TestCase):
         self.assertEqual(result, 1)
         run.assert_not_called()
         row = self.read_report()[0]
-        self.assertEqual(row["KANI_STATUS"], "UNVERIFIED")
-        self.assertEqual(row["VERUS_STATUS"], "UNVERIFIED")
+        self.assertEqual(row["KANI_STATUS"], "NOT_IN_SCOPE")
+        self.assertEqual(row["VERUS_STATUS"], "NOT_IN_SCOPE")
+        self.assertEqual(row["SCOPE_STATUS"], "PLANNED")
+        self.assertIn("Formal coverage gate | **CLOSED**", self.summary.read_text())
 
-    def test_missing_source_mapping_does_not_block_validated_proofs(self) -> None:
+    def test_missing_source_mapping_keeps_gate_closed_and_is_reported(self) -> None:
         (self.root / "src/other.rs").write_text(
             "pub fn other() {}\n", encoding="utf-8"
         )
         self.sources_mock.return_value = {"src/policy.rs", "src/other.rs"}
 
-        with patch.object(
-            DUAL_COVERAGE.subprocess,
-            "run",
-            side_effect=[
-                CompletedProcess(["kani"], 0),
-                CompletedProcess(["verus"], 0),
-            ],
-        ) as run:
-            result = DUAL_COVERAGE.main()
+        result = DUAL_COVERAGE.main()
 
         self.assertEqual(result, 1)
-        self.assertEqual(run.call_count, 2)
         rows = {row["SOURCE_FILE"]: row for row in self.read_report()}
-        self.assertEqual(rows["src/policy.rs"]["KANI_STATUS"], "PROVEN")
-        self.assertEqual(rows["src/policy.rs"]["VERUS_STATUS"], "PROVEN")
+        self.assertEqual(rows["src/policy.rs"]["KANI_STATUS"], "UNVERIFIED")
+        self.assertEqual(rows["src/policy.rs"]["VERUS_STATUS"], "UNVERIFIED")
         self.assertEqual(rows["src/other.rs"]["KANI_STATUS"], "UNVERIFIED")
         self.assertEqual(rows["src/other.rs"]["VERUS_STATUS"], "UNVERIFIED")
-        self.assertNotIn("READY", self.report.read_text())
-        self.assertIn("execution complete with preflight issues", self.summary.read_text())
+        self.assertEqual(rows["src/other.rs"]["SCOPE_STATUS"], "UNMAPPED")
+        self.assertIn("Sources without a manifest mapping | 1", self.summary.read_text())
+        self.assertIn("unmapped", self.summary.read_text().lower())
 
-    def test_failed_verus_proof_does_not_report_dual_coverage(self) -> None:
-        with patch.object(
-            DUAL_COVERAGE.subprocess,
-            "run",
-            side_effect=[
-                CompletedProcess(["kani"], 0),
-                CompletedProcess(["verus"], 1),
-            ],
-        ) as run:
-            result = DUAL_COVERAGE.main()
+    def test_implemented_scope_requires_existing_source_connected_entrypoints(self) -> None:
+        self.write_manifest(
+            [
+                (
+                    "src/policy.rs",
+                    "missing-kani.rs",
+                    "verus.rs",
+                    "pure policy",
+                    "Kani property",
+                    "finite Kani cases",
+                    "Verus invariant",
+                    "IMPLEMENTED",
+                )
+            ]
+        )
+
+        result = DUAL_COVERAGE.main()
 
         self.assertEqual(result, 1)
-        self.assertEqual(run.call_count, 2)
-        row = self.read_report()[0]
-        self.assertEqual(row["KANI_STATUS"], "PROVEN")
-        self.assertEqual(row["VERUS_STATUS"], "FAILED")
-        self.assertIn("Fully proven by Kani and Verus | 0", self.summary.read_text())
+        self.assertIn(
+            "KANI entrypoint does not exist",
+            self.capture_summary_errors(),
+        )
+
+    def capture_summary_errors(self) -> str:
+        return self.summary.read_text(encoding="utf-8") if self.summary.exists() else ""
 
 
 if __name__ == "__main__":

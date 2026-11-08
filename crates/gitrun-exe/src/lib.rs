@@ -6,13 +6,13 @@
 //! no variant for arbitrary shell/Docker commands.
 
 #[cfg(not(any(kani, verus)))]
+use gitrun_core::{GitRunApi, GitRunOperation};
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 #[cfg(not(any(kani, verus)))]
 use std::collections::BTreeMap;
 #[cfg(not(any(kani, verus)))]
 use thiserror::Error;
-#[cfg(not(any(kani, verus)))]
-use gitrun_core::{GitRunApi, GitRunOperation};
 
 #[cfg(not(any(kani, verus)))]
 pub mod ipc;
@@ -88,7 +88,10 @@ pub struct ExecutionResult {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(any(kani, verus)), derive(Error))]
 pub enum ExecutionError {
-    #[cfg_attr(not(any(kani, verus)), error("execution backend does not implement {api:?}/{operation:?}"))]
+    #[cfg_attr(
+        not(any(kani, verus)),
+        error("execution backend does not implement {api:?}/{operation:?}")
+    )]
     Unsupported {
         api: GitRunApi,
         operation: GitRunOperation,
@@ -149,7 +152,10 @@ pub struct NoopExecutionBackend;
 #[cfg(not(any(kani, verus)))]
 impl ExecutionBackend for NoopExecutionBackend {
     fn execute(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
-        Err(noop_backend_unsupported_error(request.api, request.operation))
+        Err(noop_backend_unsupported_error(
+            request.api,
+            request.operation,
+        ))
     }
 }
 
@@ -210,25 +216,46 @@ mod kani_verification {
     #[kani::unwind(21)]
     fn noop_backend_rejects_every_declared_api_operation_pair() {
         let apis = [
-            GitRunApi::GitVaultRun, GitRunApi::GitDockRun, GitRunApi::GitSaveRun,
-            GitRunApi::GitRegisterRun, GitRunApi::GitInstallRun, GitRunApi::GitReadRun,
-            GitRunApi::GitWriteRun, GitRunApi::GitVerifyRun, GitRunApi::GitStatusRun,
+            GitRunApi::GitVaultRun,
+            GitRunApi::GitDockRun,
+            GitRunApi::GitSaveRun,
+            GitRunApi::GitRegisterRun,
+            GitRunApi::GitInstallRun,
+            GitRunApi::GitReadRun,
+            GitRunApi::GitWriteRun,
+            GitRunApi::GitVerifyRun,
+            GitRunApi::GitStatusRun,
             GitRunApi::GitDispatchRun,
         ];
         let operations = [
-            GitRunOperation::Read, GitRunOperation::Write, GitRunOperation::Exists,
-            GitRunOperation::Delete, GitRunOperation::List, GitRunOperation::Connect,
-            GitRunOperation::Disconnect, GitRunOperation::Execute, GitRunOperation::Melt,
-            GitRunOperation::Mount, GitRunOperation::Unmount, GitRunOperation::File,
-            GitRunOperation::Logs, GitRunOperation::Register, GitRunOperation::Install,
-            GitRunOperation::Remove, GitRunOperation::Update, GitRunOperation::Verify,
-            GitRunOperation::Status, GitRunOperation::Plan,
+            GitRunOperation::Read,
+            GitRunOperation::Write,
+            GitRunOperation::Exists,
+            GitRunOperation::Delete,
+            GitRunOperation::List,
+            GitRunOperation::Connect,
+            GitRunOperation::Disconnect,
+            GitRunOperation::Execute,
+            GitRunOperation::Melt,
+            GitRunOperation::Mount,
+            GitRunOperation::Unmount,
+            GitRunOperation::File,
+            GitRunOperation::Logs,
+            GitRunOperation::Register,
+            GitRunOperation::Install,
+            GitRunOperation::Remove,
+            GitRunOperation::Update,
+            GitRunOperation::Verify,
+            GitRunOperation::Status,
+            GitRunOperation::Plan,
         ];
         for api in apis {
             for operation in operations {
                 let error = noop_backend_unsupported_error(api, operation);
-                assert!(matches!(error, ExecutionError::Unsupported { api: actual_api, operation: actual_operation }
-                    if actual_api == api && actual_operation == operation));
+                assert!(
+                    matches!(error, ExecutionError::Unsupported { api: actual_api, operation: actual_operation }
+                    if actual_api == api && actual_operation == operation)
+                );
             }
         }
     }

@@ -1003,7 +1003,9 @@ mod tests {
 
 #[cfg(kani)]
 mod kani_verification {
-    use super::{service_command_candidates, LinuxAbi, ManagedService, PackageManager, ServiceManager};
+    use super::{
+        service_command_candidates, LinuxAbi, ManagedService, PackageManager, ServiceManager,
+    };
 
     #[kani::proof]
     fn platform_abi_and_package_manager_names_are_stable() {
@@ -1039,7 +1041,9 @@ mod kani_verification {
 
 #[cfg(verus)]
 mod verus_verification {
-    use super::{service_command_candidates, LinuxAbi, ManagedService, PackageManager, ServiceManager};
+    use super::{
+        service_command_candidates, LinuxAbi, ManagedService, PackageManager, ServiceManager,
+    };
     use vstd::prelude::*;
 
     verus! {

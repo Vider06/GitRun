@@ -53,8 +53,6 @@ fn timestamp_is_within_skew(current: u64, timestamp: u64, maximum_skew: u64) -> 
     current.abs_diff(timestamp) <= maximum_skew
 }
 
-
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[cfg(not(any(kani, verus)))]
 pub struct ChannelKey(#[serde(with = "serde_bytes_hex")] Vec<u8>);
@@ -568,8 +566,14 @@ mod kani_verification {
         let key_length: usize = kani::any();
         let nonce_length: usize = kani::any();
         let mac_length: usize = kani::any();
-        assert_eq!(channel_key_length_is_valid(key_length), key_length >= MIN_CHANNEL_KEY_LEN);
-        assert_eq!(nonce_length_is_valid(nonce_length), nonce_length == NONCE_LEN);
+        assert_eq!(
+            channel_key_length_is_valid(key_length),
+            key_length >= MIN_CHANNEL_KEY_LEN
+        );
+        assert_eq!(
+            nonce_length_is_valid(nonce_length),
+            nonce_length == NONCE_LEN
+        );
         assert_eq!(mac_length_is_valid(mac_length), mac_length == MAC_LEN);
     }
 

@@ -82,7 +82,9 @@ pub struct RecoveryReport {
 #[cfg(not(any(kani, verus)))]
 impl RecoveryReport {
     pub fn has_critical(&self) -> bool {
-        self.issues.iter().any(|issue| recovery_severity_is_critical(issue.severity))
+        self.issues
+            .iter()
+            .any(|issue| recovery_severity_is_critical(issue.severity))
     }
 }
 

@@ -4092,13 +4092,23 @@ mod kani_verification {
 
     #[kani::proof]
     fn setup_complete_flag_requires_exact_prefix_and_32_hex_bytes() {
-        assert!(parse_setup_flag("GITRUN_SETUP_COMPLETE=0123456789abcdefABCDEF0123456789\n"));
-        assert!(parse_setup_flag("GITRUN_SETUP_COMPLETE=00000000000000000000000000000000"));
+        assert!(parse_setup_flag(
+            "GITRUN_SETUP_COMPLETE=0123456789abcdefABCDEF0123456789\n"
+        ));
+        assert!(parse_setup_flag(
+            "GITRUN_SETUP_COMPLETE=00000000000000000000000000000000"
+        ));
         assert!(!parse_setup_flag("GITRUN_SETUP_COMPLETE="));
-        assert!(!parse_setup_flag("GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcde"));
-        assert!(!parse_setup_flag("GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdef0"));
+        assert!(!parse_setup_flag(
+            "GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcde"
+        ));
+        assert!(!parse_setup_flag(
+            "GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdef0"
+        ));
         assert!(!parse_setup_flag("OTHER=0123456789abcdef0123456789abcdef"));
-        assert!(!parse_setup_flag("GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdeg"));
+        assert!(!parse_setup_flag(
+            "GITRUN_SETUP_COMPLETE=0123456789abcdef0123456789abcdeg"
+        ));
         assert!(setup_nonce_is_valid("0123456789abcdef0123456789ABCDEF"));
         assert!(!setup_nonce_is_valid("0123456789abcdef0123456789abcde"));
     }

@@ -850,7 +850,10 @@ mod tests {
 
 #[cfg(kani)]
 mod kani_verification {
-    use super::{repository_identity_byte_is_valid, repository_identity_segment_is_valid, valid_repository_identity};
+    use super::{
+        repository_identity_byte_is_valid, repository_identity_segment_is_valid,
+        valid_repository_identity,
+    };
 
     #[kani::proof]
     fn repository_identity_byte_alphabet_is_exact() {

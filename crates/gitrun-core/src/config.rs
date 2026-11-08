@@ -1609,8 +1609,8 @@ mod tests {
 #[cfg(kani)]
 mod kani_verification {
     use super::{
-        is_config_ascii_digit, is_positive_decimal_integer, is_positive_u64,
-        is_repository, is_repository_component_byte, valid_repository_component,
+        is_config_ascii_digit, is_positive_decimal_integer, is_positive_u64, is_repository,
+        is_repository_component_byte, valid_repository_component,
     };
 
     #[kani::proof]

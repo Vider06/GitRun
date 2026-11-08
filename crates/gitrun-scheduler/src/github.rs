@@ -433,7 +433,9 @@ fn retryable_http_status(status: u16) -> bool {
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns 2u64.saturating_pow(attempt.saturating_sub(1) as u32).min(8)))]
 fn retry_delay_seconds(attempt: usize) -> u64 {
-    2_u64.saturating_pow(attempt.saturating_sub(1) as u32).min(8)
+    2_u64
+        .saturating_pow(attempt.saturating_sub(1) as u32)
+        .min(8)
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
@@ -1745,7 +1747,10 @@ mod tests {
 
 #[cfg(kani)]
 mod kani_verification {
-    use super::{clamp_api_attempts, rate_limit_reset_seconds, retry_delay_seconds, retryable_http_status, MAX_API_ATTEMPTS};
+    use super::{
+        clamp_api_attempts, rate_limit_reset_seconds, retry_delay_seconds, retryable_http_status,
+        MAX_API_ATTEMPTS,
+    };
 
     #[kani::proof]
     fn api_retry_count_is_clamped_for_all_usize_inputs() {
@@ -1769,7 +1774,12 @@ mod kani_verification {
         let delay = retry_delay_seconds(attempt);
         assert!(delay >= 1);
         assert!(delay <= 8);
-        assert_eq!(delay, 2_u64.saturating_pow(attempt.saturating_sub(1) as u32).min(8));
+        assert_eq!(
+            delay,
+            2_u64
+                .saturating_pow(attempt.saturating_sub(1) as u32)
+                .min(8)
+        );
     }
 
     #[kani::proof]
@@ -1784,7 +1794,10 @@ mod kani_verification {
 
 #[cfg(verus)]
 mod verus_verification {
-    use super::{clamp_api_attempts, rate_limit_reset_seconds, retry_delay_seconds, retryable_http_status, MAX_API_ATTEMPTS};
+    use super::{
+        clamp_api_attempts, rate_limit_reset_seconds, retry_delay_seconds, retryable_http_status,
+        MAX_API_ATTEMPTS,
+    };
     use vstd::prelude::*;
 
     verus! {

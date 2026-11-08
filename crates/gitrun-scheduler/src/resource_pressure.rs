@@ -598,7 +598,10 @@ mod kani_verification {
     fn memory_measurements_reject_impossible_available_values() {
         let total: u64 = kani::any();
         let available: u64 = kani::any();
-        assert_eq!(memory_measurement_is_valid(total, available), total > 0 && available <= total);
+        assert_eq!(
+            memory_measurement_is_valid(total, available),
+            total > 0 && available <= total
+        );
     }
 
     #[kani::proof]

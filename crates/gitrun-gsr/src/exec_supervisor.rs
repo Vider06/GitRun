@@ -65,7 +65,10 @@ pub enum SupervisorError {
     InspectFailed(i32),
 }
 
-#[cfg(all(not(any(kani, verus)), not(all(target_os = "linux", target_arch = "x86_64"))))]
+#[cfg(all(
+    not(any(kani, verus)),
+    not(all(target_os = "linux", target_arch = "x86_64"))
+))]
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns (status & 0xff) == 0x7f))]
 fn wait_status_is_stopped(status: i32) -> bool {
@@ -1768,10 +1771,7 @@ mod kani_verification {
 
         assert_eq!(stopped, (status & 0xff) == 0x7f);
         assert_eq!(exited, (status & 0x7f) == 0);
-        assert_eq!(
-            signaled,
-            (status & 0x7f) != 0 && (status & 0xff) != 0x7f
-        );
+        assert_eq!(signaled, (status & 0x7f) != 0 && (status & 0xff) != 0x7f);
         assert!(stopped || exited || signaled);
         assert!(!(stopped && exited));
         assert!(!(stopped && signaled));

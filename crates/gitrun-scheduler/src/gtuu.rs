@@ -417,7 +417,10 @@ fn registry_image_separator_byte(byte: u8) -> bool {
 }
 
 fn is_registry_image_reference(image: &str) -> bool {
-    image.as_bytes().iter().any(|byte| registry_image_separator_byte(*byte))
+    image
+        .as_bytes()
+        .iter()
+        .any(|byte| registry_image_separator_byte(*byte))
 }
 
 #[cfg(not(any(kani, verus)))]

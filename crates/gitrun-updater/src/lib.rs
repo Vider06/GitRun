@@ -2714,7 +2714,9 @@ fn sha256_digest_byte_is_valid(byte: u8) -> bool {
 fn is_sha256_digest(value: &str) -> bool {
     value.starts_with("sha256:")
         && value.len() == 71
-        && value.as_bytes()[7..].iter().all(|byte| sha256_digest_byte_is_valid(*byte))
+        && value.as_bytes()[7..]
+            .iter()
+            .all(|byte| sha256_digest_byte_is_valid(*byte))
 }
 
 #[cfg(not(any(kani, verus)))]
@@ -4478,12 +4480,24 @@ mod kani_verification {
 
     #[kani::proof]
     fn sha256_digest_requires_prefix_length_and_hex_payload() {
-        assert!(is_sha256_digest("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"));
-        assert!(is_sha256_digest("sha256:ABCDEF0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789"));
-        assert!(!is_sha256_digest("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"));
-        assert!(!is_sha256_digest("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde"));
-        assert!(!is_sha256_digest("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"));
-        assert!(!is_sha256_digest("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg"));
+        assert!(is_sha256_digest(
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        ));
+        assert!(is_sha256_digest(
+            "sha256:ABCDEF0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789"
+        ));
+        assert!(!is_sha256_digest(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        ));
+        assert!(!is_sha256_digest(
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde"
+        ));
+        assert!(!is_sha256_digest(
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"
+        ));
+        assert!(!is_sha256_digest(
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg"
+        ));
     }
 }
 

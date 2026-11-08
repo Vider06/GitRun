@@ -82,7 +82,8 @@ impl StateStore {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "unsupported state file name",
-            ).into());
+            )
+            .into());
         }
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)

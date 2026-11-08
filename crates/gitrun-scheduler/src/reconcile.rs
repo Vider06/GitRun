@@ -180,7 +180,9 @@ fn job_needs_dedicated_runner(input: &ReconcileInput, index: usize, labels: &[St
 /// original (`min(max, max(min, busy + queued))`).
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 fn bounded_runner_target(busy: u32, queued: u32, minimum: u32, maximum: u32) -> u32 {
-    busy.saturating_add(queued).min(maximum).max(minimum.min(maximum))
+    busy.saturating_add(queued)
+        .min(maximum)
+        .max(minimum.min(maximum))
 }
 
 #[cfg(not(any(kani, verus)))]
@@ -190,7 +192,12 @@ pub fn desired_count(input: &ReconcileInput) -> u32 {
     // restarts a busy runner, so excluding it here would overprovision based
     // on the same inconsistent snapshot.
     let busy = input.runners.iter().filter(|r| r.busy).count() as u32;
-    bounded_runner_target(busy, input.queued_jobs, input.min_runners, input.max_runners)
+    bounded_runner_target(
+        busy,
+        input.queued_jobs,
+        input.min_runners,
+        input.max_runners,
+    )
 }
 
 /// Produces the ordered list of actions to converge toward the desired state.
@@ -1468,7 +1475,9 @@ mod kani_verification {
         assert!(desired >= minimum.min(maximum));
         assert_eq!(
             desired,
-            busy.saturating_add(queued).min(maximum).max(minimum.min(maximum))
+            busy.saturating_add(queued)
+                .min(maximum)
+                .max(minimum.min(maximum))
         );
     }
 }

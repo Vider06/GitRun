@@ -1473,7 +1473,10 @@ mod kani_verification {
     #[kani::proof]
     fn snapshot_name_length_is_bounded_for_all_usize_values() {
         let length: usize = kani::any();
-        assert_eq!(snapshot_name_length_is_valid(length), length > 0 && length <= 128);
+        assert_eq!(
+            snapshot_name_length_is_valid(length),
+            length > 0 && length <= 128
+        );
     }
 }
 

@@ -75,10 +75,9 @@ fn ascii_case_insensitive_equal(left: &str, right: &str) -> bool {
     let left = left.as_bytes();
     let right = right.as_bytes();
     left.len() == right.len()
-        && left
-            .iter()
-            .zip(right)
-            .all(|(left, right)| ascii_lowercase_label_byte(*left) == ascii_lowercase_label_byte(*right))
+        && left.iter().zip(right).all(|(left, right)| {
+            ascii_lowercase_label_byte(*left) == ascii_lowercase_label_byte(*right)
+        })
 }
 
 /// Evaluates rules in order, returning the first match's (backend, image).
@@ -478,7 +477,11 @@ mod kani_verification {
     #[kani::proof]
     fn ascii_lowercase_label_byte_is_exact_over_all_u8_values() {
         let byte: u8 = kani::any();
-        let expected = if byte.is_ascii_uppercase() { byte + 32 } else { byte };
+        let expected = if byte.is_ascii_uppercase() {
+            byte + 32
+        } else {
+            byte
+        };
         assert_eq!(ascii_lowercase_label_byte(byte), expected);
     }
 

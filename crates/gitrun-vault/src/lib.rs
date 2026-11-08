@@ -651,7 +651,10 @@ fn validate_name(name: &str) -> Result<()> {
     if name.trim().is_empty() {
         return Err(VaultError::EmptyName);
     }
-    if name.chars().any(|character| !secret_name_codepoint_is_allowed(character as u32)) {
+    if name
+        .chars()
+        .any(|character| !secret_name_codepoint_is_allowed(character as u32))
+    {
         return Err(VaultError::InvalidIdentifier);
     }
     Ok(())
@@ -663,7 +666,9 @@ fn validate_scope(scope: &Scope) -> Result<()> {
         Scope::Global => Ok(()),
         Scope::Group(group) | Scope::Repo(group) => {
             if group.trim().is_empty()
-                || group.chars().any(|character| !scope_component_codepoint_is_allowed(character as u32))
+                || group
+                    .chars()
+                    .any(|character| !scope_component_codepoint_is_allowed(character as u32))
             {
                 Err(VaultError::InvalidIdentifier)
             } else {
@@ -1531,7 +1536,10 @@ mod kani_verification {
     #[kani::proof]
     fn vault_scope_components_reject_only_the_storage_separator() {
         let codepoint: u32 = kani::any();
-        assert_eq!(scope_component_codepoint_is_allowed(codepoint), codepoint != 1);
+        assert_eq!(
+            scope_component_codepoint_is_allowed(codepoint),
+            codepoint != 1
+        );
         assert!(!scope_component_codepoint_is_allowed(1));
         assert!(scope_component_codepoint_is_allowed(0));
         assert!(scope_component_codepoint_is_allowed(61));

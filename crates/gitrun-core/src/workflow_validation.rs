@@ -83,6 +83,7 @@ pub enum DockOperation {
 }
 
 impl DockOperation {
+    #[cfg_attr(verus, verus_verify)]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Connect => "connect",

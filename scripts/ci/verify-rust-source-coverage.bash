@@ -103,7 +103,7 @@ inventoried="$(grep -c '^INVENTORIED' "$inventory" || true)"
   echo "| Files mapped to Cargo package / standalone verification entrypoint | $inventoried |"
   echo "| Unowned or formatting failures | $failures |"
   echo
-  echo "Every tracked \.rs\` file is mapped to a real Cargo workspace package (or the explicit Kani verification entrypoint). Workspace formatting is checked once by the CI rust-lint job; the standalone Kani entrypoint is checked individually here. Cargo type-checking, Clippy and tests run at package/target level in their existing jobs."
+  echo "Every tracked \`.rs\` file is mapped to a real Cargo workspace package (or the explicit Kani verification entrypoint). Workspace formatting is checked once by the CI rust-lint job; the standalone Kani entrypoint is checked individually here. Cargo type-checking, Clippy and tests run at package/target level in their existing jobs."
   echo
 } >> "$summary"
 

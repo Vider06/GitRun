@@ -228,6 +228,28 @@ class DualVerifierCoverageTests(unittest.TestCase):
         self.assertIn("Proven by both Kani and Verus | 0", summary)
         self.assertIn("Formally NOT_APPLICABLE with documented reason | 1", summary)
 
+    def test_not_applicable_requires_separate_kani_and_verus_limits(self) -> None:
+        self.write_manifest(
+            [
+                (
+                    "src/policy.rs",
+                    "",
+                    "",
+                    "host build integration",
+                    "Kani cannot model the host build process",
+                    "cargo build executes the build script",
+                    "Verus does not model Cargo build orchestration",
+                    "NOT_APPLICABLE",
+                )
+            ]
+        )
+
+        result = DUAL_COVERAGE.main()
+
+        self.assertEqual(result, 1)
+        self.assertIn("Manifest / ownership issues | 1", self.summary.read_text())
+        self.assertIn("Formal coverage gate | **CLOSED**", self.summary.read_text())
+
     def test_missing_source_mapping_keeps_gate_closed_and_is_reported(self) -> None:
         (self.root / "src/other.rs").write_text(
             "pub fn other() {}\n", encoding="utf-8"

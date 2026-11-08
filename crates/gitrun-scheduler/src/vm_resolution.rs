@@ -25,23 +25,35 @@
 //! result immediately and defers creation of the VM-targeted runner for
 //! that cycle. It never redirects the job to the local Docker host.
 
+#[cfg(not(any(kani, verus)))]
 use crate::docker::{self, DockerHost};
+#[cfg(not(any(kani, verus)))]
 use crate::vm::{self, HypervisorKind, VmConfig};
+#[cfg(not(any(kani, verus)))]
 use gitrun_core::hypervisor_decision::{self, DecisionChoice};
+#[cfg(not(any(kani, verus)))]
 use std::collections::HashMap;
+#[cfg(not(any(kani, verus)))]
 use std::path::Path;
+#[cfg(not(any(kani, verus)))]
 use std::sync::{Arc, Mutex};
+#[cfg(not(any(kani, verus)))]
 use std::time::{Duration, Instant};
 
+#[cfg(not(any(kani, verus)))]
 const DECISION_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+#[cfg(not(any(kani, verus)))]
 const DECISION_POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// How long to wait for the VM to report an IP address after starting it,
 /// separate from `DECISION_TIMEOUT` (that's for the *operator*, this is
 /// for the *VM's boot process* once a hypervisor has been chosen).
+#[cfg(not(any(kani, verus)))]
 const VM_BOOT_TIMEOUT: Duration = Duration::from_secs(120);
+#[cfg(not(any(kani, verus)))]
 const VM_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 pub enum VmResolution {
     Resolving {
         config_fingerprint: u64,
@@ -59,6 +71,7 @@ pub enum VmResolution {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub enum VmResolutionResult {
     Ready(DockerHost),
     Resolving,
@@ -71,8 +84,10 @@ pub enum VmResolutionResult {
 /// rarely (once per VM, occasionally re-written after a give-up), and read
 /// once per reconcile cycle per VM-targeting Logic Containers rule — not a
 /// hot path that needs lock-free structures.
+#[cfg(not(any(kani, verus)))]
 pub type VmResolutionRegistry = Arc<Mutex<HashMap<String, VmResolution>>>;
 
+#[cfg(not(any(kani, verus)))]
 fn lock_registry(
     registry: &VmResolutionRegistry,
 ) -> std::sync::MutexGuard<'_, HashMap<String, VmResolution>> {
@@ -81,10 +96,12 @@ fn lock_registry(
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn new_registry() -> VmResolutionRegistry {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn config_fingerprint(config: &VmConfig) -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
     let feed = |hash: &mut u64, bytes: &[u8]| {
@@ -123,6 +140,7 @@ fn config_fingerprint(config: &VmConfig) -> u64 {
 
 /// Called from resolve_backend_and_image on every reconcile cycle that
 /// needs a VM-backed runner. Never blocks the caller.
+#[cfg(not(any(kani, verus)))]
 pub fn resolve_or_spawn(
     registry: &VmResolutionRegistry,
     state_dir: &Path,
@@ -189,11 +207,13 @@ pub fn resolve_or_spawn(
     spawn_resolution_worker(registry, state_dir, vm_config, fingerprint, work)
 }
 
+#[cfg(not(any(kani, verus)))]
 enum ResolutionWork {
     Full,
     Verify(HypervisorKind),
 }
 
+#[cfg(not(any(kani, verus)))]
 fn spawn_resolution_worker(
     registry: &VmResolutionRegistry,
     state_dir: &Path,
@@ -242,6 +262,7 @@ fn spawn_resolution_worker(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn finish_resolution(
     registry: &VmResolutionRegistry,
     name: &str,
@@ -283,6 +304,7 @@ fn finish_resolution(
     }
 }
 /// The actual blocking sequence, run only inside a background thread.
+#[cfg(not(any(kani, verus)))]
 fn resolve_blocking(
     state_dir: &Path,
     vm_config: &VmConfig,
@@ -376,6 +398,7 @@ fn resolve_blocking(
 /// Refreshes a previously resolved VM using the hypervisor already
 /// selected for it. This can recover a VM that was stopped or removed
 /// externally, while keeping the refresh asynchronous.
+#[cfg(not(any(kani, verus)))]
 fn refresh_resolved(
     vm_config: &VmConfig,
     kind: HypervisorKind,
@@ -389,6 +412,7 @@ fn refresh_resolved(
 /// Ensures the VM exists and is running under `kind`, waits for it to
 /// report an IP, and returns the `DockerHost::Remote` pointed at its
 /// Docker daemon.
+#[cfg(not(any(kani, verus)))]
 fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<DockerHost> {
     let mut config = vm_config.clone();
     config.hypervisor = kind;
@@ -439,18 +463,33 @@ fn provision_and_wait(kind: HypervisorKind, vm_config: &VmConfig) -> vm::Result<
 /// malformed file is treated the same as any other invalid configuration
 /// by `main.rs`'s caller (fail fast at boot) rather than silently starting
 /// with zero VMs.
+#[cfg(not(any(kani, verus)))]
 pub fn load_vm_definitions(state_dir: &Path) -> vm::Result<Vec<VmConfig>> {
     vm::load_vm_configs(state_dir)
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns
+            octets[0] == 10
+                || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
+                || (octets[0] == 192 && octets[1] == 168)
+    )
+)]
+fn ipv4_octets_are_private(octets: [u8; 4]) -> bool {
+    octets[0] == 10
+        || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+        || (octets[0] == 192 && octets[1] == 168)
+}
+
+#[cfg(not(any(kani, verus)))]
 fn is_private_guest_ipv4(value: &str) -> bool {
     let Ok(ip) = value.parse::<std::net::Ipv4Addr>() else {
         return false;
     };
-    let octets = ip.octets();
-    (octets[0] == 10)
-        || (octets[0] == 172 && (16..=31).contains(&octets[1]))
-        || (octets[0] == 192 && octets[1] == 168)
+    ipv4_octets_are_private(ip.octets())
 }
 
 #[cfg(test)]
@@ -593,3 +632,42 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::ipv4_octets_are_private;
+
+    #[kani::proof]
+    fn only_rfc1918_ipv4_octets_are_accepted() {
+        let octets: [u8; 4] = kani::any();
+        let expected = octets[0] == 10
+            || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
+            || (octets[0] == 192 && octets[1] == 168);
+        assert_eq!(ipv4_octets_are_private(octets), expected);
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::ipv4_octets_are_private;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn only_rfc1918_ipv4_octets_are_accepted(octets: [u8; 4])
+            ensures
+                ipv4_octets_are_private(octets)
+                    == (
+                        octets[0] == 10
+                            || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
+                            || (octets[0] == 192 && octets[1] == 168)
+                    ),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

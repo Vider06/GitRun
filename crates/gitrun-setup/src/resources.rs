@@ -545,7 +545,6 @@ mod verus_verification {
         }
     }
 }
-}
 
 #[cfg(kani)]
 fn main() {}

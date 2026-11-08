@@ -207,6 +207,7 @@ fn is_positive_github_id_value(id: u64) -> bool {
 }
 
 /// Checks a GitHub numeric identifier without allocation or parser machinery.
+#[cfg(not(verus))]
 fn is_valid_github_id(value: &str) -> bool {
     let bytes = value.as_bytes();
     if bytes.is_empty() {

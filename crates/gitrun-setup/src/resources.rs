@@ -11,7 +11,8 @@ pub(crate) fn runner_dockerfile_for_bootstrap() -> Result<String, SetupError> {
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns source.contains("COPY Cargo.toml Cargo.lock ./") && source.contains("COPY crates ./crates")))]
 fn dockerfile_has_full_workspace_copy(source: &str) -> bool {
-    source.contains("COPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates")
+    source.contains("COPY Cargo.toml Cargo.lock ./")
+        && source.contains("COPY crates ./crates")
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
@@ -535,7 +536,6 @@ mod verus_verification {
         proof fn bootstrap_dockerfile_requires_minimal_build_context_and_safe_entrypoint() {
             let source = "COPY Cargo.toml Cargo.lock ./ COPY crates ./crates";
             let adapted = "COPY Cargo.toml Cargo.lock ./ COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real /entrypoint.sh";
-            let adapted = "COPY Cargo.toml Cargo.lock ./\\nCOPY crates/gitrun-core ./crates/gitrun-core\\nCOPY crates/gitrun-exe ./crates/gitrun-exe\\nCOPY crates/gitrun-gsr ./crates/gitrun-gsr\\nCOPY crates/gitrun-platform ./crates/gitrun-platform\\nENTRYPOINT [\\"/bin/bash.gitrun-real\\", \\"/entrypoint.sh\\"]";
             assert(dockerfile_has_full_workspace_copy(source));
             assert(dockerfile_uses_safe_bash_entrypoint(adapted));
             assert(dockerfile_build_context_is_minimal(adapted));
@@ -544,6 +544,7 @@ mod verus_verification {
             assert(!dockerfile_build_context_is_minimal(source));
         }
     }
+}
 }
 
 #[cfg(kani)]

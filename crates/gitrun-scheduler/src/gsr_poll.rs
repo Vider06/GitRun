@@ -29,17 +29,27 @@
 //! who keeps retrying) can go unnoticed, not to guarantee catching
 //! everything a stream-based tool would.
 
+#[cfg(not(any(kani, verus)))]
 use crate::docker::{self, DockerHost};
+#[cfg(not(any(kani, verus)))]
 use gitrun_core::command_policy::{CommandPolicy, Decision, ViolationAction};
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::collections::HashMap;
+#[cfg(not(any(kani, verus)))]
 use std::fs::{self, File, OpenOptions};
+#[cfg(not(any(kani, verus)))]
 use std::io::Read;
+#[cfg(not(any(kani, verus)))]
 use std::path::{Path, PathBuf};
+#[cfg(not(any(kani, verus)))]
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum GsrPollError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -56,6 +66,7 @@ pub enum GsrPollError {
 /// module already needs to stay Docker/host-specific and shouldn't also
 /// own the event log's wire format).
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 pub struct PolledViolation {
     pub container_name: String,
     pub repo: Option<String>,
@@ -77,12 +88,14 @@ pub struct PolledViolation {
 /// shape (an expiry timestamp) and a different owner (GSR's policy, not
 /// the scheduler's idle-timeout logic).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct BanFile {
     /// repo -> unix seconds when the ban expires.
     #[serde(default)]
     banned_until: HashMap<String, u64>,
 }
 
+#[cfg(not(any(kani, verus)))]
 pub struct BanStore {
     path: PathBuf,
     data: BanFile,
@@ -95,8 +108,10 @@ pub struct BanStore {
 /// duration; an operator can already lift a ban early via `BanStore::clear`
 /// (exposed through the dashboard's GSR view) if an hour is wrong for
 /// their case.
+#[cfg(not(any(kani, verus)))]
 pub const DEFAULT_BAN_DURATION: Duration = Duration::from_secs(60 * 60);
 
+#[cfg(not(any(kani, verus)))]
 impl BanStore {
     pub fn load(state_dir: &Path) -> Result<Self, GsrPollError> {
         let path = state_dir.join("gsr-bans.json");
@@ -192,7 +207,7 @@ impl BanStore {
     pub fn ban(&mut self, repo: &str, duration: Duration) -> Result<(), GsrPollError> {
         let _lock = self.lock()?;
         self.reload_from_disk()?;
-        let until = now_secs().saturating_add(duration.as_secs());
+        let until = ban_expiry_timestamp(now_secs(), duration.as_secs());
         self.data.banned_until.insert(repo.to_owned(), until);
         self.save()
     }
@@ -216,10 +231,23 @@ impl BanStore {
         self.data
             .banned_until
             .get(repo)
-            .is_some_and(|&until| until > now_secs())
+            .is_some_and(|&until| ban_is_active(until, now_secs()))
     }
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns now.saturating_add(duration_seconds)))]
+fn ban_expiry_timestamp(now: u64, duration_seconds: u64) -> u64 {
+    now.saturating_add(duration_seconds)
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns until > now))]
+fn ban_is_active(until: u64, now: u64) -> bool {
+    until > now
+}
+
+#[cfg(not(any(kani, verus)))]
 fn validate_ban_state_directory(path: &Path) -> Result<(), GsrPollError> {
     let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -242,6 +270,7 @@ fn validate_ban_state_directory(path: &Path) -> Result<(), GsrPollError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_ban_file_metadata(metadata: &fs::Metadata, path: &Path) -> Result<(), GsrPollError> {
     if !metadata.is_file() {
         return Err(GsrPollError::UnsafePath(format!(
@@ -262,6 +291,7 @@ fn validate_ban_file_metadata(metadata: &fs::Metadata, path: &Path) -> Result<()
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_ban_file(path: &Path) -> Result<Option<BanFile>, GsrPollError> {
     let mut options = OpenOptions::new();
     options.read(true);
@@ -281,6 +311,7 @@ fn read_ban_file(path: &Path) -> Result<Option<BanFile>, GsrPollError> {
     Ok(Some(serde_json::from_str(&raw)?))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -301,6 +332,7 @@ fn now_secs() -> u64 {
 /// A container is only killed once per tick even if multiple of its
 /// processes violate policy — there's nothing more to gain from a second
 /// `docker rm -f` on the same name.
+#[cfg(not(any(kani, verus)))]
 pub fn poll_once(
     host: &DockerHost,
     policy: &CommandPolicy,
@@ -349,6 +381,7 @@ pub fn poll_once(
 /// Operations are injected only to make the identity flow deterministic in
 /// regression tests; production supplies the real Docker inspection and
 /// enforcement calls above.
+#[cfg(not(any(kani, verus)))]
 struct PollOperations<P, R, A> {
     read_processes: P,
     read_repo: R,
@@ -358,6 +391,7 @@ struct PollOperations<P, R, A> {
 /// Process one container using a pinned immutable Docker ID. Keeping the
 /// callbacks together leaves identity and policy parameters explicit without
 /// a long positional-argument list.
+#[cfg(not(any(kani, verus)))]
 fn poll_container_with_identity<P, R, A, ProcessError, RepoError>(
     host: &DockerHost,
     container_name: &str,
@@ -431,6 +465,7 @@ where
     violations
 }
 
+#[cfg(not(any(kani, verus)))]
 fn apply_violation_action(
     host: &DockerHost,
     container_id: &str,
@@ -470,6 +505,7 @@ fn apply_violation_action(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn redact_command_line(command_line: &str) -> String {
     let mut parts = command_line.split_whitespace();
     let Some(program) = parts.next() else {
@@ -491,6 +527,7 @@ fn redact_command_line(command_line: &str) -> String {
 /// explicit `CommandPolicy` rather than re-checking that flag itself, same
 /// division of responsibility as `Config::command_policy()`'s doc comment
 /// describes).
+#[cfg(not(any(kani, verus)))]
 pub fn run(
     host: &DockerHost,
     state_dir: &Path,
@@ -514,6 +551,7 @@ pub fn run(
 /// Polls a dynamically supplied set of Docker daemons each tick. This keeps
 /// GSR enforcement active for both the local daemon and Logic-Containers VM
 /// daemons that become available after the poll thread has started.
+#[cfg(not(any(kani, verus)))]
 pub fn run_with_hosts(
     state_dir: &Path,
     policy: CommandPolicy,
@@ -561,6 +599,7 @@ pub fn run_with_hosts(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn sleep_interruptible(duration: Duration, should_stop: &impl Fn() -> bool) {
     let deadline = Instant::now().checked_add(duration);
     while !should_stop() {
@@ -817,3 +856,57 @@ mod tests {
         assert_eq!(policy.evaluate("cargo build"), Decision::Allowed);
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{ban_expiry_timestamp, ban_is_active};
+
+    #[kani::proof]
+    fn ban_expiry_timestamp_saturates_for_all_u64_inputs() {
+        let now: u64 = kani::any();
+        let duration: u64 = kani::any();
+        let expiry = ban_expiry_timestamp(now, duration);
+        assert_eq!(expiry, now.saturating_add(duration));
+        assert!(expiry >= now);
+        if duration > u64::MAX - now {
+            assert_eq!(expiry, u64::MAX);
+        }
+    }
+
+    #[kani::proof]
+    fn ban_is_active_uses_a_strict_expiry_boundary() {
+        let until: u64 = kani::any();
+        let now: u64 = kani::any();
+        assert_eq!(ban_is_active(until, now), until > now);
+        assert!(!ban_is_active(now, now));
+        assert!(!ban_is_active(now.saturating_sub(1), now));
+        assert!(ban_is_active(now.saturating_add(1), now));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{ban_expiry_timestamp, ban_is_active};
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn ban_expiry_timestamp_saturates_for_all_u64_inputs(now: u64, duration: u64)
+            ensures
+                ban_expiry_timestamp(now, duration) == now.saturating_add(duration),
+                ban_expiry_timestamp(now, duration) >= now,
+        {
+        }
+
+        proof fn ban_is_active_uses_a_strict_expiry_boundary(until: u64, now: u64)
+            ensures
+                ban_is_active(until, now) == (until > now),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

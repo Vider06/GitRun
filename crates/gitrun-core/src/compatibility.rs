@@ -22,7 +22,6 @@ pub enum CompatibilityStatus {
     Incompatible,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(
     verus,
@@ -50,6 +49,7 @@ fn aggregate_compatibility_status(
 }
 
 #[cfg(not(any(kani, verus)))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompatibilityFinding {
     pub status: CompatibilityStatus,
     pub code: String,

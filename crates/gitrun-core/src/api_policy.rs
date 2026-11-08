@@ -475,45 +475,84 @@ impl PolicyMatrix {
 mod kani_verification {
     use super::{GitRunApi, GitRunOperation};
 
-    /// Compares the production decision with the closed allowlist for all
-    /// symbolic API and operation variants, without loop-unwind assumptions.
+    const ALL_APIS: [GitRunApi; 10] = [
+        GitRunApi::GitVaultRun,
+        GitRunApi::GitDockRun,
+        GitRunApi::GitSaveRun,
+        GitRunApi::GitRegisterRun,
+        GitRunApi::GitInstallRun,
+        GitRunApi::GitReadRun,
+        GitRunApi::GitWriteRun,
+        GitRunApi::GitVerifyRun,
+        GitRunApi::GitStatusRun,
+        GitRunApi::GitDispatchRun,
+    ];
+
+    const ALL_OPERATIONS: [GitRunOperation; 20] = [
+        GitRunOperation::Read,
+        GitRunOperation::Write,
+        GitRunOperation::Exists,
+        GitRunOperation::Delete,
+        GitRunOperation::List,
+        GitRunOperation::Connect,
+        GitRunOperation::Disconnect,
+        GitRunOperation::Execute,
+        GitRunOperation::Melt,
+        GitRunOperation::Mount,
+        GitRunOperation::Unmount,
+        GitRunOperation::File,
+        GitRunOperation::Logs,
+        GitRunOperation::Register,
+        GitRunOperation::Install,
+        GitRunOperation::Remove,
+        GitRunOperation::Update,
+        GitRunOperation::Verify,
+        GitRunOperation::Status,
+        GitRunOperation::Plan,
+    ];
+
+    /// Exhaustively checks all 200 API/operation pairs against the closed contract.
+    ///
+    /// Explicit finite domains avoid requiring a Kani Arbitrary implementation
+    /// for the public enums. The unwind bound fully covers both fixed-size loops.
     #[kani::proof]
+    #[kani::unwind(21)]
     fn api_operation_matrix_matches_the_closed_contract() {
-        let api: GitRunApi = kani::any();
-        let operation: GitRunOperation = kani::any();
+        for api in ALL_APIS {
+            for operation in ALL_OPERATIONS {
+                let expected = matches!(
+                    (api, operation),
+                    (GitRunApi::GitVaultRun, GitRunOperation::Read)
+                        | (GitRunApi::GitVaultRun, GitRunOperation::Write)
+                        | (GitRunApi::GitVaultRun, GitRunOperation::Exists)
+                        | (GitRunApi::GitVaultRun, GitRunOperation::Delete)
+                        | (GitRunApi::GitVaultRun, GitRunOperation::List)
+                        | (GitRunApi::GitDockRun, GitRunOperation::Connect)
+                        | (GitRunApi::GitDockRun, GitRunOperation::Disconnect)
+                        | (GitRunApi::GitDockRun, GitRunOperation::Read)
+                        | (GitRunApi::GitDockRun, GitRunOperation::Write)
+                        | (GitRunApi::GitDockRun, GitRunOperation::Execute)
+                        | (GitRunApi::GitDockRun, GitRunOperation::Melt)
+                        | (GitRunApi::GitDockRun, GitRunOperation::Mount)
+                        | (GitRunApi::GitDockRun, GitRunOperation::Unmount)
+                        | (GitRunApi::GitSaveRun, GitRunOperation::File)
+                        | (GitRunApi::GitSaveRun, GitRunOperation::Logs)
+                        | (GitRunApi::GitRegisterRun, GitRunOperation::Register)
+                        | (GitRunApi::GitInstallRun, GitRunOperation::Install)
+                        | (GitRunApi::GitInstallRun, GitRunOperation::Remove)
+                        | (GitRunApi::GitInstallRun, GitRunOperation::Update)
+                        | (GitRunApi::GitReadRun, GitRunOperation::Read)
+                        | (GitRunApi::GitWriteRun, GitRunOperation::Write)
+                        | (GitRunApi::GitVerifyRun, GitRunOperation::Verify)
+                        | (GitRunApi::GitStatusRun, GitRunOperation::Status)
+                        | (GitRunApi::GitDispatchRun, GitRunOperation::Plan)
+                );
 
-        let expected = matches!(
-            (api, operation),
-            (GitRunApi::GitVaultRun, GitRunOperation::Read)
-                | (GitRunApi::GitVaultRun, GitRunOperation::Write)
-                | (GitRunApi::GitVaultRun, GitRunOperation::Exists)
-                | (GitRunApi::GitVaultRun, GitRunOperation::Delete)
-                | (GitRunApi::GitVaultRun, GitRunOperation::List)
-                | (GitRunApi::GitDockRun, GitRunOperation::Connect)
-                | (GitRunApi::GitDockRun, GitRunOperation::Disconnect)
-                | (GitRunApi::GitDockRun, GitRunOperation::Read)
-                | (GitRunApi::GitDockRun, GitRunOperation::Write)
-                | (GitRunApi::GitDockRun, GitRunOperation::Execute)
-                | (GitRunApi::GitDockRun, GitRunOperation::Melt)
-                | (GitRunApi::GitDockRun, GitRunOperation::Mount)
-                | (GitRunApi::GitDockRun, GitRunOperation::Unmount)
-                | (GitRunApi::GitSaveRun, GitRunOperation::File)
-                | (GitRunApi::GitSaveRun, GitRunOperation::Logs)
-                | (GitRunApi::GitRegisterRun, GitRunOperation::Register)
-                | (GitRunApi::GitInstallRun, GitRunOperation::Install)
-                | (GitRunApi::GitInstallRun, GitRunOperation::Remove)
-                | (GitRunApi::GitInstallRun, GitRunOperation::Update)
-                | (GitRunApi::GitReadRun, GitRunOperation::Read)
-                | (GitRunApi::GitWriteRun, GitRunOperation::Write)
-                | (GitRunApi::GitVerifyRun, GitRunOperation::Verify)
-                | (GitRunApi::GitStatusRun, GitRunOperation::Status)
-                | (GitRunApi::GitDispatchRun, GitRunOperation::Plan)
-        );
-
-        assert_eq!(api.supports_operation(operation), expected);
+                assert_eq!(api.supports_operation(operation), expected);
+            }
+        }
     }
 }
-
 #[cfg(verus)]
 mod verus_verification {
     use super::{GitRunApi, GitRunOperation};

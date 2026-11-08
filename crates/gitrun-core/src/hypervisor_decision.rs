@@ -88,10 +88,7 @@ fn decisions_dir(state_dir: &Path) -> PathBuf {
     )
 )]
 fn decision_filename_byte_is_literal(byte: u8) -> bool {
-    byte.is_ascii_lowercase()
-        || byte.is_ascii_uppercase()
-        || byte.is_ascii_digit()
-        || byte == b'-'
+    byte.is_ascii_lowercase() || byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'-'
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]

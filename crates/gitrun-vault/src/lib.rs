@@ -43,25 +43,36 @@
 //! backdoor); back it up if the vault holds anything that isn't otherwise
 //! recoverable.
 
+#[cfg(not(any(kani, verus)))]
 use aes_gcm::aead::{Aead, KeyInit, Payload};
+#[cfg(not(any(kani, verus)))]
 use aes_gcm::{Aes256Gcm, Nonce};
+#[cfg(not(any(kani, verus)))]
 use rand::{rngs::SysRng, TryRng};
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::collections::HashMap;
+#[cfg(not(any(kani, verus)))]
 use std::fs;
+#[cfg(not(any(kani, verus)))]
 use std::mem::MaybeUninit;
+#[cfg(not(any(kani, verus)))]
 use std::path::{Path, PathBuf};
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
 /// Where a secret applies. See the module docs for the resolution order
 /// (`resolve_for_repo`) when a repo could match more than one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg(not(any(kani, verus)))]
 pub enum Scope {
     Global,
     Group(String),
     Repo(String),
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Scope {
     /// Deterministic sort key used to pick the most specific match when a
     /// repo has secrets available from more than one scope: higher number
@@ -76,6 +87,7 @@ impl Scope {
 }
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum VaultError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -107,6 +119,7 @@ pub enum VaultError {
     Randomness(#[from] rand::rngs::SysError),
 }
 
+#[cfg(not(any(kani, verus)))]
 pub type Result<T> = std::result::Result<T, VaultError>;
 
 /// Gate for reporting security-relevant vault events to an external
@@ -114,6 +127,7 @@ pub type Result<T> = std::result::Result<T, VaultError>;
 /// exists, without GitVault needing to depend on GSR directly. A no-op
 /// default means GitVault works standalone today; wiring in a real sink
 /// later is additive.
+#[cfg(not(any(kani, verus)))]
 pub trait VaultEventSink: Send + Sync {
     /// Called when a stored secret fails to decrypt for reasons other than
     /// a simple missing entry — i.e. wrong master key or, more seriously,
@@ -148,17 +162,26 @@ pub trait VaultEventSink: Send + Sync {
 /// Default sink used when no observer is configured: does nothing. Kept
 /// explicit (rather than `Option<Box<dyn VaultEventSink>>` everywhere) so
 /// `Vault::open` doesn't need an `Option` check on every operation.
+#[cfg(not(any(kani, verus)))]
 pub struct NoopEventSink;
+#[cfg(not(any(kani, verus)))]
 impl VaultEventSink for NoopEventSink {}
 
+#[cfg(not(any(kani, verus)))]
 const MASTER_KEY_FILE: &str = "master.key";
+#[cfg(not(any(kani, verus)))]
 const SECRETS_FILE: &str = "secrets.json";
+#[cfg(not(any(kani, verus)))]
 const NONCE_LEN: usize = 12;
+#[cfg(not(any(kani, verus)))]
 const DATA_KEY_CONTEXT: &[u8] = b"GitRun/GitVault/data-key/v1";
+#[cfg(not(any(kani, verus)))]
 const DERIVED_KEY_VERSION_WITHOUT_AAD: u8 = 1;
+#[cfg(not(any(kani, verus)))]
 const DATA_KEY_VERSION: u8 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct StoredSecret {
     /// Base64-encoded nonce, unique per encryption — AES-GCM security
     /// depends entirely on never reusing a nonce with the same key, so this
@@ -183,6 +206,7 @@ struct StoredSecret {
     key_version: u8,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Scope {
     fn default_for_migration() -> Self {
         Scope::Global
@@ -190,11 +214,13 @@ impl Scope {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct VaultFile {
     #[serde(default)]
     secrets: HashMap<String, StoredSecret>,
 }
 
+#[cfg(not(any(kani, verus)))]
 pub struct Vault {
     dir: PathBuf,
     cipher: Aes256Gcm,
@@ -205,6 +231,7 @@ pub struct Vault {
     events: Box<dyn VaultEventSink>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Vault {
     /// Opens (or initializes) a vault at `dir`, generating a new master key
     /// on first use. `dir` should be a path only GitRun's own processes can
@@ -586,6 +613,7 @@ impl Vault {
 /// Bind security-sensitive metadata to the ciphertext authentication tag.
 /// Otherwise an editor of secrets.json could change a record's scope while
 /// leaving the AES-GCM ciphertext untouched, potentially broadening visibility.
+#[cfg(not(any(kani, verus)))]
 fn secret_associated_data(name: &str, scope: &Scope) -> Vec<u8> {
     const DOMAIN: &[u8] = b"GitRun/GitVault/secret-aad/v2\0";
     let (scope_tag, scope_value): (u8, &str) = match scope {
@@ -606,21 +634,37 @@ fn secret_associated_data(name: &str, scope: &Scope) -> Vec<u8> {
     aad
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns codepoint != 0 && codepoint != 1 && codepoint != 61))]
+fn secret_name_codepoint_is_allowed(codepoint: u32) -> bool {
+    codepoint != 0 && codepoint != 1 && codepoint != 61
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns codepoint != 1))]
+fn scope_component_codepoint_is_allowed(codepoint: u32) -> bool {
+    codepoint != 1
+}
+
+#[cfg(not(any(kani, verus)))]
 fn validate_name(name: &str) -> Result<()> {
     if name.trim().is_empty() {
         return Err(VaultError::EmptyName);
     }
-    if name.chars().any(|c| c == '\u{1}' || c == '=' || c == '\0') {
+    if name.chars().any(|character| !secret_name_codepoint_is_allowed(character as u32)) {
         return Err(VaultError::InvalidIdentifier);
     }
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_scope(scope: &Scope) -> Result<()> {
     match scope {
         Scope::Global => Ok(()),
         Scope::Group(group) | Scope::Repo(group) => {
-            if group.trim().is_empty() || group.chars().any(|c| c == '\u{1}') {
+            if group.trim().is_empty()
+                || group.chars().any(|character| !scope_component_codepoint_is_allowed(character as u32))
+            {
                 Err(VaultError::InvalidIdentifier)
             } else {
                 Ok(())
@@ -630,6 +674,7 @@ fn validate_scope(scope: &Scope) -> Result<()> {
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn write_secret_file(path: &Path, data: &VaultFile) -> Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
@@ -646,11 +691,13 @@ fn write_secret_file(path: &Path, data: &VaultFile) -> Result<()> {
 }
 
 #[cfg(not(unix))]
+#[cfg(not(any(kani, verus)))]
 fn write_secret_file(path: &Path, data: &VaultFile) -> Result<()> {
     fs::write(path, serde_json::to_string_pretty(data)?)?;
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn secure_vault_directory(path: &Path) -> Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -675,6 +722,7 @@ fn secure_vault_directory(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_private_vault_file(path: &Path, label: &str) -> Result<String> {
     use std::io::Read;
     let mut options = fs::OpenOptions::new();
@@ -710,6 +758,7 @@ fn read_private_vault_file(path: &Path, label: &str) -> Result<String> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn load_or_create_master_key(dir: &Path, events: &dyn VaultEventSink) -> Result<[u8; 32]> {
     let path = dir.join(MASTER_KEY_FILE);
     match fs::symlink_metadata(&path) {
@@ -739,6 +788,7 @@ fn load_or_create_master_key(dir: &Path, events: &dyn VaultEventSink) -> Result<
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_master_key(path: &Path) -> Result<[u8; 32]> {
     use std::io::Read;
     let mut options = fs::OpenOptions::new();
@@ -785,6 +835,7 @@ fn read_master_key(path: &Path) -> Result<[u8; 32]> {
 /// same fix already applied in `gitrun-setup` for `gitrun.env` (avoid the
 /// create-then-chmod window where sensitive material sits world-readable).
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn write_master_key(path: &Path, key: &[u8; 32]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
@@ -820,6 +871,7 @@ fn write_master_key(path: &Path, key: &[u8; 32]) -> std::io::Result<()> {
 }
 
 #[cfg(not(unix))]
+#[cfg(not(any(kani, verus)))]
 fn write_master_key(path: &Path, key: &[u8; 32]) -> std::io::Result<()> {
     let parent = path
         .parent()
@@ -854,6 +906,7 @@ fn write_master_key(path: &Path, key: &[u8; 32]) -> std::io::Result<()> {
 /// separator `\u{1}` (a control character) is used rather than something
 /// printable like `:` or `/` so it can never collide with a scope or secret
 /// name an operator might plausibly choose.
+#[cfg(not(any(kani, verus)))]
 fn storage_key(name: &str, scope: &Scope) -> String {
     let scope_tag = match scope {
         Scope::Global => "global".to_owned(),
@@ -865,10 +918,12 @@ fn storage_key(name: &str, scope: &Scope) -> String {
 
 /// Extracts the original secret name back out of a storage key built by
 /// `storage_key`. The name is always the last `\u{1}`-delimited segment.
+#[cfg(not(any(kani, verus)))]
 fn name_part_of_key(key: &str) -> String {
     key.rsplit('\u{1}').next().unwrap_or(key).to_owned()
 }
 
+#[cfg(not(any(kani, verus)))]
 fn derive_data_key(master_key: &[u8]) -> [u8; 32] {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -877,18 +932,22 @@ fn derive_data_key(master_key: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+#[cfg(not(any(kani, verus)))]
 static TEMP_FILE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn sync_parent_dir(path: &Path) -> std::io::Result<()> {
     fs::File::open(path)?.sync_all()
 }
 
 #[cfg(not(unix))]
+#[cfg(not(any(kani, verus)))]
 fn sync_parent_dir(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -901,17 +960,20 @@ fn now() -> u64 {
 /// site in this file is unchanged. Previously a hand-rolled implementation
 /// (correct per its own round-trip test, but unaudited and non-constant-
 /// time); replaced with the vetted, widely-used crate on request.
+#[cfg(not(any(kani, verus)))]
 fn base64_encode(data: &[u8]) -> String {
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD.encode(data)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn base64_decode(input: &str) -> Option<Vec<u8>> {
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD.decode(input).ok()
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 mod tests {
     use super::*;
 
@@ -1452,3 +1514,52 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{scope_component_codepoint_is_allowed, secret_name_codepoint_is_allowed};
+
+    #[kani::proof]
+    fn vault_secret_name_reserved_codepoints_are_rejected() {
+        let codepoint: u32 = kani::any();
+        assert_eq!(
+            secret_name_codepoint_is_allowed(codepoint),
+            codepoint != 0 && codepoint != 1 && codepoint != 61
+        );
+    }
+
+    #[kani::proof]
+    fn vault_scope_components_reject_only_the_storage_separator() {
+        let codepoint: u32 = kani::any();
+        assert_eq!(scope_component_codepoint_is_allowed(codepoint), codepoint != 1);
+        assert!(!scope_component_codepoint_is_allowed(1));
+        assert!(scope_component_codepoint_is_allowed(0));
+        assert!(scope_component_codepoint_is_allowed(61));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{scope_component_codepoint_is_allowed, secret_name_codepoint_is_allowed};
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn vault_secret_name_reserved_codepoints_are_rejected(codepoint: u32)
+            ensures
+                secret_name_codepoint_is_allowed(codepoint)
+                    == (codepoint != 0 && codepoint != 1 && codepoint != 61),
+        {
+        }
+
+        proof fn vault_scope_components_reject_only_the_storage_separator(codepoint: u32)
+            ensures scope_component_codepoint_is_allowed(codepoint) == (codepoint != 1),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

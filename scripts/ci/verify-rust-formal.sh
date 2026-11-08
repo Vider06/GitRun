@@ -45,6 +45,7 @@ readonly required_harnesses=(
   "compatibility_severity_aggregation_is_total_and_ordered"
   "repository_override_cannot_reenable_global_api"
   "predictive_peak_is_bounded_for_all_u32_inputs"
+  "api_parser_rejects_duplicate_arguments_and_operations"
 )
 readonly policy_harness="verification/kani/updater_policy.rs"
 readonly inventory="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-rust-source-inventory.tsv"
@@ -187,6 +188,7 @@ readonly -a proof_sources=(
   "crates/gitrun-core/src/compatibility.rs"
   "crates/gitrun-core/src/settings.rs"
   "crates/gitrun-smart-scheduler/src/future_mapping.rs"
+  "crates/gitrun-gsr/src/bin/gitrun-api.rs"
 )
 
 for source in "${proof_sources[@]}"; do

@@ -242,7 +242,8 @@ def main() -> int:
                         f"Manifest line {line}: NOT_APPLICABLE scopes must not declare verifier entrypoints."
                     )
                 if (
-                    "not applicable" not in kani_obligations.lower()
+                    "not applicable" not in scope.lower()
+                    or "not applicable" not in kani_obligations.lower()
                     or "not applicable" not in verus_obligations.lower()
                     or kani_obligations.casefold() == verus_obligations.casefold()
                 ):

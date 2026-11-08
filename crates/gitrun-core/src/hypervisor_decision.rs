@@ -81,16 +81,16 @@ fn decisions_dir(state_dir: &Path) -> PathBuf {
     verus,
     verus_spec(
         returns
-            (byte >= b'a' && byte <= b'z')
-                || (byte >= b'A' && byte <= b'Z')
-                || (byte >= b'0' && byte <= b'9')
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_uppercase()
+                || byte.is_ascii_digit()
                 || byte == b'-'
     )
 )]
 fn decision_filename_byte_is_literal(byte: u8) -> bool {
-    (byte >= b'a' && byte <= b'z')
-        || (byte >= b'A' && byte <= b'Z')
-        || (byte >= b'0' && byte <= b'9')
+    byte.is_ascii_lowercase()
+        || byte.is_ascii_uppercase()
+        || byte.is_ascii_digit()
         || byte == b'-'
 }
 

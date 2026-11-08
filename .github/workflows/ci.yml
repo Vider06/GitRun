@@ -2990,7 +2990,7 @@ jobs:
         shell: bash
         run: |
           "${RUNNER_TEMP}/verus/installed/verus" verification/verus/smoke.rs
-      - name: Enforce dual-verifier coverage for every tracked Rust file
+      - name: Audit dual-verifier proof scope
         shell: bash
         run: python3 scripts/ci/verify-rust-dual-coverage.py
       - name: Upload Kani per-file coverage status

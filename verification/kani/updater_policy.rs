@@ -3,7 +3,6 @@ mod policy_logic;
 
 fn main() {}
 
-
 #[cfg(kani)]
 mod verification {
     use super::policy_logic::{ReleaseType, UpdatePolicy};

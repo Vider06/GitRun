@@ -82,7 +82,6 @@ impl Severity {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg(not(any(kani, verus)))]
 pub struct SecurityEvent {
@@ -515,7 +514,7 @@ mod tests {
     use super::*;
 
     #[cfg(not(any(kani, verus)))]
-fn temp_path(label: &str) -> PathBuf {
+    fn temp_path(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "gitrun-gsr-events-test-{label}-{}.jsonl",
             std::process::id()

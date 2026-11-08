@@ -241,10 +241,12 @@ def main() -> int:
                     issues.append(
                         f"Manifest line {line}: NOT_APPLICABLE scopes must not declare verifier entrypoints."
                     )
-                rationale = " ".join((scope, kani_obligations, kani_cases, verus_obligations)).lower()
-                if "not applicable" not in rationale:
+                if (
+                    "not applicable" not in kani_obligations.lower()
+                    or "not applicable" not in verus_obligations.lower()
+                ):
                     issues.append(
-                        f"Manifest line {line}: NOT_APPLICABLE scope lacks an explicit tool limitation."
+                        f"Manifest line {line}: NOT_APPLICABLE requires separate Kani and Verus limitation statements."
                     )
             if status == "IMPLEMENTED":
                 for tool, entrypoint in (("KANI", kani), ("VERUS", verus)):

@@ -191,6 +191,12 @@ def main() -> int:
         issues.append(f"Tracked Rust source has no proof-scope mapping: {missing}")
 
     counts = write_report(sources, rows)
+    if counts["PLANNED"]:
+        issues.append(
+            f"{counts['PLANNED']} tracked Rust source proof scopes remain PLANNED."
+        )
+    if counts["UNMAPPED"]:
+        issues.append(f"{counts['UNMAPPED']} tracked Rust source files are unmapped.")
     write_summary(counts, len(sources), issues)
 
     print(
@@ -198,12 +204,6 @@ def main() -> int:
         f"{counts['IMPLEMENTED']} declared proof scopes implemented, "
         f"{counts['PLANNED']} planned, {counts['UNMAPPED']} unmapped."
     )
-    if counts["PLANNED"]:
-        issues.append(
-            f"{counts['PLANNED']} tracked Rust source proof scopes remain PLANNED."
-        )
-    if counts["UNMAPPED"]:
-        issues.append(f"{counts['UNMAPPED']} tracked Rust source files are unmapped.")
     if issues:
         for issue in issues[:200]:
             print(f"::error::{issue}", file=sys.stderr)

@@ -114,11 +114,11 @@ fn read_env_file_value(path: &Path, wanted_key: &str) -> Result<String, GitHubAu
 #[cfg_attr(
     verus,
     verus_spec(
-        returns (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'')
+        returns (first == 34 && last == 34) || (first == 39 && last == 39)
     )
 )]
 fn has_matching_quote_bytes(first: u8, last: u8) -> bool {
-    (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'')
+    (first == 34 && last == 34) || (first == 39 && last == 39)
 }
 
 fn unquote(value: &str) -> String {
@@ -204,7 +204,7 @@ mod kani_verification {
     fn matching_quote_bytes_is_exact_over_all_byte_pairs() {
         let first: u8 = kani::any();
         let last: u8 = kani::any();
-        let expected = (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'');
+        let expected = (first == 34 && last == 34) || (first == 39 && last == 39);
         assert_eq!(has_matching_quote_bytes(first, last), expected);
     }
 

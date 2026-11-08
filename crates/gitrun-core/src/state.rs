@@ -1,4 +1,6 @@
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::{
     fs,
     io::Write,
@@ -7,10 +9,13 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(not(any(kani, verus)))]
 static STATE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum StateError {
     #[error("state I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -19,6 +24,7 @@ pub enum StateError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct HealthReport {
     pub healthy: bool,
     pub checked_at: u64,
@@ -26,10 +32,18 @@ pub struct HealthReport {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 pub struct StateStore {
     root: PathBuf,
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns name == "health.json" || name == "last-crash"))]
+fn state_file_leaf_is_allowed(name: &str) -> bool {
+    name == "health.json" || name == "last-crash"
+}
+
+#[cfg(not(any(kani, verus)))]
 impl StateStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
@@ -64,6 +78,12 @@ impl StateStore {
     }
 
     fn write_atomic(&self, name: &str, bytes: &[u8]) -> Result<(), StateError> {
+        if !state_file_leaf_is_allowed(name) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "unsupported state file name",
+            ).into());
+        }
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -116,7 +136,7 @@ impl StateStore {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(any(kani, verus))))]
 mod tests {
     use super::*;
     use std::{
@@ -145,3 +165,40 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::state_file_leaf_is_allowed;
+
+    #[kani::proof]
+    fn state_store_accepts_only_its_two_fixed_leaf_names() {
+        assert!(state_file_leaf_is_allowed("health.json"));
+        assert!(state_file_leaf_is_allowed("last-crash"));
+        assert!(!state_file_leaf_is_allowed(""));
+        assert!(!state_file_leaf_is_allowed("state.json"));
+        assert!(!state_file_leaf_is_allowed("../health.json"));
+        assert!(!state_file_leaf_is_allowed("sub/health.json"));
+        assert!(!state_file_leaf_is_allowed("health.json.tmp"));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::state_file_leaf_is_allowed;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn state_store_accepts_only_its_two_fixed_leaf_names(name: &str)
+            ensures
+                state_file_leaf_is_allowed(name)
+                    == (name == "health.json" || name == "last-crash"),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

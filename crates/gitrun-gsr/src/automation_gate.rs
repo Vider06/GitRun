@@ -209,6 +209,28 @@ fn runner_floor_is_bounded(configured: u32, proposed: u32, maximum: u32) -> bool
     proposed >= configured && proposed <= maximum
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns
+            (byte >= b'a' && byte <= b'z')
+                || (byte >= b'A' && byte <= b'Z')
+                || (byte >= b'0' && byte <= b'9')
+                || byte == b'-'
+                || byte == b'_'
+                || byte == b'.'
+    )
+)]
+fn valid_repository_component_byte(byte: u8) -> bool {
+    (byte >= b'a' && byte <= b'z')
+        || (byte >= b'A' && byte <= b'Z')
+        || (byte >= b'0' && byte <= b'9')
+        || byte == b'-'
+        || byte == b'_'
+        || byte == b'.'
+}
+
 #[cfg(not(any(kani, verus)))]
 fn valid_repository(repository: &str) -> bool {
     let mut parts = repository.split('/');
@@ -220,9 +242,7 @@ fn valid_repository(repository: &str) -> bool {
             && part.len() <= 100
             && part != "."
             && part != ".."
-            && part
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            && part.bytes().all(valid_repository_component_byte)
     })
 }
 
@@ -475,6 +495,19 @@ mod kani_verification {
         );
     }
 
+    /// Exhaustively checks the byte alphabet accepted inside owner/repo components.
+    #[kani::proof]
+    fn repository_component_byte_alphabet_is_closed() {
+        let byte: u8 = kani::any();
+        let expected = (byte >= b'a' && byte <= b'z')
+            || (byte >= b'A' && byte <= b'Z')
+            || (byte >= b'0' && byte <= b'9')
+            || byte == b'-'
+            || byte == b'_'
+            || byte == b'.';
+        assert_eq!(super::valid_repository_component_byte(byte), expected);
+    }
+
     /// Proves all automation action names are stable and exhaustive.
     #[kani::proof]
     fn automation_action_wire_names_are_total() {
@@ -499,6 +532,21 @@ mod verus_verification {
             ensures
                 runner_floor_is_bounded(configured, proposed, maximum)
                     == (proposed >= configured && proposed <= maximum),
+        {
+        }
+
+        /// Proves the byte-level allowlist used by repository identity validation.
+        proof fn repository_component_byte_alphabet_is_closed(byte: u8)
+            ensures
+                super::valid_repository_component_byte(byte)
+                    == (
+                        (byte >= b'a' && byte <= b'z')
+                            || (byte >= b'A' && byte <= b'Z')
+                            || (byte >= b'0' && byte <= b'9')
+                            || byte == b'-'
+                            || byte == b'_'
+                            || byte == b'.'
+                    ),
         {
         }
 

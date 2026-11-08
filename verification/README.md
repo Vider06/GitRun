@@ -60,9 +60,6 @@ The current Kani proof targets are:
   `github_app_id_string_validation_rejects_invalid_values` in
   `crates/gitrun-core/src/app_auth.rs`: App IDs must be positive decimal
   integers, with explicit zero, non-decimal, and overflow boundary cases.
-- `severity_wire_names_are_total` in
-  `crates/gitrun-gsr/src/events.rs`: every event severity variant maps to its
-  stable external wire name.
 - The standalone `verification/kani/updater_policy.rs` harness also proves
   representative allow/deny outcomes using the imported production policy.
 
@@ -89,8 +86,12 @@ Verus is pinned to `0.2026.11.02.8bf68ee` and installed by
 Rust toolchain (`1.99.0`).
 
 The toolchain smoke proof in `verification/verus/smoke.rs` remains separate
-from source coverage. Production Verus properties now cover the updater policy and eleven additional
-source modules:
+from source coverage. The Verus runner invokes a standalone verification target for each production
+scope marked `IMPLEMENTED` in `verification/source-proof-map.tsv`. The current
+set includes the updater policy, API policy, GSR enforcement and event gates,
+command parsing, configuration/authentication, scheduler capacity and routing,
+VM identity, management authorization, platform mappings, setup policy, Kitty
+workload IDs, runner artifact digests, updater settings and Vault identifiers:
 
 - `UpdatePolicy::accepts_release_type` in
   `crates/gitrun-updater/src/policy_logic.rs`, with all nine policy/release
@@ -153,22 +154,27 @@ both verifier processes completed successfully for every mapped source; a
 smoke proof, compilation, inventory entry, or lint result cannot substitute.
 
 **Coverage at this PR revision:** the repository has 75 tracked Rust source
-files. Thirteen rows are marked `IMPLEMENTED`: twelve production source modules
-and the standalone updater verifier harness. Seven non-production rows are
-`NOT_APPLICABLE`: four Cargo build scripts, two integration-test harnesses,
-and the Verus smoke fixture. The implemented production properties cover
-updater policy, API-operation authorization, runner bounds, watchdog PID
-conversion, JSON recovery action names, scheduler cooldown clamping,
-predictive queue growth, Dock operation wire names, Kitty automation bounds
-and action names, command-policy action/byte rules, hypervisor filename byte
-encoding, and GitHub App identifier validation. The remaining 55 production
-and integration source scopes are still `PLANNED`. These
-entries describe authored proof targets, not `PROVEN` results: both verifier
-processes must complete successfully before a source is reported as covered. The gate
-remains intentionally red until every tracked Rust file has a reviewed,
-meaningful Kani proof and a reviewed, meaningful Verus proof. This includes
-tests, build scripts, and verification harnesses; no file is silently
-excluded.
+files. Fifty rows are marked `IMPLEMENTED` and have production-linked Kani
+and Verus proof entrypoints registered in the two verifier runners. Twenty-five
+rows are `NOT_APPLICABLE`: these are process/UI/transport adapters, build
+scripts, integration-test fixtures, and the verifier smoke fixture whose
+behavior is covered by their owning modules or host integration checks rather
+than an independent pure production invariant. No row remains `PLANNED`.
+The implemented properties cover policy and authorization, bounded arithmetic,
+GSR event and enforcement behavior, authenticated executor protocol limits,
+repository/workload/VM identity grammars, Docker and service-manager mapping,
+memory and runner capacity bounds, setup resource transformation, release
+digest and policy validation, and Vault identifier validation.
+
+These counts describe authored and registered proof targets, not `PROVEN`
+results. A source is reported as fully covered only after both verifier
+processes complete successfully for that source and the dual-verifier audit
+reconciles their per-source result files. Kani/Verus compilation failures,
+missing results, or a smoke proof cannot substitute for source-level proof.
+Every `NOT_APPLICABLE` row has separate Kani and Verus rationale in the TSV
+and is not counted as a formal proof. The gate remains closed until every
+applicable scope has successful Kani and Verus results and every non-applicable
+scope has a reviewed, accepted boundary; no source is silently excluded.
 
 The TSV has separate `KANI_OBLIGATIONS`, `KANI_CASES`, and
 `VERUS_OBLIGATIONS` columns so the required property and the input partitions

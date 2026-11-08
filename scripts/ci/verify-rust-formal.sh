@@ -51,6 +51,8 @@ readonly required_harnesses=(
   "cat_output_is_interactive_only"
   "platform_abi_and_package_manager_names_are_stable"
   "managed_service_names_do_not_cross_service_boundaries"
+  "ban_expiry_timestamp_saturates_for_all_u64_inputs"
+  "ban_is_active_uses_a_strict_expiry_boundary"
   "snapshot_name_length_is_bounded_for_all_usize_values"
 )
 readonly policy_harness="verification/kani/updater_policy.rs"
@@ -199,6 +201,7 @@ readonly -a proof_sources=(
   "crates/gitrun-scheduler/src/vm.rs"
   "crates/gitrun-cli/src/presenter.rs"
   "crates/gitrun-platform/src/lib.rs"
+  "crates/gitrun-scheduler/src/gsr_poll.rs"
 )
 
 for source in "${proof_sources[@]}"; do

@@ -14,20 +14,30 @@
 //! token as an explicit constructor argument instead, so it can't be
 //! silently dropped again.
 
+#[cfg(not(any(kani, verus)))]
 use crate::docker::{self, sanitize};
+#[cfg(not(any(kani, verus)))]
 use crate::github::GitHubClient;
+#[cfg(not(any(kani, verus)))]
 use std::fs;
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 use std::fs::OpenOptions;
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 use std::os::fd::AsRawFd;
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 use std::os::unix::fs::OpenOptionsExt;
+#[cfg(not(any(kani, verus)))]
 use std::path::{Path, PathBuf};
+#[cfg(not(any(kani, verus)))]
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum GtuuError {
     #[error("another GTUU run is already active")]
     AlreadyRunning,
@@ -43,9 +53,11 @@ pub enum GtuuError {
     RunnerImageRefresh(String),
 }
 
+#[cfg(not(any(kani, verus)))]
 pub type Result<T> = std::result::Result<T, GtuuError>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub enum UpdateOutcome {
     Updated,
     Current,
@@ -68,6 +80,7 @@ pub enum UpdateOutcome {
 /// portable process-liveness checks are unavailable there. It can reclaim an
 /// old live lock after the cutoff, so its race and crash-recovery guarantees
 /// are weaker than the Unix flock implementation.
+#[cfg(not(any(kani, verus)))]
 pub struct GtuuLock {
     path: PathBuf,
     #[cfg(unix)]
@@ -77,8 +90,10 @@ pub struct GtuuLock {
 /// Fallback age for locks whose owner cannot be determined. Unix checks
 /// valid PIDs directly; the non-Unix fallback uses this age cutoff for every
 /// lock and can therefore reclaim an unusually long-running operation.
+#[cfg(not(any(kani, verus)))]
 const STALE_LOCK_AGE: Duration = Duration::from_secs(60 * 60);
 
+#[cfg(not(any(kani, verus)))]
 impl GtuuLock {
     pub fn acquire(state_dir: &Path) -> Result<Self> {
         Self::acquire_with_retry(state_dir, Duration::ZERO)
@@ -167,6 +182,7 @@ impl GtuuLock {
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn acquire_guard(state_dir: &Path) -> Result<fs::File> {
     let guard_path = state_dir.join("gtuu.lock.guard");
     let guard = OpenOptions::new()
@@ -196,6 +212,7 @@ fn acquire_guard(state_dir: &Path) -> Result<fs::File> {
 /// unreadable PID falls back to the age cutoff. On non-Unix systems, all
 /// locks use the age cutoff because portable process-liveness checks are not
 /// available in this implementation.
+#[cfg(not(any(kani, verus)))]
 fn is_stale(lock_path: &Path) -> bool {
     #[cfg(unix)]
     {
@@ -218,6 +235,7 @@ fn is_stale(lock_path: &Path) -> bool {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn lock_age_exceeded(lock_path: &Path) -> bool {
     fs::metadata(lock_path)
         .and_then(|meta| meta.modified())
@@ -227,6 +245,7 @@ fn lock_age_exceeded(lock_path: &Path) -> bool {
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn process_is_alive(pid: u32) -> bool {
     // PID 0 and values that cannot fit in kill(2)'s signed pid_t are not
     // valid process IDs here. In particular, casting u32::MAX would turn it
@@ -247,6 +266,7 @@ extern "C" {
     fn libc_kill(pid: i32, sig: i32) -> i32;
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Drop for GtuuLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(self.path.join("pid"));
@@ -255,8 +275,10 @@ impl Drop for GtuuLock {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 type SecretEnvForRepo<'a> = dyn Fn(&str) -> std::result::Result<Vec<(String, String)>, String> + 'a;
 
+#[cfg(not(any(kani, verus)))]
 pub struct GtuuConfig<'a> {
     pub image: &'a str,
     pub repositories: &'a [String],
@@ -295,6 +317,7 @@ pub struct GtuuConfig<'a> {
 /// Updates every permanent container for the configured repositories whose
 /// image differs from the freshly pulled one. Returns the number actually
 /// updated (mirrors the Python `update_permanent_containers` return value).
+#[cfg(not(any(kani, verus)))]
 pub fn update_permanent_containers(client: &GitHubClient, config: &GtuuConfig) -> Result<u32> {
     update_permanent_containers_with_options(client, config, None, false, false)
 }
@@ -302,6 +325,7 @@ pub fn update_permanent_containers(client: &GitHubClient, config: &GtuuConfig) -
 /// Reconcile selected permanent runners. A forced rebuild validates a fresh
 /// local image before promoting its tag; a forced replacement bypasses only
 /// the image-ID equality shortcut, never the busy-runner safety gate.
+#[cfg(not(any(kani, verus)))]
 pub fn update_permanent_containers_with_options(
     client: &GitHubClient,
     config: &GtuuConfig,
@@ -348,6 +372,7 @@ pub fn update_permanent_containers_with_options(
 /// Read-only inventory for the GTUU CLI. It reports the configured image,
 /// permanent container state, and whether each container uses the current
 /// image without contacting GitHub or mutating Docker resources.
+#[cfg(not(any(kani, verus)))]
 pub fn check_permanent_containers(
     config: &GtuuConfig,
     repository_filter: Option<&str>,
@@ -385,10 +410,17 @@ pub fn check_permanent_containers(
     Ok(report)
 }
 
-fn is_registry_image_reference(image: &str) -> bool {
-    image.contains('/')
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns byte == b'/'))]
+fn registry_image_separator_byte(byte: u8) -> bool {
+    byte == b'/'
 }
 
+fn is_registry_image_reference(image: &str) -> bool {
+    image.as_bytes().iter().any(|byte| registry_image_separator_byte(*byte))
+}
+
+#[cfg(not(any(kani, verus)))]
 fn pull_image(image: &str) -> Result<String> {
     // Bootstrap builds the default `gitrun-runner:latest` image locally.
     // An unqualified reference has no registry/namespace, so blindly running
@@ -406,6 +438,7 @@ fn pull_image(image: &str) -> Result<String> {
     docker::image_id(image).map_err(Into::into)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn current_image_id(container_name: &str) -> Result<UpdateCurrentImage> {
     match docker::container_image_id(container_name)? {
         Some(id) => Ok(UpdateCurrentImage::Present(id)),
@@ -413,11 +446,13 @@ fn current_image_id(container_name: &str) -> Result<UpdateCurrentImage> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 enum UpdateCurrentImage {
     Present(String),
     Missing,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn update_one(
     client: &GitHubClient,
     config: &GtuuConfig,
@@ -519,6 +554,7 @@ fn update_one(
     Ok(UpdateOutcome::Updated)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn replacement_suffix() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -527,6 +563,7 @@ fn replacement_suffix() -> String {
     format!("{nanos:x}-{:x}", std::process::id())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn wait_for_online(
     client: &GitHubClient,
     repo: &str,
@@ -722,3 +759,41 @@ mod tests {
         assert!(suffix.len() > 8);
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{is_registry_image_reference, registry_image_separator_byte};
+
+    #[kani::proof]
+    fn registry_separator_is_exact_over_all_bytes() {
+        let byte: u8 = kani::any();
+        assert_eq!(registry_image_separator_byte(byte), byte == b'/');
+    }
+
+    #[kani::proof]
+    fn image_pull_decision_distinguishes_local_and_registry_references() {
+        assert!(!is_registry_image_reference("gitrun-runner:latest"));
+        assert!(!is_registry_image_reference("busybox"));
+        assert!(is_registry_image_reference("ghcr.io/Vider06/runner:latest"));
+        assert!(is_registry_image_reference("owner/runner:latest"));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::registry_image_separator_byte;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn registry_separator_is_exact_over_all_bytes(byte: u8)
+            ensures registry_image_separator_byte(byte) == (byte == b'/'),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

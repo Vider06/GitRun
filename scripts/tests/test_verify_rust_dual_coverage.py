@@ -236,9 +236,9 @@ class DualVerifierCoverageTests(unittest.TestCase):
                     "",
                     "",
                     "host build integration",
-                    "Kani cannot model the host build process",
+                    "NOT APPLICABLE: Kani cannot model the host build process",
                     "cargo build executes the build script",
-                    "Verus does not model Cargo build orchestration",
+                    "NOT APPLICABLE: Verus does not model Cargo build orchestration",
                     "NOT_APPLICABLE",
                 )
             ]
@@ -266,7 +266,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
         self.assertEqual(rows["src/other.rs"]["VERUS_STATUS"], "UNVERIFIED")
         self.assertEqual(rows["src/other.rs"]["SCOPE_STATUS"], "UNMAPPED")
         self.assertIn("Sources without a valid mapping | 1", self.summary.read_text())
-        self.assertIn("unmapped", self.summary.read_text().lower())
+        self.assertIn("sources without a valid mapping", self.summary.read_text().lower())
 
     def test_implemented_scope_requires_existing_source_connected_entrypoints(self) -> None:
         self.write_manifest(

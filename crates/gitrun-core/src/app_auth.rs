@@ -438,6 +438,7 @@ mod kani_verification {
 
     /// Covers the string-validation boundaries, including u64 overflow.
     #[kani::proof]
+    #[kani::unwind(9)]
     fn github_app_id_string_validation_rejects_invalid_values() {
         for value in [
             "",

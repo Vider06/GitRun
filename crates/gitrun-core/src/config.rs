@@ -1627,7 +1627,7 @@ mod kani_verification {
     }
 
     #[kani::proof]
-    #[kani::unwind(10)]
+    #[kani::unwind(32)]
     fn config_id_and_repository_boundaries_are_exact() {
         assert!(is_positive_decimal_integer("1"));
         assert!(is_positive_decimal_integer("0001"));

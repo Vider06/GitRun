@@ -61,6 +61,14 @@ class XbpsServerPackageTests(unittest.TestCase):
             calls.append([str(item) for item in command])
             repository = Path(cwd)
             if command[0] == self.args.create:
+                self.assertEqual(
+                    (self.stage / "INSTALL").read_text(encoding="utf-8"),
+                    self.install_hook.read_text(encoding="utf-8"),
+                )
+                self.assertEqual(
+                    (self.stage / "REMOVE").read_text(encoding="utf-8"),
+                    self.remove_hook.read_text(encoding="utf-8"),
+                )
                 (repository / "gitrun-server-1.9.1_1.x86_64.xbps").write_bytes(
                     b"xbps archive"
                 )

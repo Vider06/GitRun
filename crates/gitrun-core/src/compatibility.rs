@@ -4,15 +4,18 @@
 //! the workflow appears to require and resolves them against the repository's
 //! effective GitRun policy. The analyzer is intentionally conservative.
 
+#[cfg(not(any(kani, verus)))]
 use crate::{
     api_policy::{GitRunApi, GitRunOperation},
     scan,
     settings::EffectiveRepositorySettings,
     Finding as WorkflowFinding,
 };
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(not(any(kani, verus)), derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompatibilityStatus {
     Compatible,
     Warning,
@@ -20,6 +23,34 @@ pub enum CompatibilityStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns if has_incompatible {
+            CompatibilityStatus::Incompatible
+        } else if has_warning {
+            CompatibilityStatus::Warning
+        } else {
+            CompatibilityStatus::Compatible
+        }
+    )
+)]
+fn aggregate_compatibility_status(
+    has_incompatible: bool,
+    has_warning: bool,
+) -> CompatibilityStatus {
+    if has_incompatible {
+        CompatibilityStatus::Incompatible
+    } else if has_warning {
+        CompatibilityStatus::Warning
+    } else {
+        CompatibilityStatus::Compatible
+    }
+}
+
+#[cfg(not(any(kani, verus)))]
 pub struct CompatibilityFinding {
     pub status: CompatibilityStatus,
     pub code: String,
@@ -29,12 +60,14 @@ pub struct CompatibilityFinding {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct CompatibilityReport {
     pub workflow: String,
     pub status: CompatibilityStatus,
     pub findings: Vec<CompatibilityFinding>,
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn analyze(
     workflow: &str,
     content: &str,
@@ -48,19 +81,14 @@ pub fn analyze(
     analyze_privileged_shells(&mut findings, content, effective);
     analyze_gitrun_calls(&mut findings, content, effective);
 
-    let status = if findings
-        .iter()
-        .any(|finding| finding.status == CompatibilityStatus::Incompatible)
-    {
-        CompatibilityStatus::Incompatible
-    } else if findings
-        .iter()
-        .any(|finding| finding.status == CompatibilityStatus::Warning)
-    {
-        CompatibilityStatus::Warning
-    } else {
-        CompatibilityStatus::Compatible
-    };
+    let status = aggregate_compatibility_status(
+        findings
+            .iter()
+            .any(|finding| finding.status == CompatibilityStatus::Incompatible),
+        findings
+            .iter()
+            .any(|finding| finding.status == CompatibilityStatus::Warning),
+    );
 
     CompatibilityReport {
         workflow: workflow.to_owned(),
@@ -69,12 +97,14 @@ pub fn analyze(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn add_workflow_findings(findings: &mut Vec<CompatibilityFinding>, workflow: &str, content: &str) {
     for finding in scan(workflow, content) {
         findings.push(convert_workflow_finding(finding));
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn convert_workflow_finding(finding: WorkflowFinding) -> CompatibilityFinding {
     CompatibilityFinding {
         status: CompatibilityStatus::Warning,
@@ -85,6 +115,7 @@ fn convert_workflow_finding(finding: WorkflowFinding) -> CompatibilityFinding {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn analyze_package_installation(
     findings: &mut Vec<CompatibilityFinding>,
     content: &str,
@@ -126,6 +157,7 @@ fn analyze_package_installation(
     });
 }
 
+#[cfg(not(any(kani, verus)))]
 fn analyze_docker_access(
     findings: &mut Vec<CompatibilityFinding>,
     content: &str,
@@ -185,6 +217,7 @@ fn analyze_docker_access(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn analyze_privileged_shells(
     findings: &mut Vec<CompatibilityFinding>,
     content: &str,
@@ -227,6 +260,7 @@ fn analyze_privileged_shells(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn analyze_gitrun_calls(
     findings: &mut Vec<CompatibilityFinding>,
     content: &str,
@@ -320,3 +354,58 @@ mod tests {
         assert_eq!(report.status, CompatibilityStatus::Compatible);
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{aggregate_compatibility_status, CompatibilityStatus};
+
+    #[kani::proof]
+    fn compatibility_severity_aggregation_is_total_and_ordered() {
+        assert_eq!(
+            aggregate_compatibility_status(false, false),
+            CompatibilityStatus::Compatible
+        );
+        assert_eq!(
+            aggregate_compatibility_status(false, true),
+            CompatibilityStatus::Warning
+        );
+        assert_eq!(
+            aggregate_compatibility_status(true, false),
+            CompatibilityStatus::Incompatible
+        );
+        assert_eq!(
+            aggregate_compatibility_status(true, true),
+            CompatibilityStatus::Incompatible
+        );
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{aggregate_compatibility_status, CompatibilityStatus};
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn compatibility_severity_aggregation_is_total_and_ordered(
+            has_incompatible: bool,
+            has_warning: bool,
+        )
+            ensures
+                aggregate_compatibility_status(has_incompatible, has_warning)
+                    == if has_incompatible {
+                        CompatibilityStatus::Incompatible
+                    } else if has_warning {
+                        CompatibilityStatus::Warning
+                    } else {
+                        CompatibilityStatus::Compatible
+                    },
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

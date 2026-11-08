@@ -20,6 +20,8 @@ readonly required_harnesses=(
   "simple_command_byte_alphabet_is_closed"
   "decision_filename_byte_code_is_injective"
   "decision_filename_literal_alphabet_is_closed"
+  "github_app_numeric_id_must_be_positive"
+  "github_app_id_string_validation_rejects_invalid_values"
 )
 readonly policy_harness="verification/kani/updater_policy.rs"
 readonly inventory="\${RUNNER_TEMP:-\${TMPDIR:-/tmp}}/gitrun-rust-source-inventory.tsv"
@@ -145,6 +147,7 @@ readonly -a proof_sources=(
   "crates/gitrun-gsr/src/automation_gate.rs"
   "crates/gitrun-core/src/command_policy.rs"
   "crates/gitrun-core/src/hypervisor_decision.rs"
+  "crates/gitrun-core/src/app_auth.rs"
 )
 
 for source in "\${proof_sources[@]}"; do

@@ -73,6 +73,7 @@ readonly required_harnesses=(
   "updater_policy_choice_vocabulary_is_closed"
   "vault_secret_name_reserved_codepoints_are_rejected"
   "vault_scope_components_reject_only_the_storage_separator"
+  "bootstrap_dockerfile_requires_minimal_build_context_and_safe_entrypoint"
   "platform_abi_and_package_manager_names_are_stable"
   "managed_service_names_do_not_cross_service_boundaries"
   "ban_expiry_timestamp_saturates_for_all_u64_inputs"
@@ -239,6 +240,7 @@ readonly -a proof_sources=(
   "crates/gitrun-updater/src/lib.rs"
   "crates/gitrun-updater/src/state.rs"
   "crates/gitrun-vault/src/lib.rs"
+  "crates/gitrun-setup/src/resources.rs"
   "crates/gitrun-scheduler/src/gsr_poll.rs"
 )
 

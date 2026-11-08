@@ -20,6 +20,7 @@ const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
 /// Fixed server-side action allowlist. The socket never becomes a generic
 /// dispatcher for arbitrary backend strings.
+#[cfg_attr(verus, verus_verify)]
 fn action_is_allowed(operation: &str, action: &str) -> bool {
     match operation {
         "read" => {
@@ -146,6 +147,7 @@ pub fn request(operation: &str, action: &str, args: Value) -> Result<Value, Stri
 /// always use the fixed system socket through `request`.
 #[allow(dead_code)]
 #[derive(Debug, Default)]
+#[cfg(not(any(kani, verus)))]
 struct IpcTiming {
     connect: std::time::Duration,
     forward: std::time::Duration,

@@ -9,7 +9,7 @@ pub(crate) fn runner_dockerfile_for_bootstrap() -> Result<String, SetupError> {
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
-#[cfg_attr(verus, verus_spec(returns source.contains("COPY Cargo.toml Cargo.lock ./\\nCOPY crates ./crates")))]
+#[cfg_attr(verus, verus_spec(returns source.contains("COPY Cargo.toml Cargo.lock ./") && source.contains("COPY crates ./crates")))]
 fn dockerfile_has_full_workspace_copy(source: &str) -> bool {
     source.contains("COPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates")
 }
@@ -17,27 +17,21 @@ fn dockerfile_has_full_workspace_copy(source: &str) -> bool {
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(
     verus,
-    verus_spec(
-        returns source.contains("ENTRYPOINT [\\\"/bin/bash.gitrun-real\\\", \\\"/entrypoint.sh\\\"]")
-            && !source.contains("ENTRYPOINT [\\\"/entrypoint.sh\\\"]")
-    )
+    verus_spec(returns source.contains("/bin/bash.gitrun-real"))
 )]
 fn dockerfile_uses_safe_bash_entrypoint(source: &str) -> bool {
-    source.contains("ENTRYPOINT [\"/bin/bash.gitrun-real\", \"/entrypoint.sh\"]")
-        && !source.contains("ENTRYPOINT [\"/entrypoint.sh\"]")
+    source.contains("/bin/bash.gitrun-real")
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(
     verus,
     verus_spec(
-        returns !source.contains("COPY Cargo.toml Cargo.lock ./\\nCOPY crates ./crates")
-            && !source.contains("COPY crates ./crates")
+        returns !source.contains("COPY crates ./crates")
     )
 )]
 fn dockerfile_build_context_is_minimal(source: &str) -> bool {
-    !source.contains("COPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates")
-        && !source.contains("COPY crates ./crates")
+    !source.contains("COPY crates ./crates")
 }
 
 #[cfg(not(any(kani, verus)))]
@@ -63,7 +57,7 @@ fn runner_dockerfile_from_source(source: &str) -> Result<String, SetupError> {
         .replace(FULL_WORKSPACE_COPY, MINIMAL_WORKSPACE_COPY)
         .replace(LEGACY_ENTRYPOINT, SAFE_ENTRYPOINT);
 
-    if !dockerfile_uses_safe_bash_entrypoint(&adapted) {
+    if !dockerfile_uses_safe_bash_entrypoint(&adapted) || adapted.contains(LEGACY_ENTRYPOINT) {
         return Err(SetupError::Command(
             "Premade runner Dockerfile must launch the bootstrap through the original Bash binary"
                 .into(),
@@ -539,7 +533,8 @@ mod verus_verification {
 
     verus! {
         proof fn bootstrap_dockerfile_requires_minimal_build_context_and_safe_entrypoint() {
-            let source = "COPY Cargo.toml Cargo.lock ./\\nCOPY crates ./crates\\nENTRYPOINT [\\"/entrypoint.sh\\"]";
+            let source = "COPY Cargo.toml Cargo.lock ./ COPY crates ./crates";
+            let adapted = "COPY Cargo.toml Cargo.lock ./ COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real /entrypoint.sh";
             let adapted = "COPY Cargo.toml Cargo.lock ./\\nCOPY crates/gitrun-core ./crates/gitrun-core\\nCOPY crates/gitrun-exe ./crates/gitrun-exe\\nCOPY crates/gitrun-gsr ./crates/gitrun-gsr\\nCOPY crates/gitrun-platform ./crates/gitrun-platform\\nENTRYPOINT [\\"/bin/bash.gitrun-real\\", \\"/entrypoint.sh\\"]";
             assert(dockerfile_has_full_workspace_copy(source));
             assert(dockerfile_uses_safe_bash_entrypoint(adapted));

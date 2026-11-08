@@ -2990,6 +2990,7 @@ jobs:
         shell: bash
         run: bash scripts/ci/verify-verus-formal.sh
       - name: Audit dual-verifier proof scope
+        if: always()
         shell: bash
         run: python3 scripts/ci/verify-rust-dual-coverage.py
       - name: Upload Kani per-file coverage status

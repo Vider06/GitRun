@@ -40,6 +40,8 @@ readonly required_harnesses=(
   "api_operation_authorization_is_fail_closed"
   "channel_key_nonce_and_mac_lengths_are_exact"
   "timestamp_skew_check_is_symmetric_and_overflow_safe"
+  "memory_measurements_reject_impossible_available_values"
+  "host_memory_reserve_never_underflows"
 )
 readonly policy_harness="verification/kani/updater_policy.rs"
 readonly inventory="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-rust-source-inventory.tsv"
@@ -178,6 +180,7 @@ readonly -a proof_sources=(
   "crates/gitrun-scheduler/src/dock_registry.rs"
   "crates/gitrun-gsr/src/api_gate.rs"
   "crates/gitrun-exe/src/protocol.rs"
+  "crates/gitrun-scheduler/src/resource_pressure.rs"
 )
 
 for source in "${proof_sources[@]}"; do

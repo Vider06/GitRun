@@ -826,7 +826,10 @@ mod kani_verification {
         assert!(super::action_is_allowed("write", "config_save"));
         assert!(super::action_is_allowed("write", "dashboard_settings_save"));
         assert!(super::action_is_allowed("write", "updater_settings_save"));
-        assert!(super::action_is_allowed("write", "updater_operation_record"));
+        assert!(super::action_is_allowed(
+            "write",
+            "updater_operation_record"
+        ));
         assert!(super::action_is_allowed("write", "service_control"));
         assert!(super::action_is_allowed("write", "maintenance_task"));
         assert!(super::action_is_allowed("write", "json_recovery"));

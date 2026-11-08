@@ -4334,7 +4334,9 @@ mod tests {
 
 #[cfg(kani)]
 mod kani_verification {
-    use super::{valid_prewarm_workload_id, valid_workload_routing_byte, valid_workload_routing_id};
+    use super::{
+        valid_prewarm_workload_id, valid_workload_routing_byte, valid_workload_routing_id,
+    };
 
     #[kani::proof]
     fn workload_routing_byte_alphabet_is_exact() {
@@ -4358,7 +4360,9 @@ mod kani_verification {
 
 #[cfg(verus)]
 mod verus_verification {
-    use super::{valid_prewarm_workload_id, valid_workload_routing_byte, valid_workload_routing_id};
+    use super::{
+        valid_prewarm_workload_id, valid_workload_routing_byte, valid_workload_routing_id,
+    };
     use vstd::prelude::*;
 
     verus! {

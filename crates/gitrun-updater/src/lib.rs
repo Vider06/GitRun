@@ -1,7 +1,12 @@
+#[cfg(not(any(kani, verus)))]
 use reqwest::blocking::Client;
+#[cfg(not(any(kani, verus)))]
 use ring::signature::{UnparsedPublicKey, ED25519};
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use sha2::{Digest, Sha256};
+#[cfg(not(any(kani, verus)))]
 use std::{
     fs,
     io::{self, Read, Write},
@@ -9,10 +14,14 @@ use std::{
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
+#[cfg(not(any(kani, verus)))]
 pub mod policy_logic;
+#[cfg(not(any(kani, verus)))]
 pub mod release_policy;
+#[cfg(not(any(kani, verus)))]
 pub mod state;
 pub use release_policy::{
     resolve_policy_update, resolve_policy_update_for_line_transition_target,
@@ -20,12 +29,17 @@ pub use release_policy::{
     select_releases, PolicyUpdate, ReleaseType, SelectedRelease, UpdatePolicy,
 };
 
+#[cfg(not(any(kani, verus)))]
 const MAX_RELEASE_ARTIFACT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+#[cfg(not(any(kani, verus)))]
 const MAX_ARCHIVE_ENTRIES: usize = 100_000;
+#[cfg(not(any(kani, verus)))]
 const MAX_ARCHIVE_ENTRY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+#[cfg(not(any(kani, verus)))]
 const MAX_ARCHIVE_EXPANDED_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct ReleaseArtifact {
     pub target: String,
     pub file: String,
@@ -35,6 +49,7 @@ pub struct ReleaseArtifact {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct DependencyRequirement {
     pub name: String,
     pub minimum_version: String,
@@ -47,12 +62,14 @@ pub struct DependencyRequirement {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct RunnerImage {
     pub reference: String,
     pub digest: String,
     pub minimum_version: String,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl RunnerImage {
     pub fn validate(&self) -> Result<(), UpdateError> {
         if self.reference.trim().is_empty()
@@ -74,12 +91,14 @@ impl RunnerImage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct PremadeDockerfile {
     pub repository: String,
     pub reference: String,
     pub path: String,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl PremadeDockerfile {
     pub fn validate(&self) -> Result<(), UpdateError> {
         validate_repository(&self.repository)?;
@@ -104,10 +123,14 @@ impl PremadeDockerfile {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub const CANONICAL_PREMADE_RUNNER_REPOSITORY: &str = "Vider06/GitRun";
+#[cfg(not(any(kani, verus)))]
 pub const CANONICAL_PREMADE_RUNNER_REF: &str = "8c12be2732ce8769b535394fc896c76d99d28472"; // DevSkim: ignore DS173237 because this is a public immutable Git commit SHA, not a secret.
+#[cfg(not(any(kani, verus)))]
 pub const CANONICAL_PREMADE_RUNNER_PATH: &str = "Core/Dockers/runners/linux-x86_64/Dockerfile";
 
+#[cfg(not(any(kani, verus)))]
 pub fn canonical_premade_runner_dockerfile() -> PremadeDockerfile {
     PremadeDockerfile {
         repository: CANONICAL_PREMADE_RUNNER_REPOSITORY.into(),
@@ -116,6 +139,7 @@ pub fn canonical_premade_runner_dockerfile() -> PremadeDockerfile {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn fetch_premade_runner_dockerfile(source: &PremadeDockerfile) -> Result<String, UpdateError> {
     source.validate()?;
     let commit = if is_full_git_commit(&source.reference) {
@@ -142,6 +166,7 @@ pub fn fetch_premade_runner_dockerfile(source: &PremadeDockerfile) -> Result<Str
     Ok(content)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn sync_premade_runner_dockerfile(
     source: &PremadeDockerfile,
     destination: impl AsRef<Path>,
@@ -151,6 +176,7 @@ pub fn sync_premade_runner_dockerfile(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct ReleaseManifest {
     pub name: String,
     pub version: String,
@@ -171,6 +197,7 @@ pub struct ReleaseManifest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct DependencyStatus {
     pub name: String,
     pub installed_version: Option<String>,
@@ -180,6 +207,7 @@ pub struct DependencyStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct UpdatePlan {
     pub current_version: String,
     pub target_version: String,
@@ -191,6 +219,7 @@ pub struct UpdatePlan {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 pub struct UpdatePaths {
     pub install_dir: PathBuf,
     pub state_dir: PathBuf,
@@ -200,6 +229,7 @@ pub struct UpdatePaths {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct BackupRecord {
     pub created_at: u64,
     pub version: String,
@@ -210,6 +240,7 @@ pub struct BackupRecord {
 }
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum UpdateError {
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
@@ -231,6 +262,7 @@ pub enum UpdateError {
     RolledBack(String),
 }
 
+#[cfg(not(any(kani, verus)))]
 impl ReleaseManifest {
     pub fn validate(&self) -> Result<(), UpdateError> {
         if self.name != "GitRun"
@@ -305,6 +337,7 @@ impl ReleaseManifest {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn signature_required_from_env(value: Option<&str>) -> Result<bool, UpdateError> {
     match value.map(str::trim) {
         None | Some("") => Ok(true),
@@ -316,6 +349,7 @@ fn signature_required_from_env(value: Option<&str>) -> Result<bool, UpdateError>
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 impl ReleaseManifest {
     /// Verifies an Ed25519 signature. Signed manifests are required by
     /// default; setting GITRUN_UPDATE_SIGNATURE_REQUIRED=false is the explicit
@@ -388,6 +422,7 @@ impl ReleaseManifest {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn load_manifest(path: impl AsRef<Path>) -> Result<ReleaseManifest, UpdateError> {
     let manifest: ReleaseManifest = serde_json::from_slice(&fs::read(path)?)?;
     manifest.validate()?;
@@ -395,6 +430,7 @@ pub fn load_manifest(path: impl AsRef<Path>) -> Result<ReleaseManifest, UpdateEr
     Ok(manifest)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn fetch_manifest(url: &str) -> Result<ReleaseManifest, UpdateError> {
     validate_https_url(url)?;
     let client = http_client()?;
@@ -407,6 +443,7 @@ pub fn fetch_manifest(url: &str) -> Result<ReleaseManifest, UpdateError> {
 /// Resolve the release asset through GitHub's web download route rather than
 /// the REST API. Public REST requests are limited per source IP and can be
 /// exhausted by unrelated users behind the same NAT or proxy.
+#[cfg(not(any(kani, verus)))]
 pub fn latest_manifest_download_url(repository: &str) -> Result<String, UpdateError> {
     validate_repository(repository)?;
     Ok(format!(
@@ -417,6 +454,7 @@ pub fn latest_manifest_download_url(repository: &str) -> Result<String, UpdateEr
 
 /// Build the immutable, version-specific manifest URL used after an
 /// unprivileged preflight so the privileged retry does not have to resolve "latest" again.
+#[cfg(not(any(kani, verus)))]
 pub fn release_manifest_download_url(
     repository: &str,
     version: &str,
@@ -434,6 +472,7 @@ pub fn release_manifest_download_url(
     ))
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn latest_manifest(repository: &str) -> Result<ReleaseManifest, UpdateError> {
     let url = latest_manifest_download_url(repository)?;
     fetch_manifest(&url)
@@ -442,6 +481,7 @@ pub fn latest_manifest(repository: &str) -> Result<ReleaseManifest, UpdateError>
 /// Download and install the official JSON.Back reference library from the signed
 /// release manifest. Existing files are preserved unless the caller explicitly
 /// requests a main-library restore.
+#[cfg(not(any(kani, verus)))]
 pub fn install_main_library_from_latest_release(
     repository: &str,
     library_root: impl AsRef<Path>,
@@ -451,6 +491,7 @@ pub fn install_main_library_from_latest_release(
     install_main_library_from_manifest(repository, &manifest, library_root, overwrite_existing)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn install_main_library_from_manifest(
     repository: &str,
     manifest: &ReleaseManifest,
@@ -606,6 +647,7 @@ pub fn install_main_library_from_manifest(
 /// Create missing local .json.Back snapshots for recognized configuration JSON.
 /// Existing snapshots are deliberately never replaced: they may be the only
 /// known-good recovery copy for an edited or subsequently corrupted file.
+#[cfg(not(any(kani, verus)))]
 pub fn refresh_json_backups(roots: &[PathBuf]) -> Result<usize, UpdateError> {
     let mut created = 0usize;
     let mut checked = 0usize;
@@ -676,6 +718,7 @@ pub fn refresh_json_backups(roots: &[PathBuf]) -> Result<usize, UpdateError> {
     Ok(created)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn json_backup_candidate(path: &Path, root: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
@@ -707,6 +750,7 @@ fn json_backup_candidate(path: &Path, root: &Path) -> bool {
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn stage_update(
     manifest: &ReleaseManifest,
     current_version: &str,
@@ -743,6 +787,7 @@ pub fn stage_update(
 /// Builds a plan from a manifest that has already passed
 /// load_manifest/fetch_manifest verification. Signature enforcement stays
 /// at the untrusted-input boundaries, so this helper only handles planning.
+#[cfg(not(any(kani, verus)))]
 pub fn build_plan(
     manifest: &ReleaseManifest,
     current_version: &str,
@@ -760,6 +805,7 @@ pub fn build_plan(
 
 /// Build a plan only for an explicit release-line transition. Equal versions
 /// remain a no-op; ordinary updates continue to use the monotonic build_plan.
+#[cfg(not(any(kani, verus)))]
 pub fn build_line_transition_plan(
     manifest: &ReleaseManifest,
     current_version: &str,
@@ -775,6 +821,7 @@ pub fn build_line_transition_plan(
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 fn build_plan_with_version_policy(
     manifest: &ReleaseManifest,
     current_version: &str,
@@ -846,6 +893,7 @@ fn build_plan_with_version_policy(
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn download_and_verify(
     url: &str,
     expected_sha256: &str,
@@ -932,6 +980,7 @@ pub fn download_and_verify(
     result
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn apply_update(
     paths: &UpdatePaths,
     archive: impl AsRef<Path>,
@@ -1066,6 +1115,7 @@ pub fn apply_update(
     Ok(record)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn require_backup_path(
     path: &Path,
     label: &str,
@@ -1105,6 +1155,7 @@ fn require_backup_path(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_backup_record_paths(
     paths: &UpdatePaths,
     backup: &BackupRecord,
@@ -1164,6 +1215,7 @@ fn validate_backup_record_paths(
     Ok(transaction_dir)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn rollback(paths: &UpdatePaths, backup: &BackupRecord) -> Result<(), UpdateError> {
     validate_update_paths(paths)?;
     validate_backup_record_paths(paths, backup)?;
@@ -1183,6 +1235,7 @@ pub fn rollback(paths: &UpdatePaths, backup: &BackupRecord) -> Result<(), Update
 }
 
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 pub struct InstalledArtifact {
     pub archive_name: String,
     pub destination: PathBuf,
@@ -1190,6 +1243,7 @@ pub struct InstalledArtifact {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct InstalledArtifactBackup {
     pub archive_name: String,
     pub destination: PathBuf,
@@ -1197,6 +1251,7 @@ pub struct InstalledArtifactBackup {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct InstalledBackupRecord {
     pub created_at: u64,
     pub version: String,
@@ -1212,6 +1267,7 @@ pub struct InstalledBackupRecord {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(not(any(kani, verus)))]
 pub fn apply_installed_update(
     archive: &Path,
     target: &str,
@@ -1420,6 +1476,7 @@ pub fn apply_installed_update(
     Ok(record)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn rollback_installed_update(
     record: &InstalledBackupRecord,
     expected_artifacts: &[InstalledArtifact],
@@ -1435,6 +1492,7 @@ pub fn rollback_installed_update(
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn rollback_installed_update_with_config(
     record: &InstalledBackupRecord,
     expected_artifacts: &[InstalledArtifact],
@@ -1461,6 +1519,7 @@ pub fn rollback_installed_update_with_config(
     rollback_installed_update_unchecked(record)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_installed_rollback_record(
     record: &InstalledBackupRecord,
     expected_artifacts: &[InstalledArtifact],
@@ -1649,6 +1708,7 @@ fn validate_installed_rollback_record(
     Ok(transaction_dir)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn rollback_installed_update_unchecked(record: &InstalledBackupRecord) -> Result<(), UpdateError> {
     for artifact in &record.artifacts {
         reject_symlink_components(&artifact.destination)?;
@@ -1708,6 +1768,7 @@ fn rollback_installed_update_unchecked(record: &InstalledBackupRecord) -> Result
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn health_check_installed_binary(
     binary: &Path,
     config_file: Option<&Path>,
@@ -1743,6 +1804,7 @@ pub fn health_check_installed_binary(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn health_check_installed_executable_expected(
     binary: &Path,
     config_file: Option<&Path>,
@@ -1751,6 +1813,7 @@ fn health_check_installed_executable_expected(
     check_installed_binary(binary, config_file, Some(expected_version))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn check_installed_binary(
     binary: &Path,
     config_file: Option<&Path>,
@@ -1806,6 +1869,7 @@ fn check_installed_binary(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn atomic_replace_installed_file(
     source: &Path,
     destination: &Path,
@@ -1859,6 +1923,7 @@ fn atomic_replace_installed_file(
     result
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn atomic_write_installed_file(
     destination: &Path,
     content: &[u8],
@@ -1903,6 +1968,7 @@ pub fn atomic_write_installed_file(
     result
 }
 
+#[cfg(not(any(kani, verus)))]
 fn reject_symlink_components(path: &Path) -> Result<(), UpdateError> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()
@@ -1927,6 +1993,7 @@ fn reject_symlink_components(path: &Path) -> Result<(), UpdateError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn sync_parent_directory(path: &Path) -> Result<(), UpdateError> {
     #[cfg(unix)]
     {
@@ -1939,6 +2006,7 @@ fn sync_parent_directory(path: &Path) -> Result<(), UpdateError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn copy_file_durable(source: &Path, destination: &Path) -> Result<(), UpdateError> {
     let metadata = fs::symlink_metadata(source)?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -1961,10 +2029,12 @@ fn copy_file_durable(source: &Path, destination: &Path) -> Result<(), UpdateErro
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn write_json_durable(path: &Path, value: &impl Serialize) -> Result<(), UpdateError> {
     atomic_write_installed_file(path, &serde_json::to_vec_pretty(value)?, 0o600)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn copy_file_owner(file: &fs::File, metadata: &fs::Metadata) -> Result<(), UpdateError> {
     #[cfg(unix)]
     {
@@ -1984,6 +2054,7 @@ fn copy_file_owner(file: &fs::File, metadata: &fs::Metadata) -> Result<(), Updat
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn set_file_mode(path: &Path, mode: u32) -> Result<(), UpdateError> {
     #[cfg(unix)]
     {
@@ -1997,6 +2068,7 @@ fn set_file_mode(path: &Path, mode: u32) -> Result<(), UpdateError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn pin_runner_image(
     config_file: impl AsRef<Path>,
     image: &RunnerImage,
@@ -2032,6 +2104,7 @@ pub fn pin_runner_image(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn docker_repo_digests_contain(output: &str, expected_digest: &str) -> bool {
     output.split('"').any(|candidate| {
         candidate
@@ -2041,6 +2114,7 @@ fn docker_repo_digests_contain(output: &str, expected_digest: &str) -> bool {
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn update_runner_image(image: &RunnerImage) -> Result<(), UpdateError> {
     image.validate()?;
     let inspect = Command::new("docker")
@@ -2086,6 +2160,7 @@ pub fn update_runner_image(image: &RunnerImage) -> Result<(), UpdateError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn health_check_binary(
     install_dir: &Path,
     config_dir: Option<&Path>,
@@ -2123,6 +2198,7 @@ pub fn health_check_binary(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn update_incompatible_dependencies(plan: &UpdatePlan) -> Result<Vec<String>, UpdateError> {
     let mut updated = Vec::new();
     for dependency in &plan.dependencies {
@@ -2135,6 +2211,7 @@ pub fn update_incompatible_dependencies(plan: &UpdatePlan) -> Result<Vec<String>
     Ok(updated)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn update_dependency(name: &str) -> Result<(), UpdateError> {
     if std::env::consts::OS == "linux" {
         return update_linux_dependency(name);
@@ -2197,6 +2274,7 @@ fn update_dependency(name: &str) -> Result<(), UpdateError> {
     run_command(&mut update)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn current_linux_package_manager() -> Result<gitrun_platform::PackageManager, UpdateError> {
     let release = ["/etc/os-release", "/usr/lib/os-release"]
         .iter()
@@ -2218,6 +2296,7 @@ fn current_linux_package_manager() -> Result<gitrun_platform::PackageManager, Up
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn linux_dependency_packages(
     manager: gitrun_platform::PackageManager,
     dependency: &str,
@@ -2265,6 +2344,7 @@ fn linux_dependency_packages(
     Ok(packages)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn linux_package_install_command(
     manager: gitrun_platform::PackageManager,
     packages: &[&str],
@@ -2296,6 +2376,7 @@ fn linux_package_install_command(
     Ok(command)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn update_linux_dependency(name: &str) -> Result<(), UpdateError> {
     use gitrun_platform::PackageManager as P;
     let manager = current_linux_package_manager()?;
@@ -2313,6 +2394,7 @@ fn update_linux_dependency(name: &str) -> Result<(), UpdateError> {
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run_linux_package_command(program: &str, args: &[&str]) -> Result<(), UpdateError> {
     let executable = linux_system_command(program).ok_or_else(|| {
         UpdateError::Command(format!(
@@ -2334,6 +2416,7 @@ fn run_linux_package_command(program: &str, args: &[&str]) -> Result<(), UpdateE
     run_command(&mut command)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn dependency_status(name: &str, minimum_version: &str) -> DependencyStatus {
     let installed = dependency_command(name).and_then(command_version);
     let compatible = installed
@@ -2357,6 +2440,7 @@ pub fn dependency_status(name: &str, minimum_version: &str) -> DependencyStatus 
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn dependency_command(name: &str) -> Option<&'static str> {
     let normalized = name.trim();
     match std::env::consts::OS {
@@ -2378,6 +2462,7 @@ fn dependency_command(name: &str) -> Option<&'static str> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn linux_system_command(name: &str) -> Option<&'static str> {
     match name {
         "apt-get" => Some("/usr/bin/apt-get"),
@@ -2392,6 +2477,7 @@ fn linux_system_command(name: &str) -> Option<&'static str> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_root() -> bool {
     if cfg!(windows) {
         return false;
@@ -2408,6 +2494,7 @@ fn is_root() -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn command_version(name: &str) -> Option<String> {
     let output = Command::new(name).arg("--version").output().ok()?;
     if !output.status.success() {
@@ -2418,6 +2505,7 @@ fn command_version(name: &str) -> Option<String> {
     extract_version(if stdout.is_empty() { &stderr } else { &stdout })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn extract_version(text: &str) -> Option<String> {
     text.split(|c: char| !c.is_ascii_digit() && c != '.')
         .find(|p| p.split('.').count() >= 2 && p.chars().all(|c| c.is_ascii_digit() || c == '.'))
@@ -2425,17 +2513,20 @@ fn extract_version(text: &str) -> Option<String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 enum VersionIdentifier {
     Numeric(u64),
     AlphaNumeric(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 struct ParsedVersion {
     core: [u64; 3],
     prerelease: Vec<VersionIdentifier>,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn parse_version(value: &str) -> Result<ParsedVersion, UpdateError> {
     let value = value.trim();
     let value = value.strip_prefix('v').unwrap_or(value);
@@ -2527,6 +2618,7 @@ fn parse_version(value: &str) -> Result<ParsedVersion, UpdateError> {
     Ok(ParsedVersion { core, prerelease })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn compare_versions(a: &str, b: &str) -> Result<std::cmp::Ordering, UpdateError> {
     let av = parse_version(a)?;
     let bv = parse_version(b)?;
@@ -2560,14 +2652,17 @@ fn compare_versions(a: &str, b: &str) -> Result<std::cmp::Ordering, UpdateError>
     Ok(av.prerelease.len().cmp(&bv.prerelease.len()))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_version(value: &str) -> bool {
     parse_version(value).is_ok()
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_sha256(value: &str) -> bool {
     value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn canonicalize_json(value: serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(entries) => {
@@ -2584,6 +2679,7 @@ fn canonicalize_json(value: serde_json::Value) -> serde_json::Value {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn decode_hex(value: &str) -> Option<Vec<u8>> {
     if !value.len().is_multiple_of(2) || !value.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
@@ -2598,6 +2694,7 @@ fn decode_hex(value: &str) -> Option<Vec<u8>> {
     Some(output)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);
@@ -2608,12 +2705,19 @@ fn hex_encode(bytes: &[u8]) -> String {
     output
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns byte.is_ascii_hexdigit()))]
+fn sha256_digest_byte_is_valid(byte: u8) -> bool {
+    byte.is_ascii_hexdigit()
+}
+
 fn is_sha256_digest(value: &str) -> bool {
     value.starts_with("sha256:")
         && value.len() == 71
-        && value[7..].chars().all(|c| c.is_ascii_hexdigit())
+        && value.as_bytes()[7..].iter().all(|byte| sha256_digest_byte_is_valid(*byte))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn extract_archive(
     archive_path: &Path,
     _target: &str,
@@ -2800,6 +2904,7 @@ fn extract_archive(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn atomic_install(staging: &Path, install_dir: &Path) -> Result<(), UpdateError> {
     if install_dir.exists() {
         return Err(UpdateError::Io(io::Error::new(
@@ -2811,6 +2916,7 @@ fn atomic_install(staging: &Path, install_dir: &Path) -> Result<(), UpdateError>
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn rollback_install(
     paths: &UpdatePaths,
     install_backup: &Path,
@@ -2865,6 +2971,7 @@ fn rollback_install(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn copy_dir(source: &Path, destination: &Path) -> Result<(), io::Error> {
     let metadata = fs::symlink_metadata(source)?;
     if metadata.file_type().is_symlink() {
@@ -2913,6 +3020,7 @@ fn copy_dir(source: &Path, destination: &Path) -> Result<(), io::Error> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn http_client() -> Result<Client, UpdateError> {
     Ok(
         Client::builder() // A valid HTTPS starting URL is not enough: an HTTP downgrade during
@@ -2932,10 +3040,12 @@ fn http_client() -> Result<Client, UpdateError> {
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_https_url(url: &reqwest::Url) -> bool {
     url.scheme() == "https"
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_https_url(value: &str) -> Result<(), UpdateError> {
     let url = reqwest::Url::parse(value)
         .map_err(|_| UpdateError::InvalidManifest(format!("invalid HTTPS URL: {value}")))?;
@@ -2947,10 +3057,12 @@ fn validate_https_url(value: &str) -> Result<(), UpdateError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_full_git_commit(value: &str) -> bool {
     value.len() == 40 && value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn resolve_premade_branch_head(repository: &str, reference: &str) -> Result<String, UpdateError> {
     if reference.starts_with("refs/") || reference.starts_with('/') {
         return Err(UpdateError::InvalidManifest(
@@ -2973,6 +3085,7 @@ fn resolve_premade_branch_head(repository: &str, reference: &str) -> Result<Stri
     Ok(sha.to_owned())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_repository(repository: &str) -> Result<(), UpdateError> {
     let trimmed = repository.trim_end_matches('/');
     let mut parts = trimmed.split('/');
@@ -2995,6 +3108,7 @@ fn validate_repository(repository: &str) -> Result<(), UpdateError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_update_paths(paths: &UpdatePaths) -> Result<(), UpdateError> {
     let managed = [
         ("install", paths.install_dir.as_path()),
@@ -3082,10 +3196,12 @@ fn validate_update_paths(paths: &UpdatePaths) -> Result<(), UpdateError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn paths_overlap(a: &Path, b: &Path) -> bool {
     a == b || a.starts_with(b) || b.starts_with(a)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_safe_filename(value: &str) -> bool {
     !value.is_empty()
         && value != "."
@@ -3098,6 +3214,7 @@ fn is_safe_filename(value: &str) -> bool {
             .is_some_and(|name| name == value)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_installed_artifacts(
     artifacts: &[InstalledArtifact],
     version_file: &Path,
@@ -3153,6 +3270,7 @@ fn validate_installed_artifacts(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn temporary_sibling(path: &Path, prefix: &str) -> PathBuf {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let name = path
@@ -3169,6 +3287,7 @@ fn temporary_sibling(path: &Path, prefix: &str) -> PathBuf {
     ))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn replace_temp_file(temp: &Path, destination: &Path) -> Result<(), UpdateError> {
     #[cfg(windows)]
     if destination.exists() {
@@ -3179,6 +3298,7 @@ fn replace_temp_file(temp: &Path, destination: &Path) -> Result<(), UpdateError>
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn existing_file_mode(path: &Path, default_mode: u32) -> u32 {
     #[cfg(unix)]
     {
@@ -3194,6 +3314,7 @@ fn existing_file_mode(path: &Path, default_mode: u32) -> u32 {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn remove_path(path: &Path) -> Result<(), io::Error> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -3207,6 +3328,7 @@ fn remove_path(path: &Path) -> Result<(), io::Error> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn copy_permissions(metadata: &fs::Metadata, destination: &Path) -> Result<(), io::Error> {
     #[cfg(unix)]
     {
@@ -3223,6 +3345,7 @@ fn copy_permissions(metadata: &fs::Metadata, destination: &Path) -> Result<(), i
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 struct UpdateLock {
     #[cfg(unix)]
     _file: fs::File,
@@ -3230,6 +3353,7 @@ struct UpdateLock {
     path: PathBuf,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl UpdateLock {
     fn acquire(root: &Path) -> Result<Self, UpdateError> {
         reject_symlink_components(root)?;
@@ -3299,6 +3423,7 @@ unsafe extern "C" {
     fn native_fchown(fd: std::os::fd::RawFd, owner: u32, group: u32) -> i32;
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Drop for UpdateLock {
     fn drop(&mut self) {
         #[cfg(not(unix))]
@@ -3309,6 +3434,7 @@ impl Drop for UpdateLock {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run_command(command: &mut Command) -> Result<(), UpdateError> {
     let output = command.output()?;
     if !output.status.success() {
@@ -3322,6 +3448,7 @@ fn run_command(command: &mut Command) -> Result<(), UpdateError> {
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 mod tests {
     use super::*;
 
@@ -4287,6 +4414,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 mod main_json_library_tests {
     use super::{json_backup_candidate, refresh_json_backups};
     use std::path::Path;
@@ -4337,3 +4465,43 @@ mod main_json_library_tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{is_sha256_digest, sha256_digest_byte_is_valid};
+
+    #[kani::proof]
+    fn sha256_digest_byte_alphabet_is_exact() {
+        let byte: u8 = kani::any();
+        assert_eq!(sha256_digest_byte_is_valid(byte), byte.is_ascii_hexdigit());
+    }
+
+    #[kani::proof]
+    fn sha256_digest_requires_prefix_length_and_hex_payload() {
+        assert!(is_sha256_digest("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"));
+        assert!(is_sha256_digest("sha256:ABCDEF0123456789abcdef0123456789ABCDEF0123456789abcdef0123456789"));
+        assert!(!is_sha256_digest("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"));
+        assert!(!is_sha256_digest("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde"));
+        assert!(!is_sha256_digest("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"));
+        assert!(!is_sha256_digest("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg"));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::sha256_digest_byte_is_valid;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn sha256_digest_byte_alphabet_is_exact(byte: u8)
+            ensures sha256_digest_byte_is_valid(byte) == byte.is_ascii_hexdigit(),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

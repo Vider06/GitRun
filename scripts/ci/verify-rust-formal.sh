@@ -49,6 +49,10 @@ readonly required_harnesses=(
   "release_type_marker_is_a_closed_three_value_contract"
   "vm_name_shape_is_fail_closed_for_all_boolean_inputs"
   "cat_output_is_interactive_only"
+  "api_retry_count_is_clamped_for_all_usize_inputs"
+  "retryable_http_statuses_are_a_closed_set"
+  "retry_backoff_is_bounded_to_one_through_eight_seconds"
+  "rate_limit_wait_is_saturating_and_at_least_one_second"
   "platform_abi_and_package_manager_names_are_stable"
   "managed_service_names_do_not_cross_service_boundaries"
   "ban_expiry_timestamp_saturates_for_all_u64_inputs"
@@ -201,6 +205,7 @@ readonly -a proof_sources=(
   "crates/gitrun-scheduler/src/vm.rs"
   "crates/gitrun-cli/src/presenter.rs"
   "crates/gitrun-platform/src/lib.rs"
+  "crates/gitrun-scheduler/src/github.rs"
   "crates/gitrun-scheduler/src/gsr_poll.rs"
 )
 

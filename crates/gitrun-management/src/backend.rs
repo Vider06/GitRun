@@ -5011,3 +5011,36 @@ fn main() {}
 
 #[cfg(verus)]
 fn main() {}
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::trusted_executable_mode;
+
+    #[kani::proof]
+    fn trusted_executable_mode_rejects_group_or_other_writable_files() {
+        let mode: u32 = kani::any();
+        let expected = mode & 0o022 == 0 && mode & 0o111 != 0;
+        assert_eq!(trusted_executable_mode(mode), expected);
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::trusted_executable_mode;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn trusted_executable_mode_rejects_group_or_other_writable_files(mode: u32)
+            ensures
+                trusted_executable_mode(mode)
+                    == (mode & 0o022 == 0 && mode & 0o111 != 0),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

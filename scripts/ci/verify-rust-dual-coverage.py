@@ -96,7 +96,7 @@ def main() -> int:
         return 1
 
     with MANIFEST.open(encoding="utf-8", newline="") as handle:
-        reader = csv.reader(handle, delimiter="\\t")
+        reader = csv.reader(handle, delimiter="\t")
         if next(reader, []) != EXPECTED_HEADER:
             issues.append("Manifest header does not match the required eight-column schema.")
         for line, row in enumerate(reader, start=2):

@@ -228,7 +228,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
         self.assertIn("Proven by both Kani and Verus | 0", summary)
         self.assertIn("Formally NOT_APPLICABLE with documented reason | 1", summary)
 
-    def test_not_applicable_requires_separate_kani_and_verus_limits(self) -> None:
+    def test_not_applicable_does_not_require_redundant_scope_label(self) -> None:
         self.write_manifest(
             [
                 (
@@ -246,9 +246,14 @@ class DualVerifierCoverageTests(unittest.TestCase):
 
         result = DUAL_COVERAGE.main()
 
-        self.assertEqual(result, 1)
-        self.assertIn("Manifest / ownership issues | 1", self.summary.read_text())
-        self.assertIn("Formal coverage gate | **CLOSED**", self.summary.read_text())
+        self.assertEqual(result, 0)
+        row = self.read_report()[0]
+        self.assertEqual(row["KANI_STATUS"], "NOT_APPLICABLE")
+        self.assertEqual(row["VERUS_STATUS"], "NOT_APPLICABLE")
+        self.assertEqual(row["SCOPE_STATUS"], "NOT_APPLICABLE")
+        summary = self.summary.read_text(encoding="utf-8")
+        self.assertIn("Formally NOT_APPLICABLE with documented reason | 1", summary)
+        self.assertIn("Formal coverage gate | **OPEN**", summary)
 
     def test_missing_source_mapping_keeps_gate_closed_and_is_reported(self) -> None:
         (self.root / "src/other.rs").write_text(

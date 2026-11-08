@@ -53,7 +53,7 @@ def write_report(
         )
         for source in sorted(sources):
             mapping = rows[source]
-            scope = mapping[6]
+            scope = mapping[7]
             if scope in counts:
                 counts[scope] += 1
             # Manifest declarations are plans, not proof evidence. A source is

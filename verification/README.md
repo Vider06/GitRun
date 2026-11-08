@@ -149,13 +149,15 @@ smoke proof, compilation, inventory entry, or lint result cannot substitute.
 
 **Coverage at this PR revision:** the repository has 75 tracked Rust source
 files. Thirteen rows are marked `IMPLEMENTED`: twelve production source modules
-and the standalone updater verifier harness. The implemented production
-properties cover updater policy, API-operation authorization, runner bounds,
-watchdog PID conversion, JSON recovery action names, scheduler cooldown
-clamping, predictive queue growth, Dock operation wire names, Kitty automation
-bounds and action names, command-policy action/byte rules, hypervisor filename
-byte encoding, and GitHub App identifier validation. The remaining 62 rows
-are still `PLANNED`. These
+and the standalone updater verifier harness. Seven non-production rows are
+`NOT_APPLICABLE`: four Cargo build scripts, two integration-test harnesses,
+and the Verus smoke fixture. The implemented production properties cover
+updater policy, API-operation authorization, runner bounds, watchdog PID
+conversion, JSON recovery action names, scheduler cooldown clamping,
+predictive queue growth, Dock operation wire names, Kitty automation bounds
+and action names, command-policy action/byte rules, hypervisor filename byte
+encoding, and GitHub App identifier validation. The remaining 55 production
+and integration source scopes are still `PLANNED`. These
 entries describe authored proof targets, not `PROVEN` results: both verifier
 processes must complete successfully before a source is reported as covered. The gate
 remains intentionally red until every tracked Rust file has a reviewed,
@@ -175,9 +177,12 @@ python3 scripts/ci/verify-rust-dual-coverage.py
 ```
 
 The report records per-tool outcomes and a combined scope state:
-`PROVEN`, `FAILED`, `UNVERIFIED`, `PLANNED`, or `UNMAPPED`. A source is
-fully covered only when both its Kani and Verus statuses are `PROVEN`.
-Structural readiness is not published as a proof status.
+`PROVEN`, `FAILED`, `UNVERIFIED`, `NOT_APPLICABLE`, `PLANNED`, or
+`UNMAPPED`. A source is fully proven only when both its Kani and Verus
+statuses are `PROVEN`. A justified `NOT_APPLICABLE` source is never counted
+as proven; it records that the source is a build/test/bootstrap harness rather
+than production logic and names the CI check that covers it. Structural
+readiness is not published as a proof status.
 
 ## Per-file Rust source assurance
 

@@ -1015,9 +1015,25 @@ fn is_config_ascii_digit(byte: u8) -> bool {
 }
 
 fn is_positive_decimal_integer(value: &str) -> bool {
-    !value.is_empty()
-        && value.bytes().all(is_config_ascii_digit)
-        && value.parse::<u64>().is_ok_and(|number| number > 0)
+    if value.is_empty() {
+        return false;
+    }
+
+    let mut number = 0_u64;
+    for byte in value.bytes() {
+        if !is_config_ascii_digit(byte) {
+            return false;
+        }
+        let Some(next) = number
+            .checked_mul(10)
+            .and_then(|current| current.checked_add(u64::from(byte - b'0')))
+        else {
+            return false;
+        };
+        number = next;
+    }
+
+    number > 0
 }
 
 fn is_positive_u64(value: &str) -> bool {

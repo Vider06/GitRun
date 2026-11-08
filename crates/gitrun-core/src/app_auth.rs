@@ -46,12 +46,13 @@ pub enum AppAuthError {
     InvalidIdentifier(&'static str),
 }
 
-#[cfg(any(kani, verus))]
+#[cfg(kani)]
 #[derive(Debug)]
 pub enum AppAuthError {
     InvalidIdentifier(&'static str),
 }
 
+#[cfg(not(verus))]
 pub type Result<T> = std::result::Result<T, AppAuthError>;
 
 #[derive(Debug, Serialize)]

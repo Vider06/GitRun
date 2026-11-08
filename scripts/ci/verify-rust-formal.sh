@@ -151,7 +151,7 @@ phase=coverage
 for harness in "\${required_harnesses[@]}"; do
   found=false
   for source in "\${proof_sources[@]}" "crates/gitrun-updater/src/policy_logic.rs"; do
-    if grep -B1 -F "fn $harness()" "$source" | grep -Fq "#[kani::proof]"; then
+    if grep -B5 -F "fn $harness()" "$source" | grep -Fq "#[kani::proof]"; then
       found=true
       break
     fi

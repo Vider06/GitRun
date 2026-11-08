@@ -47,6 +47,8 @@ readonly required_harnesses=(
   "predictive_peak_is_bounded_for_all_u32_inputs"
   "api_parser_rejects_duplicate_arguments_and_operations"
   "release_type_marker_is_a_closed_three_value_contract"
+  "vm_name_shape_is_fail_closed_for_all_boolean_inputs"
+  "snapshot_name_length_is_bounded_for_all_usize_values"
 )
 readonly policy_harness="verification/kani/updater_policy.rs"
 readonly inventory="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-rust-source-inventory.tsv"
@@ -191,6 +193,7 @@ readonly -a proof_sources=(
   "crates/gitrun-smart-scheduler/src/future_mapping.rs"
   "crates/gitrun-gsr/src/bin/gitrun-api.rs"
   "crates/gitrun-updater/src/release_policy.rs"
+  "crates/gitrun-scheduler/src/vm.rs"
 )
 
 for source in "${proof_sources[@]}"; do

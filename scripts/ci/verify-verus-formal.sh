@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly verus="\${VERUS_PATH:-\${RUNNER_TEMP:-/tmp}/verus/installed/verus}"
-readonly results="\${RUNNER_TEMP:-\${TMPDIR:-/tmp}}/gitrun-verus-proof-results.tsv"
+readonly verus="${VERUS_PATH:-${RUNNER_TEMP:-/tmp}/verus/installed/verus}"
+readonly results="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-verus-proof-results.tsv"
 readonly -a production_sources=(
   "crates/gitrun-core/src/api_policy.rs"
   "crates/gitrun-core/src/runner.rs"
@@ -30,12 +30,12 @@ run_verus_target() {
   local -a sources=("$@")
   local source
   if "$verus" --cfg verus "$entrypoint"; then
-    for source in "\${sources[@]}"; do
+    for source in "${sources[@]}"; do
       record_result "$source" PROVEN
     done
   else
     local rc=$?
-    for source in "\${sources[@]}"; do
+    for source in "${sources[@]}"; do
       record_result "$source" FAILED
     done
     return "$rc"
@@ -45,7 +45,7 @@ run_verus_target() {
 finish_verus_report() {
   local rc=$?
   trap - EXIT
-  if [ -n "\${GITHUB_STEP_SUMMARY:-}" ]; then
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     python3 - "$results" "$GITHUB_STEP_SUMMARY" "$phase" "$rc" <<'PY'
 import csv
 import sys
@@ -87,7 +87,7 @@ if [[ ! -x "$verus" ]]; then
   exit 1
 fi
 
-for source in "\${production_sources[@]}"; do
+for source in "${production_sources[@]}"; do
   if [[ ! -s "$source" ]]; then
     echo "Required Verus production proof source is missing: $source" >&2
     exit 1
@@ -109,7 +109,7 @@ run_verus_target "verification/kani/updater_policy.rs" \
   "crates/gitrun-updater/src/policy_logic.rs" \
   "verification/kani/updater_policy.rs"
 
-for source in "\${production_sources[@]}"; do
+for source in "${production_sources[@]}"; do
   echo "Verifying production invariants in $source."
   run_verus_target "$source" "$source"
 done

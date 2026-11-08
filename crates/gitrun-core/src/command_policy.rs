@@ -229,18 +229,36 @@ fn is_interpreter_or_command_wrapper(name: &str) -> bool {
         .any(|prefix| normalized.starts_with(prefix))
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns
+            (byte >= b'a' && byte <= b'z')
+                || (byte >= b'A' && byte <= b'Z')
+                || (byte >= b'0' && byte <= b'9')
+                || matches!(
+                    byte,
+                    b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
+                )
+    )
+)]
+fn is_simple_command_byte(byte: u8) -> bool {
+    (byte >= b'a' && byte <= b'z')
+        || (byte >= b'A' && byte <= b'Z')
+        || (byte >= b'0' && byte <= b'9')
+        || matches!(
+            byte,
+            b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
+        )
+}
+
 #[cfg(not(any(kani, verus)))]
 pub fn parse_simple_command(command: &str) -> Result<Vec<String>, &'static str> {
     if command.trim().is_empty() {
         return Err("command must not be empty");
     }
-    if command.bytes().any(|byte| {
-        !(byte.is_ascii_alphanumeric()
-            || matches!(
-                byte,
-                b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
-            ))
-    }) {
+    if command.bytes().any(|byte| !is_simple_command_byte(byte)) {
         return Err(
             "GitDockRun Execute accepts one simple command with plain arguments; shell operators, quoting, expansion, redirection and control characters are not allowed",
         );
@@ -894,6 +912,20 @@ mod tests {
 mod kani_verification {
     use super::ViolationAction;
 
+    /// Exhaustively checks the byte allowlist used by GitDockRun Execute.
+    #[kani::proof]
+    fn simple_command_byte_alphabet_is_closed() {
+        let byte: u8 = kani::any();
+        let expected = (byte >= b'a' && byte <= b'z')
+            || (byte >= b'A' && byte <= b'Z')
+            || (byte >= b'0' && byte <= b'9')
+            || matches!(
+                byte,
+                b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
+            );
+        assert_eq!(super::is_simple_command_byte(byte), expected);
+    }
+
     /// Checks canonical configuration names and the fail-safe unknown-value default.
     #[kani::proof]
     fn violation_action_config_mapping_is_total() {
@@ -926,6 +958,22 @@ mod verus_verification {
     use vstd::prelude::*;
 
     verus! {
+        /// Proves the byte-level allowlist used before direct argv parsing.
+        proof fn simple_command_byte_alphabet_is_closed(byte: u8)
+            ensures
+                super::is_simple_command_byte(byte)
+                    == (
+                        (byte >= b'a' && byte <= b'z')
+                            || (byte >= b'A' && byte <= b'Z')
+                            || (byte >= b'0' && byte <= b'9')
+                            || matches!(
+                                byte,
+                                b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
+                            )
+                    ),
+        {
+        }
+
         /// Verifies canonical names and fail-safe handling of unknown values.
         proof fn violation_action_config_mapping_is_total() {
             assert(ViolationAction::from_config_str("log_only") == ViolationAction::LogOnly);

@@ -24,6 +24,7 @@ readonly -a production_sources=(
   "crates/gitrun-scheduler/src/reconcile.rs"
   "crates/gitrun-scheduler/src/vm_resolution.rs"
   "crates/gitrun-scheduler/src/logic_containers.rs"
+  "crates/gitrun-scheduler/src/dock_registry.rs"
 )
 phase=preflight
 

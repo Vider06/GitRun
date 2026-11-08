@@ -5,17 +5,26 @@
 //! for every API operation. Atomic replacement makes scheduler/API concurrent
 //! readers safe without introducing another database dependency.
 
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::fs;
+#[cfg(not(any(kani, verus)))]
 use std::io::{Read, Write};
+#[cfg(not(any(kani, verus)))]
 use std::path::{Path, PathBuf};
+#[cfg(not(any(kani, verus)))]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
+#[cfg(not(any(kani, verus)))]
 const REGISTRY_FILE: &str = "dock-registry.json";
+#[cfg(not(any(kani, verus)))]
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum DockRegistryError {
     #[error("unable to read dock registry: {0}")]
     Io(#[from] std::io::Error),
@@ -26,6 +35,7 @@ pub enum DockRegistryError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct DockBinding {
     pub repository: String,
     pub run_id: u64,
@@ -43,10 +53,33 @@ pub struct DockBinding {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct DockRegistry {
     pub bindings: Vec<DockBinding>,
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns repository_present
+            && run_id > 0
+            && job_present
+            && container_present
+            && requester_present
+    )
+)]
+fn dock_binding_identity_is_valid(
+    repository_present: bool,
+    run_id: u64,
+    job_present: bool,
+    container_present: bool,
+    requester_present: bool,
+) -> bool {
+    repository_present && run_id > 0 && job_present && container_present && requester_present
+}
+
+#[cfg(not(any(kani, verus)))]
 impl DockRegistry {
     pub fn load(state_dir: impl AsRef<Path>) -> Result<Self, DockRegistryError> {
         let state_dir = state_dir.as_ref();
@@ -98,12 +131,13 @@ impl DockRegistry {
         let mut containers = std::collections::HashSet::with_capacity(self.bindings.len());
         let mut container_ids = std::collections::HashSet::with_capacity(self.bindings.len());
         for binding in &self.bindings {
-            if binding.repository.trim().is_empty()
-                || binding.run_id == 0
-                || binding.job.trim().is_empty()
-                || binding.container.trim().is_empty()
-                || binding.requester_runner.trim().is_empty()
-            {
+            if !dock_binding_identity_is_valid(
+                !binding.repository.trim().is_empty(),
+                binding.run_id,
+                !binding.job.trim().is_empty(),
+                !binding.container.trim().is_empty(),
+                !binding.requester_runner.trim().is_empty(),
+            ) {
                 return Err(DockRegistryError::Invalid(
                     "binding contains an empty identity field or zero run ID".into(),
                 ));
@@ -195,11 +229,13 @@ impl DockRegistry {
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn effective_uid() -> u32 {
     // SAFETY: geteuid has no preconditions and has no side effects.
     unsafe { libc::geteuid() }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub(crate) fn validate_state_directory_parent(state_dir: &Path) -> Result<(), DockRegistryError> {
     #[cfg(unix)]
     {
@@ -257,6 +293,7 @@ pub(crate) fn validate_state_directory_parent(state_dir: &Path) -> Result<(), Do
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_state_directory(state_dir: &Path) -> Result<(), DockRegistryError> {
     validate_state_directory_parent(state_dir)?;
     match fs::symlink_metadata(state_dir) {
@@ -288,6 +325,7 @@ fn validate_state_directory(state_dir: &Path) -> Result<(), DockRegistryError> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_registry_file(path: &Path) -> Result<Option<String>, DockRegistryError> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
@@ -338,6 +376,7 @@ fn read_registry_file(path: &Path) -> Result<Option<String>, DockRegistryError> 
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn path_for(state_dir: impl AsRef<Path>) -> PathBuf {
     state_dir.as_ref().join(REGISTRY_FILE)
 }
@@ -735,3 +774,72 @@ mod security_tests {
             .is_none());
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::dock_binding_identity_is_valid;
+
+    #[kani::proof]
+    fn dock_binding_identity_requires_every_field_and_positive_run_id() {
+        let repository_present: bool = kani::any();
+        let run_id: u64 = kani::any();
+        let job_present: bool = kani::any();
+        let container_present: bool = kani::any();
+        let requester_present: bool = kani::any();
+
+        let expected = repository_present
+            && run_id > 0
+            && job_present
+            && container_present
+            && requester_present;
+        assert_eq!(
+            dock_binding_identity_is_valid(
+                repository_present,
+                run_id,
+                job_present,
+                container_present,
+                requester_present,
+            ),
+            expected
+        );
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::dock_binding_identity_is_valid;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn dock_binding_identity_requires_every_field_and_positive_run_id(
+            repository_present: bool,
+            run_id: u64,
+            job_present: bool,
+            container_present: bool,
+            requester_present: bool,
+        )
+            ensures
+                dock_binding_identity_is_valid(
+                    repository_present,
+                    run_id,
+                    job_present,
+                    container_present,
+                    requester_present,
+                )
+                    == (
+                        repository_present
+                            && run_id > 0
+                            && job_present
+                            && container_present
+                            && requester_present
+                    ),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

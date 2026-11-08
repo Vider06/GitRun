@@ -68,6 +68,8 @@ readonly required_harnesses=(
   "noop_backend_rejects_every_declared_api_operation_pair"
   "workload_id_hex_byte_alphabet_is_exact"
   "workload_routing_id_is_canonical_lowercase_hex"
+  "sha256_digest_byte_alphabet_is_exact"
+  "sha256_digest_requires_prefix_length_and_hex_payload"
   "platform_abi_and_package_manager_names_are_stable"
   "managed_service_names_do_not_cross_service_boundaries"
   "ban_expiry_timestamp_saturates_for_all_u64_inputs"
@@ -231,6 +233,7 @@ readonly -a proof_sources=(
   "crates/gitrun-setup/src/lib.rs"
   "crates/gitrun-exe/src/lib.rs"
   "crates/gitrun-smart-scheduler/src/lib.rs"
+  "crates/gitrun-updater/src/lib.rs"
   "crates/gitrun-scheduler/src/gsr_poll.rs"
 )
 

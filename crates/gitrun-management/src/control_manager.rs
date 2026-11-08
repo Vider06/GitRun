@@ -82,6 +82,7 @@ fn action_is_allowed(operation: &str, action: &str) -> bool {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
@@ -91,6 +92,7 @@ struct Request {
     args: Value,
 }
 
+#[cfg(not(any(kani, verus)))]
 #[derive(Debug, Serialize, Deserialize)]
 struct Reply {
     ok: bool,

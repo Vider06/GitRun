@@ -5,28 +5,35 @@
 //! callers must report missing or failed scans rather than treating them as
 //! a clean result.
 
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::io::Read;
+#[cfg(not(any(kani, verus)))]
 use std::path::Path;
+#[cfg(not(any(kani, verus)))]
 use std::process::{Child, Command, Output, Stdio};
+#[cfg(not(any(kani, verus)))]
 use std::thread;
+#[cfg(not(any(kani, verus)))]
 use std::time::{Duration, Instant};
 
-#[cfg(unix)]
+#[cfg(all(unix, not(any(kani, verus))))]
 unsafe extern "C" {
     fn kill(pid: i32, signal: i32) -> i32;
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(any(kani, verus))))]
 fn kill_analyzer_process_group(pid: u32) {
     // The analyzer and descendants share a dedicated process group so a
     // descendant cannot keep captured stdout/stderr open after the parent exits.
     let _ = unsafe { kill(-(pid as i32), 9) };
 }
 
-#[cfg(not(unix))]
+#[cfg(all(not(unix), not(any(kani, verus))))]
 fn kill_analyzer_process_group(_pid: u32) {}
 
+#[cfg(not(any(kani, verus)))]
 fn terminate_analyzer(child: &mut Child) {
     kill_analyzer_process_group(child.id());
     let _ = child.kill();
@@ -34,6 +41,7 @@ fn terminate_analyzer(child: &mut Child) {
 }
 
 /// One finding from either the built-in scan or `zizmor`.
+#[cfg(not(any(kani, verus)))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
     pub file: String,
@@ -44,6 +52,7 @@ pub struct Finding {
 
 /// Result of validating one workflow file (or a whole directory's worth,
 /// see `validate_workflows_dir`).
+#[cfg(not(any(kani, verus)))]
 #[derive(Debug, Clone, Default)]
 pub struct ValidationReport {
     pub findings: Vec<Finding>,
@@ -51,6 +60,7 @@ pub struct ValidationReport {
 }
 
 /// One statically detected GitDockRun job reference.
+#[cfg(not(any(kani, verus)))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DockRequest {
     pub file: String,
@@ -60,7 +70,9 @@ pub struct DockRequest {
     pub operation: DockOperation,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(all(not(kani), not(verus)), derive(Serialize, Deserialize))]
+#[cfg_attr(verus, verus_verify)]
 pub enum DockOperation {
     Connect,
     Disconnect,
@@ -83,6 +95,7 @@ impl DockOperation {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 impl ValidationReport {
     pub fn is_clean(&self) -> bool {
         self.findings.is_empty()
@@ -91,6 +104,7 @@ impl ValidationReport {
 
 /// Finds workflow calls to the closed GitDockRun API and extracts the
 /// logical job name. This never talks to Docker and never executes a job.
+#[cfg(not(any(kani, verus)))]
 pub fn scan_dock_requests(file_label: &str, content: &str) -> Vec<DockRequest> {
     let mut requests = Vec::new();
     let mut in_jobs = false;
@@ -149,6 +163,7 @@ pub fn scan_dock_requests(file_label: &str, content: &str) -> Vec<DockRequest> {
     requests
 }
 
+#[cfg(not(any(kani, verus)))]
 fn collect_dock_request_from_line(
     file_label: &str,
     line_number: usize,
@@ -203,6 +218,7 @@ fn collect_dock_request_from_line(
 /// Built-in line-pattern checks against one workflow file's raw text.
 /// `file_label` is used only for the `Finding::file` field (typically the
 /// path relative to the repo root, e.g. `.github/workflows/ci.yml`).
+#[cfg(not(any(kani, verus)))]
 pub fn scan(file_label: &str, content: &str) -> Vec<Finding> {
     let mut findings = Vec::new();
     let lower_whole = content.to_ascii_lowercase();
@@ -308,6 +324,7 @@ pub fn scan(file_label: &str, content: &str) -> Vec<Finding> {
 /// (typically `<repo>/.github/workflows`). Missing directory is not an
 /// error - a repo with no workflows yet, or one whose checkout step
 /// hasn't run, is not itself a validation failure.
+#[cfg(not(any(kani, verus)))]
 pub fn validate_workflows_dir(workflows_dir: &Path) -> std::io::Result<ValidationReport> {
     let mut report = ValidationReport::default();
     let entries = match std::fs::read_dir(workflows_dir) {
@@ -350,10 +367,12 @@ pub fn validate_workflows_dir(workflows_dir: &Path) -> std::io::Result<Validatio
 /// the fields this module needs). Invalid JSON or an unexpected top-level
 /// shape is reported as an error so an analyzer output change cannot silently
 /// appear to be a clean scan.
+#[cfg(not(any(kani, verus)))]
 pub fn run_zizmor(workflows_dir: &Path) -> std::io::Result<Option<Vec<Finding>>> {
     run_zizmor_command("zizmor", workflows_dir)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run_zizmor_command(
     program: &str,
     workflows_dir: &Path,
@@ -372,6 +391,7 @@ fn run_zizmor_command(
     parse_zizmor_output(&stdout).map(Some)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run_bounded_command(
     mut command: Command,
     timeout: Duration,
@@ -446,6 +466,7 @@ fn run_bounded_command(
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_bounded_stream(
     mut reader: impl Read,
     output_limit: usize,
@@ -466,6 +487,7 @@ fn read_bounded_stream(
     Ok((output, truncated))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn parse_zizmor_output(stdout: &str) -> std::io::Result<Vec<Finding>> {
     let parsed: serde_json::Value = serde_json::from_str(stdout).map_err(|error| {
         std::io::Error::new(
@@ -514,6 +536,7 @@ fn parse_zizmor_output(stdout: &str) -> std::io::Result<Vec<Finding>> {
 /// bundled or change without a GitRun release — if zizmor's real license
 /// terms ever change, this struct is the place to update to match.
 #[derive(Debug, Clone, Serialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct ZizmorInfo {
     pub name: &'static str,
     pub author: &'static str,
@@ -531,6 +554,7 @@ pub struct ZizmorInfo {
 }
 
 // Keep the optional analyzer metadata centralized so enabling it remains auditable.
+#[cfg(not(any(kani, verus)))]
 pub fn zizmor_info() -> ZizmorInfo {
     ZizmorInfo {
         name: "zizmor",
@@ -546,6 +570,7 @@ pub fn zizmor_info() -> ZizmorInfo {
 
 /// Checks whether the optional analyzer is available without allowing an
 /// unbounded version-probe subprocess to hang the dashboard.
+#[cfg(not(any(kani, verus)))]
 pub fn zizmor_is_installed() -> bool {
     let mut command = Command::new("zizmor");
     command.arg("--version");
@@ -569,6 +594,7 @@ pub fn zizmor_is_installed() -> bool {
 ///
 /// Already-installed is treated as success with no reinstall — this is an
 /// idempotent "make sure it's available" call, not a forced upgrade.
+#[cfg(not(any(kani, verus)))]
 pub fn ensure_zizmor_installed() -> std::io::Result<InstallOutcome> {
     let mut version_command = Command::new("zizmor");
     version_command.arg("--version");
@@ -615,6 +641,7 @@ pub fn ensure_zizmor_installed() -> std::io::Result<InstallOutcome> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", content = "detail")]
+#[cfg(not(any(kani, verus)))]
 pub enum InstallOutcome {
     AlreadyInstalled,
     Installed,
@@ -809,3 +836,43 @@ mod tests {
         assert!(!info.terms_summary.is_empty());
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::DockOperation;
+
+    /// Proves every public Dock operation retains its canonical wire spelling.
+    #[kani::proof]
+    fn dock_operation_wire_names_are_total() {
+        assert!(DockOperation::Connect.as_str() == "connect");
+        assert!(DockOperation::Disconnect.as_str() == "disconnect");
+        assert!(DockOperation::Melt.as_str() == "melt");
+        assert!(DockOperation::Read.as_str() == "read");
+        assert!(DockOperation::Write.as_str() == "write");
+        assert!(DockOperation::Execute.as_str() == "execute");
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::DockOperation;
+    use vstd::prelude::*;
+
+    verus! {
+        /// Verifies the stable external name for every Dock operation.
+        proof fn dock_operation_wire_names_are_total() {
+            assert(DockOperation::Connect.as_str() == "connect");
+            assert(DockOperation::Disconnect.as_str() == "disconnect");
+            assert(DockOperation::Melt.as_str() == "melt");
+            assert(DockOperation::Read.as_str() == "read");
+            assert(DockOperation::Write.as_str() == "write");
+            assert(DockOperation::Execute.as_str() == "execute");
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

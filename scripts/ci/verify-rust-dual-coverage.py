@@ -38,7 +38,7 @@ def tracked_sources() -> set[str]:
         check=True,
         stdout=subprocess.PIPE,
     )
-    return {item.decode() for item in result.stdout.split(b"\\0") if item}
+    return {item.decode() for item in result.stdout.split(b"\0") if item}
 
 
 def write_report(
@@ -47,14 +47,15 @@ def write_report(
     counts = {"IMPLEMENTED": 0, "PLANNED": 0}
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     with REPORT.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.writer(handle, delimiter="\\t", lineterminator="\\n")
+        writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
         writer.writerow(
             ["SOURCE_FILE", "KANI_STATUS", "VERUS_STATUS", "SCOPE_STATUS"]
         )
         for source in sorted(sources):
             mapping = rows[source]
             scope = mapping[6]
-            if scope in counts:\n                counts[scope] += 1
+            if scope in counts:
+                counts[scope] += 1
             # Manifest declarations are plans, not proof evidence. A source is
             # never labelled PROVEN by this inventory/audit step.
             status = "UNVERIFIED" if scope == "IMPLEMENTED" else "NOT_IN_SCOPE"

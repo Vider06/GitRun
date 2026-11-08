@@ -11,8 +11,11 @@
 //! Repository settings can only narrow the global policy. They cannot
 //! re-enable an API or operation that the global policy disabled.
 
+#[cfg(not(any(kani, verus)))]
 use crate::api_policy::{ApiPolicy, GitRunApi, GitRunOperation, PolicyMatrix};
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -22,20 +25,26 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(not(any(kani, verus)))]
 static SETTINGS_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
+#[cfg(not(any(kani, verus)))]
 pub const SETTINGS_SCHEMA_VERSION: u32 = 1;
+#[cfg(not(any(kani, verus)))]
 const SETTINGS_FILE_NAME: &str = "gitrun-settings.json";
 
 /// Cross-process exclusion for security-policy readers performing a privileged
 /// operation and writers replacing the policy file. Atomic rename protects
 /// readers from partial JSON, but by itself cannot prevent a policy change
 /// between authorization and the associated privileged side effect.
+#[cfg(not(any(kani, verus)))]
 pub struct SettingsPolicyLock {
     file: Option<fs::File>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl SettingsPolicyLock {
     /// Lock the stable sidecar file associated with a settings path.
     ///
@@ -110,6 +119,7 @@ impl SettingsPolicyLock {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Drop for SettingsPolicyLock {
     fn drop(&mut self) {
         #[cfg(unix)]
@@ -120,6 +130,7 @@ impl Drop for SettingsPolicyLock {
 }
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum SettingsError {
     #[error("unable to read settings: {0}")]
     Io(#[from] std::io::Error),
@@ -135,12 +146,14 @@ pub enum SettingsError {
 
 /// Global policy plus per-repository restrictions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct GitRunSettings {
     pub schema_version: u32,
     pub global: PolicyMatrix,
     pub repositories: BTreeMap<String, RepositorySettings>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Default for GitRunSettings {
     fn default() -> Self {
         Self {
@@ -151,6 +164,7 @@ impl Default for GitRunSettings {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 impl GitRunSettings {
     pub fn effective_for_repository(&self, repository: &str) -> EffectiveRepositorySettings {
         let repo = self
@@ -298,6 +312,7 @@ impl GitRunSettings {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn apply_repository_api_overrides(
     global: &PolicyMatrix,
     overrides: &BTreeMap<GitRunApi, ApiPolicyOverride>,
@@ -318,6 +333,7 @@ fn apply_repository_api_overrides(
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct ApiPolicyOverride {
     /// None means inherit global enablement; Some(false) can only disable.
     pub enabled: Option<bool>,
@@ -326,10 +342,20 @@ pub struct ApiPolicyOverride {
     pub allowed_operations: Option<BTreeSet<GitRunOperation>>,
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(returns globally_enabled && override_enabled.unwrap_or(globally_enabled))
+)]
+fn repository_api_enabled(globally_enabled: bool, override_enabled: Option<bool>) -> bool {
+    globally_enabled && override_enabled.unwrap_or(globally_enabled)
+}
+
+#[cfg(not(any(kani, verus)))]
 impl ApiPolicyOverride {
     fn to_policy(&self, base: &ApiPolicy) -> ApiPolicy {
         ApiPolicy {
-            enabled: self.enabled.unwrap_or(base.enabled),
+            enabled: repository_api_enabled(base.enabled, self.enabled),
             allowed_operations: self
                 .allowed_operations
                 .clone()
@@ -340,6 +366,7 @@ impl ApiPolicyOverride {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+#[cfg(not(any(kani, verus)))]
 pub struct RepositorySettings {
     pub api_overrides: BTreeMap<GitRunApi, ApiPolicyOverride>,
     pub docker: DockerPolicy,
@@ -349,6 +376,7 @@ pub struct RepositorySettings {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct DockerPolicy {
     /// Direct Docker socket exposure to workflow containers. This is the
     /// compatibility opt-out and remains disabled unless explicitly enabled
@@ -367,6 +395,7 @@ pub struct DockerPolicy {
     pub allowed_mounts: MountPolicy,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl DockerPolicy {
     pub fn allows_job(&self, job_name: &str) -> bool {
         logical_name_allowed(&self.allowed_job_names, job_name)
@@ -385,6 +414,7 @@ impl DockerPolicy {
 /// stable; the actual Docker ID is resolved by GitRun at runtime and is not
 /// a durable security identity.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct LogicContainerPolicy {
     pub connect: bool,
     pub read: bool,
@@ -400,6 +430,7 @@ pub struct LogicContainerPolicy {
     pub allowed_melt_targets: Vec<String>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl LogicContainerPolicy {
     pub fn allows_operation(&self, operation: GitRunOperation) -> bool {
         match operation {
@@ -422,12 +453,14 @@ impl LogicContainerPolicy {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct MountPolicy {
     /// Explicit deny-by-default allowlist of host source paths for GitDockRun.
     pub enabled: bool,
     pub rules: Vec<MountRule>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl MountPolicy {
     /// Resolve an approved source and return its canonical host path.
     ///
@@ -510,6 +543,7 @@ impl MountPolicy {
 /// A source-path rule. Recursive permits matching descendants of source;
 /// it does not request recursive kernel bind-mount propagation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct MountRule {
     pub source: String,
     pub recursive: bool,
@@ -518,6 +552,7 @@ pub struct MountRule {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct VaultPolicy {
     pub read: bool,
     pub write: bool,
@@ -528,6 +563,7 @@ pub struct VaultPolicy {
     pub allowed_names: Vec<String>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl VaultPolicy {
     pub fn allows_name(&self, name: &str) -> bool {
         logical_name_allowed(&self.allowed_names, name)
@@ -535,6 +571,7 @@ impl VaultPolicy {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct SharedStoragePolicy {
     pub enabled: bool,
     pub allow_files: bool,
@@ -543,6 +580,7 @@ pub struct SharedStoragePolicy {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct RegisterPolicy {
     pub enabled: bool,
     pub allow_workflow: bool,
@@ -550,6 +588,7 @@ pub struct RegisterPolicy {
     pub allowed_entries: Vec<String>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl RegisterPolicy {
     /// A registration entry must match an exact allowlist value; "*" is an
     /// explicit opt-in for every entry that passes the execution backend's
@@ -560,6 +599,7 @@ impl RegisterPolicy {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct EffectiveRepositorySettings {
     pub api_policy: PolicyMatrix,
     pub docker: DockerPolicy,
@@ -568,6 +608,7 @@ pub struct EffectiveRepositorySettings {
     pub register: RegisterPolicy,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn logical_name_allowed(allowed: &[String], value: &str) -> bool {
     allowed
         .iter()
@@ -1004,3 +1045,50 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::repository_api_enabled;
+
+    #[kani::proof]
+    fn repository_override_cannot_reenable_global_api() {
+        let globally_enabled: bool = kani::any();
+        let override_enabled: Option<bool> = kani::any();
+        let effective = repository_api_enabled(globally_enabled, override_enabled);
+        assert!(!effective || globally_enabled);
+        if !globally_enabled {
+            assert!(!effective);
+        }
+        assert_eq!(
+            effective,
+            globally_enabled && override_enabled.unwrap_or(globally_enabled)
+        );
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::repository_api_enabled;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn repository_override_cannot_reenable_global_api(
+            globally_enabled: bool,
+            override_enabled: Option<bool>,
+        )
+            ensures
+                repository_api_enabled(globally_enabled, override_enabled)
+                    == (globally_enabled && override_enabled.unwrap_or(globally_enabled)),
+                !repository_api_enabled(globally_enabled, override_enabled) || globally_enabled,
+                globally_enabled == false
+                    ==> repository_api_enabled(globally_enabled, override_enabled) == false,
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

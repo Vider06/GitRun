@@ -35,6 +35,7 @@ readonly -a production_sources=(
   "crates/gitrun-updater/src/release_policy.rs"
   "crates/gitrun-scheduler/src/vm.rs"
   "crates/gitrun-cli/src/presenter.rs"
+  "crates/gitrun-platform/src/lib.rs"
 )
 phase=preflight
 

@@ -322,7 +322,7 @@ jobs:
             gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-${{ matrix.target }}-${{ env.RUST_VERSION }}-
       - name: Set up Node.js
         if: matrix.kind == 'gnu'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: "22"
           package-manager-cache: false
@@ -516,7 +516,7 @@ jobs:
       contents: read
     steps:
       - name: Download immutable build outputs
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           path: canonical-inputs
           merge-multiple: true
@@ -585,7 +585,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download canonical target outputs
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: canonical-release-inputs
           path: canonical
@@ -877,7 +877,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download canonical Dashboard build
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: canonical-release-inputs
           path: canonical
@@ -1081,7 +1081,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download new Server binary
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: canonical-release-inputs
           path: canonical
@@ -1188,25 +1188,25 @@ jobs:
         with:
           persist-credentials: false
       - name: Download collected canonical inputs
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: canonical-release-inputs
           path: all-assets
       - name: Download all Server package targets
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           pattern: server-packages-*
           path: all-assets
           merge-multiple: true
       - name: Download independent Dashboard package
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           pattern: dashboard-package-*
           path: all-assets
           merge-multiple: true
       - name: Download one-off legacy migration package
         if: env.MIGRATION_RELEASE == 'true'
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: migration-deb-linux-x86_64
           path: all-assets
@@ -1445,7 +1445,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Download validated release payload
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: validated-release-assets
           path: release-assets
@@ -1645,7 +1645,7 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Download signed release payload
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: signed-release-assets
           path: release-assets

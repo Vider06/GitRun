@@ -331,8 +331,9 @@ def check_native_init_package_resources(errors: list[str]) -> None:
 
     xbps_builder = read_text(ROOT / "scripts/ci/build-xbps-server-package.py") or ""
     xbps_builder_markers = (
-        '"--property=install-script"',
-        '"--property=remove-script"',
+        '["tar", "-xOf", str(archive)]',
+        '"./INSTALL"',
+        '"./REMOVE"',
         '"-R"',
         '"sv restart"',
         '"sv down"',

@@ -23,6 +23,7 @@ pub mod policy_logic;
 pub mod release_policy;
 #[cfg(not(any(kani, verus)))]
 pub mod state;
+#[cfg(not(any(kani, verus)))]
 pub use release_policy::{
     resolve_policy_update, resolve_policy_update_for_line_transition_target,
     resolve_policy_update_for_target, select_line_transition_releases, select_release,

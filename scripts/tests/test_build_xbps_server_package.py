@@ -73,18 +73,23 @@ class XbpsServerPackageTests(unittest.TestCase):
                     b"xbps archive"
                 )
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
-            if command[0] == "tar":
+            if command[0] == "tar" and "-tf" in command:
                 return SimpleNamespace(
                     returncode=0,
                     stdout=(
-                        "./usr/libexec/gitrun/gitrun-service\n"
-                        "./etc/sv/gitrun/run\n"
-                        "./etc/sv/gitrun/log/run\n"
-                        "./etc/sv/gitrun-gsr/run\n"
-                        "./etc/sv/gitrun-gsr/log/run\n"
+                        "./usr/libexec/gitrun/gitrun-service\\n"
+                        "./etc/sv/gitrun/run\\n"
+                        "./etc/sv/gitrun/log/run\\n"
+                        "./etc/sv/gitrun-gsr/run\\n"
+                        "./etc/sv/gitrun-gsr/log/run\\n"
+                        "./INSTALL\\n./REMOVE\\n"
                     ),
                     stderr="",
                 )
+            if command[0] == "tar" and "-xOf" in command:
+                hook = command[-1]
+                body = "sv restart gitrun\\n" if hook == "./INSTALL" else "sv down gitrun\\n"
+                return SimpleNamespace(returncode=0, stdout=body, stderr="")
             if command[0] == self.args.rindex:
                 self.assertTrue(
                     (repository / "gitrun-server-1.9.1_1.x86_64.xbps").is_file()
@@ -95,18 +100,6 @@ class XbpsServerPackageTests(unittest.TestCase):
                     (repository / "gitrun-server-1.9.1_1.x86_64.xbps").is_file()
                 )
                 return SimpleNamespace(returncode=0, stdout="glibc\n", stderr="")
-            if command[0] == self.args.query and "--property=install-script" in command:
-                return SimpleNamespace(
-                    returncode=0,
-                    stdout="case $ACTION in post) sv restart gitrun ;; esac\n",
-                    stderr="",
-                )
-            if command[0] == self.args.query and "--property=remove-script" in command:
-                return SimpleNamespace(
-                    returncode=0,
-                    stdout="case $ACTION in pre) sv down gitrun ;; esac\n",
-                    stderr="",
-                )
             self.fail(f"Unexpected XBPS command: {command}")
 
         with patch.object(XBPS_BUILDER.subprocess, "run", side_effect=fake_run):
@@ -118,16 +111,11 @@ class XbpsServerPackageTests(unittest.TestCase):
         )
         self.assertTrue(result.is_file())
         self.assertEqual(len(list(self.output.glob("*.xbps"))), 1)
-        property_queries = [
+        dependency_queries = [
             call for call in calls if Path(call[0]).name == "xbps-query"
         ]
-        self.assertEqual(len(property_queries), 3)
-        self.assertTrue(
-            any("--property=install-script" in call for call in property_queries)
-        )
-        self.assertTrue(
-            any("--property=remove-script" in call for call in property_queries)
-        )
+        self.assertEqual(len(dependency_queries), 1)
+        self.assertTrue(any("-x" in call for call in dependency_queries))
 
     def test_rejects_package_without_remove_script_metadata(self) -> None:
         def fake_run(command, *, cwd, env, **kwargs):
@@ -137,28 +125,27 @@ class XbpsServerPackageTests(unittest.TestCase):
                     b"xbps archive"
                 )
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
-            if command[0] == "tar":
+            if command[0] == "tar" and "-tf" in command:
                 return SimpleNamespace(
                     returncode=0,
-                    stdout="".join(f"{entry}\n" for entry in (
+                    stdout="".join(f"{entry}\\n" for entry in (
                         "./usr/libexec/gitrun/gitrun-service",
                         "./etc/sv/gitrun/run",
                         "./etc/sv/gitrun/log/run",
                         "./etc/sv/gitrun-gsr/run",
                         "./etc/sv/gitrun-gsr/log/run",
+                        "./INSTALL",
+                        "./REMOVE",
                     )),
                     stderr="",
                 )
+            if command[0] == "tar" and "-xOf" in command:
+                body = "sv restart gitrun\\n" if command[-1] == "./INSTALL" else ""
+                return SimpleNamespace(returncode=0, stdout=body, stderr="")
             if command[0] == self.args.rindex:
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
             if command[0] == self.args.query and "-x" in command:
                 return SimpleNamespace(returncode=0, stdout="glibc\n", stderr="")
-            if command[0] == self.args.query and "--property=install-script" in command:
-                return SimpleNamespace(
-                    returncode=0, stdout="sv restart gitrun\n", stderr=""
-                )
-            if command[0] == self.args.query and "--property=remove-script" in command:
-                return SimpleNamespace(returncode=0, stdout="", stderr="")
             self.fail(f"Unexpected XBPS command: {command}")
 
         with patch.object(XBPS_BUILDER.subprocess, "run", side_effect=fake_run):

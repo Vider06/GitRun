@@ -77,18 +77,18 @@ class XbpsServerPackageTests(unittest.TestCase):
                 return SimpleNamespace(
                     returncode=0,
                     stdout=(
-                        "./usr/libexec/gitrun/gitrun-service\\n"
-                        "./etc/sv/gitrun/run\\n"
-                        "./etc/sv/gitrun/log/run\\n"
-                        "./etc/sv/gitrun-gsr/run\\n"
-                        "./etc/sv/gitrun-gsr/log/run\\n"
-                        "./INSTALL\\n./REMOVE\\n"
+                        "./usr/libexec/gitrun/gitrun-service\n"
+                        "./etc/sv/gitrun/run\n"
+                        "./etc/sv/gitrun/log/run\n"
+                        "./etc/sv/gitrun-gsr/run\n"
+                        "./etc/sv/gitrun-gsr/log/run\n"
+                        "./INSTALL\n./REMOVE\n"
                     ),
                     stderr="",
                 )
             if command[0] == "tar" and "-xOf" in command:
                 hook = command[-1]
-                body = "sv restart gitrun\\n" if hook == "./INSTALL" else "sv down gitrun\\n"
+                body = "sv restart gitrun\n" if hook == "./INSTALL" else "sv down gitrun\n"
                 return SimpleNamespace(returncode=0, stdout=body, stderr="")
             if command[0] == self.args.rindex:
                 self.assertTrue(
@@ -128,7 +128,7 @@ class XbpsServerPackageTests(unittest.TestCase):
             if command[0] == "tar" and "-tf" in command:
                 return SimpleNamespace(
                     returncode=0,
-                    stdout="".join(f"{entry}\\n" for entry in (
+                    stdout="".join(f"{entry}\n" for entry in (
                         "./usr/libexec/gitrun/gitrun-service",
                         "./etc/sv/gitrun/run",
                         "./etc/sv/gitrun/log/run",
@@ -140,7 +140,7 @@ class XbpsServerPackageTests(unittest.TestCase):
                     stderr="",
                 )
             if command[0] == "tar" and "-xOf" in command:
-                body = "sv restart gitrun\\n" if command[-1] == "./INSTALL" else ""
+                body = "sv restart gitrun\n" if command[-1] == "./INSTALL" else ""
                 return SimpleNamespace(returncode=0, stdout=body, stderr="")
             if command[0] == self.args.rindex:
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -149,7 +149,7 @@ class XbpsServerPackageTests(unittest.TestCase):
             self.fail(f"Unexpected XBPS command: {command}")
 
         with patch.object(XBPS_BUILDER.subprocess, "run", side_effect=fake_run):
-            with self.assertRaisesRegex(RuntimeError, "remove-script property"):
+            with self.assertRaisesRegex(RuntimeError, "REMOVE metadata"):
                 XBPS_BUILDER.build_server_package(self.args)
 
     def test_rejects_missing_lifecycle_hooks(self) -> None:

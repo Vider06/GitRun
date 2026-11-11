@@ -17,6 +17,8 @@ REQUIRED_ARCHIVE_PATHS = (
     "./etc/sv/gitrun/log/run",
     "./etc/sv/gitrun-gsr/run",
     "./etc/sv/gitrun-gsr/log/run",
+    "./INSTALL",
+    "./REMOVE",
 )
 
 
@@ -149,35 +151,26 @@ def build_server_package(args: argparse.Namespace) -> Path:
             f"'{args.dependency}', received '{dependencies.strip()}'."
         )
 
+    # Read lifecycle hooks from the actual binary archive. xbps-query's
+    # repository property view does not consistently expose these metadata
+    # script bodies across static XBPS builds; the archive is the source of truth.
     install_script = run_capture(
-        [
-            args.query,
-            "-R",
-            f"--repository={repository}",
-            "--property=install-script",
-            package_id,
-        ],
+        ["tar", "-xOf", str(archive), "./INSTALL"],
         cwd=repository,
         env=environment,
     )
     remove_script = run_capture(
-        [
-            args.query,
-            "-R",
-            f"--repository={repository}",
-            "--property=remove-script",
-            package_id,
-        ],
+        ["tar", "-xOf", str(archive), "./REMOVE"],
         cwd=repository,
         env=environment,
     )
     if "sv restart" not in install_script:
         raise RuntimeError(
-            f"XBPS package {package_id} has no install-script property with the runit upgrade restart"
+            f"XBPS archive {archive.name} has no INSTALL metadata with the runit upgrade restart"
         )
     if "sv down" not in remove_script:
         raise RuntimeError(
-            f"XBPS package {package_id} has no remove-script property with the runit shutdown"
+            f"XBPS archive {archive.name} has no REMOVE metadata with the runit shutdown"
         )
 
     final_path = output / f"GitRun-Server-{args.version}-linux-{args.cpu}-xbps.xbps"

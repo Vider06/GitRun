@@ -114,6 +114,26 @@ run_kani_target() {
   return 0
 }
 
+run_kani_package() {
+  local package="$1"
+  shift
+  local -a sources=("$@")
+  local source
+  if cargo kani --locked -p "$package"; then
+    for source in "${sources[@]}"; do
+      record_result "$source" PROVEN
+    done
+  else
+    local rc=$?
+    proof_failures=$((proof_failures + 1))
+    for source in "${sources[@]}"; do
+      record_result "$source" FAILED
+    done
+    echo "Kani package verification failed: $package (exit $rc)." >&2
+  fi
+  return 0
+}
+
 finish_formal_report() {
   local rc=$?
   trap - EXIT
@@ -290,8 +310,30 @@ run_kani_target "$policy_harness" \
   "crates/gitrun-updater/src/policy_logic.rs" \
   "verification/kani/updater_policy.rs"
 
+# Verify each proof-bearing crate through Cargo so Kani receives the
+# package edition, dependency graph, and cfg(kani) context. A direct
+# `kani path/to/module.rs` invocation compiles that module as an isolated
+# standalone crate and is invalid for modules that use sibling modules or
+# external crate dependencies.
+declare -a package_order=()
+declare -A package_seen=()
 for source in "${proof_sources[@]}"; do
-  run_kani_target "$source" "$source"
+  package="${source#crates/}"
+  package="${package%%/*}"
+  if [[ -z "${package_seen[$package]:-}" ]]; then
+    package_seen[$package]=1
+    package_order+=("$package")
+  fi
+done
+
+for package in "${package_order[@]}"; do
+  package_sources=()
+  for source in "${proof_sources[@]}"; do
+    if [[ "$source" == "crates/$package/"* ]]; then
+      package_sources+=("$source")
+    fi
+  done
+  run_kani_package "$package" "${package_sources[@]}"
 done
 
 if [ "$proof_failures" -ne 0 ]; then

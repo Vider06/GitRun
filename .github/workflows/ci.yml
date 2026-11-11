@@ -1941,7 +1941,7 @@ jobs:
           fi
           xbps="$out/GitRun-Server-$VERSION-linux-$cpu-xbps.xbps"
           xbps_contents="$(tar -tf "$xbps")"
-          grep -Fq './usr/bin/gitrun' <<< "$xbps_contents"
+          grep -F './usr/bin/gitrun' <<< "$xbps_contents"
           sha256sum "$out"/* > "$out/SHA256SUMS"
           echo "Audited every generated Server package for $TARGET."
       - name: Upload immutable target packages

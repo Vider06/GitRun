@@ -1012,22 +1012,25 @@ jobs:
           manifest_hash="$(bash scripts/ci/hash-tracked-files.sh Cargo.lock Cargo.toml '**/Cargo.toml')"
           if [ "$GITHUB_JOB" != audit-rust ]; then
             ci_need cc build-essential
-            # All non-audit Rust jobs can compile crates that invoke
-            # tauri::generate_context!() and/or execute the packaged CLI.
-            # Normalize icons before any such compilation, and provide both the
-            # Tauri build dependencies and WebKit runtime library consistently.
-            ci_need_pkg libglib2.0-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils
-            ci_need convert imagemagick
-            shopt -s nullglob
-            icons=(crates/gitrun-dashboard-tauri/src-tauri/icons/*.png)
-            [ "${#icons[@]}" -gt 0 ] || { ci_err "No Tauri PNG icons found"; exit 1; }
-            for icon in "${icons[@]}"; do
-              tmp="$(mktemp --suffix=.png)"
-              convert "$icon" -alpha on -define png:color-type=6 "PNG32:$tmp"
-              mv "$tmp" "$icon"
-            done
-            echo "${#icons[@]} Tauri PNG icons normalized in the CI checkout with ImageMagick"
           fi
+          # Only GUI packaging jobs compile Tauri crates. Keep GTK/WebKit and
+          # icon normalization out of headless lint, formal, runtime, and test
+          # jobs so they do not depend on the Ubuntu package mirrors.
+          case "$GITHUB_JOB" in
+            tauri|tauri-recovery)
+              ci_need_pkg libglib2.0-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils
+              ci_need convert imagemagick
+              shopt -s nullglob
+              icons=(crates/gitrun-dashboard-tauri/src-tauri/icons/*.png)
+              [ "${#icons[@]}" -gt 0 ] || { ci_err "No Tauri PNG icons found"; exit 1; }
+              for icon in "${icons[@]}"; do
+                tmp="$(mktemp --suffix=.png)"
+                convert "$icon" -alpha on -define png:color-type=6 "PNG32:$tmp"
+                mv "$tmp" "$icon"
+              done
+              echo "${#icons[@]} Tauri PNG icons normalized in the CI checkout with ImageMagick"
+              ;;
+          esac
           ci_need_report
           if [ "$GITHUB_JOB" != audit-rust ] && ! command -v pkg-config >/dev/null 2>&1; then
             ci_warn "pkg-config not found: crates linking system libraries (openssl-sys, glib, ...) will fail to build"

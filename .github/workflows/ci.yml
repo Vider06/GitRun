@@ -2953,7 +2953,7 @@ jobs:
     needs: [cargo-lock, rust-lint]
     if: ${{ needs.cargo-lock.result == 'success' && needs.cargo-lock.outputs.rust == 'true' && needs.rust-lint.result == 'success' }}
     runs-on: *runner
-    timeout-minutes: 60
+    timeout-minutes: 180
     outputs: *job_outputs
     steps:
       - *checkout

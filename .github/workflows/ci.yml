@@ -1002,6 +1002,8 @@ jobs:
     steps:
       - *checkout
       - *boot
+      - name: Install Rust lint system dependencies
+        run: bash scripts/ci/install-rust-lint-system-deps.sh
       - &rust_keys
         name: Rust paths and cache keys
         id: keys

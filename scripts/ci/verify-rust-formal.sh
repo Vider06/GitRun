@@ -119,7 +119,7 @@ run_kani_package() {
   shift
   local -a sources=("$@")
   local source
-  if cargo --locked kani -p "$package"; then
+  if cargo --locked kani -p "$package" --lib; then
     for source in "${sources[@]}"; do
       record_result "$source" PROVEN
     done

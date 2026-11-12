@@ -88,6 +88,7 @@ fn wait_status_is_signaled(status: i32) -> bool {
     signal != 0 && signal != 0x7f
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn run(_events_path: &Path, _policy: &CommandPolicy) -> Result<i32, SupervisorError> {
     Err(SupervisorError::UnsupportedPlatform)
 }

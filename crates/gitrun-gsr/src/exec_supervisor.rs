@@ -84,7 +84,7 @@ fn wait_status_is_exited(status: i32) -> bool {
 )]
 fn wait_status_is_signaled(status: i32) -> bool {
     let signal = status & 0x7f;
-    signal != 0 && signal != 0x7f
+    signal != 0 && (status & 0xff) != 0x7f
 }
 
 #[cfg(not(any(kani, verus)))]

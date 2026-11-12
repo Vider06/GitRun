@@ -36,10 +36,14 @@ impl Runner {
     #[cfg_attr(verus, verus_verify(dual_spec, open))]
     #[cfg_attr(
         verus,
-        verus_spec(returns Runner::desired_count(minimum, maximum, busy, queued))
+        verus_spec(returns if minimum > busy.saturating_add(queued) { if minimum > maximum { maximum } else { minimum } } else if busy.saturating_add(queued) > maximum { maximum } else { busy.saturating_add(queued) })
     )]
     pub fn desired_count(minimum: u32, maximum: u32, busy: u32, queued: u32) -> u32 {
-        minimum.max(busy.saturating_add(queued)).min(maximum)
+        {
+            let demand = busy.saturating_add(queued);
+            let floor = if minimum > demand { minimum } else { demand };
+            if floor > maximum { maximum } else { floor }
+        }
     }
 }
 
@@ -144,7 +148,7 @@ mod kani_verification {
 
         let desired = Runner::desired_count(minimum, maximum, busy, queued);
         assert!(desired <= maximum);
-        assert!(desired >= minimum.min(maximum));
+        assert!(desired >= if minimum <= maximum { minimum } else { maximum });
     }
 }
 
@@ -163,7 +167,7 @@ mod verus_verification {
         )
             ensures
                 Runner::desired_count(minimum, maximum, busy, queued) <= maximum,
-                Runner::desired_count(minimum, maximum, busy, queued) >= minimum.min(maximum),
+                Runner::desired_count(minimum, maximum, busy, queued) >= if minimum <= maximum { minimum } else { maximum },
         {
         }
     }

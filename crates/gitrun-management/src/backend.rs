@@ -44,10 +44,12 @@ mod control_manager;
 #[path = "updater.rs"]
 #[cfg(not(any(kani, verus)))]
 mod updater;
+#[cfg(not(any(kani, verus)))]
 pub use control_manager::{
     enabled as control_manager_enabled, request as control_manager_request,
     serve as run_control_manager,
 };
+#[cfg(not(any(kani, verus)))]
 pub use updater::{
     UpdateCheckInfo, UpdateLockStatus, UpdateOperation, UpdatePolicyChoice, UpdateServiceStatus,
     UpdaterInfo, UpdaterSettings,

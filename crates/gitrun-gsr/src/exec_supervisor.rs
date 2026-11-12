@@ -1769,7 +1769,7 @@ mod kani_verification {
 
         assert_eq!(stopped, (status & 0xff) == 0x7f);
         assert_eq!(exited, (status & 0x7f) == 0);
-        assert_eq!(signaled, (status & 0x7f) != 0 && (status & 0xff) != 0x7f);
+        assert_eq!(signaled, (status & 0x7f) != 0 && (status & 0x7f) != 0x7f);
         assert!(stopped || exited || signaled);
         assert!(!(stopped && exited));
         assert!(!(stopped && signaled));

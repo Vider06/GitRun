@@ -55,10 +55,14 @@ impl UpdatePolicy {
     )]
     pub fn accepts_release_type(self, release_type: ReleaseType) -> bool {
         match self {
-            Self::SecurityOnly => release_type == ReleaseType::Security,
-            Self::SecurityFull => {
-                release_type == ReleaseType::Security || release_type == ReleaseType::Full
-            }
+            Self::SecurityOnly => match release_type {
+                ReleaseType::Security => true,
+                ReleaseType::Pre | ReleaseType::Full => false,
+            },
+            Self::SecurityFull => match release_type {
+                ReleaseType::Security | ReleaseType::Full => true,
+                ReleaseType::Pre => false,
+            },
             Self::SecurityFullPre => true,
         }
     }

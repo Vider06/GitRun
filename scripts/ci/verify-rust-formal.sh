@@ -248,7 +248,6 @@ readonly -a proof_sources=(
   "crates/gitrun-gsr/src/bin/gitrun-api.rs"
   "crates/gitrun-updater/src/release_policy.rs"
   "crates/gitrun-scheduler/src/vm.rs"
-  "crates/gitrun-cli/src/presenter.rs"
   "crates/gitrun-platform/src/lib.rs"
   "crates/gitrun-scheduler/src/github.rs"
   "crates/gitrun-scheduler/src/gtuu.rs"
@@ -283,7 +282,7 @@ fi
 phase=coverage
 for harness in "${required_harnesses[@]}"; do
   found=false
-  for source in "${proof_sources[@]}" "crates/gitrun-updater/src/policy_logic.rs"; do
+  for source in "${proof_sources[@]}" "crates/gitrun-updater/src/policy_logic.rs" "crates/gitrun-cli/src/presenter.rs"; do
     if grep -B5 -F "fn $harness()" "$source" | grep -Fq "#[kani::proof]"; then
       found=true
       break
@@ -309,6 +308,11 @@ phase=proof
 run_kani_target "$policy_harness" \
   "crates/gitrun-updater/src/policy_logic.rs" \
   "verification/kani/updater_policy.rs"
+
+# The CLI package is binary-only. Its presenter proof is self-contained and
+# deliberately compiled as a standalone Kani entrypoint rather than --lib.
+run_kani_target "crates/gitrun-cli/src/presenter.rs" \
+  "crates/gitrun-cli/src/presenter.rs"
 
 # Verify each proof-bearing crate through Cargo so Kani receives the
 # package edition, dependency graph, and cfg(kani) context. A direct

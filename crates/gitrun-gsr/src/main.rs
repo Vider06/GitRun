@@ -3,12 +3,18 @@
 //! process it watches crashes hard. Runs as its own systemd unit
 //! (`systemd/gitrun-gsr.service`), independent of the manager scheduler.
 
+#[cfg(not(any(kani, verus)))]
 use gitrun_core::Config;
+#[cfg(not(any(kani, verus)))]
 use gitrun_gsr::WatchConfig;
+#[cfg(not(any(kani, verus)))]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(any(kani, verus)))]
 use std::sync::Arc;
+#[cfg(not(any(kani, verus)))]
 use std::time::Duration;
 
+#[cfg(not(any(kani, verus)))]
 fn main() {
     if let Err(reason) = gitrun_platform::ensure_supported_runtime() {
         eprintln!("gitrun-gsr: {reason}");
@@ -45,6 +51,7 @@ fn main() {
     println!("gitrun-gsr: stopped");
 }
 
+#[cfg(not(any(kani, verus)))]
 fn load_config() -> Result<Config, gitrun_core::ConfigError> {
     match std::env::var("GITRUN_CONFIG_FILE") {
         Ok(path) => Config::from_env_file(path),
@@ -52,8 +59,12 @@ fn load_config() -> Result<Config, gitrun_core::ConfigError> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn install_signal_handlers(stopping: &Arc<AtomicBool>) -> Result<(), std::io::Error> {
     signal_hook::flag::register(signal_hook::consts::SIGTERM, stopping.clone())?;
     signal_hook::flag::register(signal_hook::consts::SIGINT, stopping.clone())?;
     Ok(())
 }
+
+#[cfg(any(kani, verus))]
+fn main() {}

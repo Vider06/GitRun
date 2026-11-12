@@ -42,7 +42,11 @@ impl Runner {
         {
             let demand = busy.saturating_add(queued);
             let floor = if minimum > demand { minimum } else { demand };
-            if floor > maximum { maximum } else { floor }
+            if floor > maximum {
+                maximum
+            } else {
+                floor
+            }
         }
     }
 }

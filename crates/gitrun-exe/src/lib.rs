@@ -5,8 +5,7 @@
 //! and authorized by GSR before they reach this layer. There is deliberately
 //! no variant for arbitrary shell/Docker commands.
 
-#[cfg(not(any(kani, verus)))]
-use gitrun_core::{GitRunApi, GitRunOperation};
+use gitrun_core::api_policy::{GitRunApi, GitRunOperation};
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 #[cfg(not(any(kani, verus)))]
@@ -210,7 +209,7 @@ mod tests {
 #[cfg(kani)]
 mod kani_verification {
     use super::{noop_backend_unsupported_error, ExecutionError};
-    use gitrun_core::{GitRunApi, GitRunOperation};
+    use gitrun_core::api_policy::{GitRunApi, GitRunOperation};
 
     #[kani::proof]
     #[kani::unwind(21)]
@@ -264,7 +263,7 @@ mod kani_verification {
 #[cfg(verus)]
 mod verus_verification {
     use super::{noop_backend_unsupported_error, ExecutionError};
-    use gitrun_core::{GitRunApi, GitRunOperation};
+    use gitrun_core::api_policy::{GitRunApi, GitRunOperation};
     use vstd::prelude::*;
 
     verus! {

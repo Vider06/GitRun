@@ -67,13 +67,13 @@ pub enum SupervisorError {
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns (status & 0xff) == 0x7f))]
-fn wait_status_is_stopped(status: i32) -> bool {
+pub(crate) fn wait_status_is_stopped(status: i32) -> bool {
     (status & 0xff) == 0x7f
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns (status & 0x7f) == 0))]
-fn wait_status_is_exited(status: i32) -> bool {
+pub(crate) fn wait_status_is_exited(status: i32) -> bool {
     (status & 0x7f) == 0
 }
 
@@ -82,7 +82,7 @@ fn wait_status_is_exited(status: i32) -> bool {
     verus,
     verus_spec(returns (status & 0x7f) != 0 && (status & 0xff) != 0x7f)
 )]
-fn wait_status_is_signaled(status: i32) -> bool {
+pub(crate) fn wait_status_is_signaled(status: i32) -> bool {
     let signal = status & 0x7f;
     signal != 0 && (status & 0xff) != 0x7f
 }

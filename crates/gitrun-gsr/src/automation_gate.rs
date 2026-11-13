@@ -206,7 +206,7 @@ pub fn authorize_action(
     verus,
     verus_spec(returns proposed >= configured && proposed <= maximum)
 )]
-fn runner_floor_is_bounded(configured: u32, proposed: u32, maximum: u32) -> bool {
+pub(crate) fn runner_floor_is_bounded(configured: u32, proposed: u32, maximum: u32) -> bool {
     proposed >= configured && proposed <= maximum
 }
 
@@ -223,7 +223,7 @@ fn runner_floor_is_bounded(configured: u32, proposed: u32, maximum: u32) -> bool
                 || byte == b'.'
     )
 )]
-fn valid_repository_component_byte(byte: u8) -> bool {
+pub(crate) fn valid_repository_component_byte(byte: u8) -> bool {
     byte.is_ascii_lowercase()
         || byte.is_ascii_uppercase()
         || byte.is_ascii_digit()

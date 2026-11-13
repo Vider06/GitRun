@@ -38,7 +38,7 @@ pub enum Severity {
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns severity == Severity::Critical))]
-fn recovery_severity_is_critical(severity: Severity) -> bool {
+pub(crate) fn recovery_severity_is_critical(severity: Severity) -> bool {
     matches!(severity, Severity::Critical)
 }
 

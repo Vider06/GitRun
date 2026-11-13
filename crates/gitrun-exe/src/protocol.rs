@@ -31,25 +31,25 @@ const MIN_CHANNEL_KEY_LEN: usize = 32;
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns length >= MIN_CHANNEL_KEY_LEN))]
-fn channel_key_length_is_valid(length: usize) -> bool {
+pub(crate) fn channel_key_length_is_valid(length: usize) -> bool {
     length >= MIN_CHANNEL_KEY_LEN
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns length == NONCE_LEN))]
-fn nonce_length_is_valid(length: usize) -> bool {
+pub(crate) fn nonce_length_is_valid(length: usize) -> bool {
     length == NONCE_LEN
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns length == MAC_LEN))]
-fn mac_length_is_valid(length: usize) -> bool {
+pub(crate) fn mac_length_is_valid(length: usize) -> bool {
     length == MAC_LEN
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns current.abs_diff(timestamp) <= maximum_skew))]
-fn timestamp_is_within_skew(current: u64, timestamp: u64, maximum_skew: u64) -> bool {
+pub(crate) fn timestamp_is_within_skew(current: u64, timestamp: u64, maximum_skew: u64) -> bool {
     current.abs_diff(timestamp) <= maximum_skew
 }
 

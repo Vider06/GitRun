@@ -137,7 +137,7 @@ pub trait ExecutionBackend: Send + Sync {
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
-fn noop_backend_unsupported_error(api: GitRunApi, operation: GitRunOperation) -> ExecutionError {
+pub(crate) fn noop_backend_unsupported_error(api: GitRunApi, operation: GitRunOperation) -> ExecutionError {
     ExecutionError::Unsupported { api, operation }
 }
 

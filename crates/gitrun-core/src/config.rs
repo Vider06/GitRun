@@ -1010,7 +1010,7 @@ fn value_u8(value: &Option<String>, key: &str, default: u8) -> Result<u8, Config
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns byte.is_ascii_digit()))]
-fn is_config_ascii_digit(byte: u8) -> bool {
+pub(crate) fn is_config_ascii_digit(byte: u8) -> bool {
     byte.is_ascii_digit()
 }
 
@@ -1110,7 +1110,7 @@ fn is_valid_docker_name(value: &str) -> bool {
         returns byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-')
     )
 )]
-fn is_repository_component_byte(byte: u8) -> bool {
+pub(crate) fn is_repository_component_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-')
 }
 

@@ -316,7 +316,7 @@ fn validate_vm_configs(configs: &[VmConfig]) -> Result<()> {
         returns nonempty && already_trimmed && !has_control && !has_path_separator
     )
 )]
-fn vm_name_shape_is_valid(
+pub(crate) fn vm_name_shape_is_valid(
     nonempty: bool,
     already_trimmed: bool,
     has_control: bool,
@@ -327,7 +327,7 @@ fn vm_name_shape_is_valid(
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns length > 0 && length <= 128))]
-fn snapshot_name_length_is_valid(length: usize) -> bool {
+pub(crate) fn snapshot_name_length_is_valid(length: usize) -> bool {
     length > 0 && length <= 128
 }
 

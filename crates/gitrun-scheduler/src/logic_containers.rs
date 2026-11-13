@@ -63,7 +63,7 @@ pub struct LogicRule {
         }
     )
 )]
-fn ascii_lowercase_label_byte(byte: u8) -> u8 {
+pub(crate) fn ascii_lowercase_label_byte(byte: u8) -> u8 {
     if byte.is_ascii_uppercase() {
         byte + 32
     } else {

@@ -87,7 +87,7 @@ fn decisions_dir(state_dir: &Path) -> PathBuf {
                 || byte == b'-'
     )
 )]
-fn decision_filename_byte_is_literal(byte: u8) -> bool {
+pub(crate) fn decision_filename_byte_is_literal(byte: u8) -> bool {
     byte.is_ascii_lowercase() || byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'-'
 }
 
@@ -102,7 +102,7 @@ fn decision_filename_byte_is_literal(byte: u8) -> bool {
         }
     )
 )]
-fn decision_filename_byte_code(byte: u8) -> u16 {
+pub(crate) fn decision_filename_byte_code(byte: u8) -> u16 {
     if decision_filename_byte_is_literal(byte) {
         byte as u16
     } else {

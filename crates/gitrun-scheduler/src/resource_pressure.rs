@@ -23,13 +23,13 @@ pub enum ResourcePressureError {
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns total > 0 && available <= total))]
-fn memory_measurement_is_valid(total: u64, available: u64) -> bool {
+pub(crate) fn memory_measurement_is_valid(total: u64, available: u64) -> bool {
     total > 0 && available <= total
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns available.saturating_sub(reserve)))]
-fn memory_after_host_reserve(available: u64, reserve: u64) -> u64 {
+pub(crate) fn memory_after_host_reserve(available: u64, reserve: u64) -> u64 {
     available.saturating_sub(reserve)
 }
 

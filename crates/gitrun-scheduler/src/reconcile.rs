@@ -179,7 +179,7 @@ fn job_needs_dedicated_runner(input: &ReconcileInput, index: usize, labels: &[St
 /// plus what's queued, clamped to [min, max]. Same formula as the Python
 /// original (`min(max, max(min, busy + queued))`).
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
-fn bounded_runner_target(busy: u32, queued: u32, minimum: u32, maximum: u32) -> u32 {
+pub(crate) fn bounded_runner_target(busy: u32, queued: u32, minimum: u32, maximum: u32) -> u32 {
     busy.saturating_add(queued)
         .min(maximum)
         .max(minimum.min(maximum))

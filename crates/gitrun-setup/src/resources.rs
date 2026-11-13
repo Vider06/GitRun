@@ -10,7 +10,7 @@ pub(crate) fn runner_dockerfile_for_bootstrap() -> Result<String, SetupError> {
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns source.contains("COPY Cargo.toml Cargo.lock ./") && source.contains("COPY crates ./crates")))]
-fn dockerfile_has_full_workspace_copy(source: &str) -> bool {
+pub(crate) fn dockerfile_has_full_workspace_copy(source: &str) -> bool {
     source.contains("COPY Cargo.toml Cargo.lock ./") && source.contains("COPY crates ./crates")
 }
 
@@ -19,7 +19,7 @@ fn dockerfile_has_full_workspace_copy(source: &str) -> bool {
     verus,
     verus_spec(returns source.contains("/bin/bash.gitrun-real"))
 )]
-fn dockerfile_uses_safe_bash_entrypoint(source: &str) -> bool {
+pub(crate) fn dockerfile_uses_safe_bash_entrypoint(source: &str) -> bool {
     source.contains("/bin/bash.gitrun-real")
 }
 
@@ -30,7 +30,7 @@ fn dockerfile_uses_safe_bash_entrypoint(source: &str) -> bool {
         returns !source.contains("COPY crates ./crates")
     )
 )]
-fn dockerfile_build_context_is_minimal(source: &str) -> bool {
+pub(crate) fn dockerfile_build_context_is_minimal(source: &str) -> bool {
     !source.contains("COPY crates ./crates")
 }
 

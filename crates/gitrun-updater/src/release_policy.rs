@@ -36,7 +36,7 @@ pub use super::policy_logic::{ReleaseType, UpdatePolicy};
         }
     )
 )]
-fn release_type_marker_code(value: &str) -> Option<u8> {
+pub(crate) fn release_type_marker_code(value: &str) -> Option<u8> {
     match value {
         "pre" => Some(0),
         "full" => Some(1),

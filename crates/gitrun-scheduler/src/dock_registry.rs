@@ -69,7 +69,7 @@ pub struct DockRegistry {
             && requester_present
     )
 )]
-fn dock_binding_identity_is_valid(
+pub(crate) fn dock_binding_identity_is_valid(
     repository_present: bool,
     run_id: u64,
     job_present: bool,

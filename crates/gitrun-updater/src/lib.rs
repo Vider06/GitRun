@@ -2705,7 +2705,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns byte.is_ascii_hexdigit()))]
-fn sha256_digest_byte_is_valid(byte: u8) -> bool {
+pub(crate) fn sha256_digest_byte_is_valid(byte: u8) -> bool {
     byte.is_ascii_hexdigit()
 }
 

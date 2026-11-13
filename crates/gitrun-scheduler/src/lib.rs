@@ -3385,7 +3385,7 @@ fn vault_env_for_repo(
         else { byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_' }
     )
 )]
-fn env_var_name_byte_is_valid(byte: u8, first: bool) -> bool {
+pub(crate) fn env_var_name_byte_is_valid(byte: u8, first: bool) -> bool {
     if first {
         byte.is_ascii_uppercase() || byte == b'_'
     } else {

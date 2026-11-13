@@ -137,7 +137,7 @@ impl UpdatePolicyChoice {
         }
     )
 )]
-fn update_policy_choice_code(value: &str) -> Option<u8> {
+pub(crate) fn update_policy_choice_code(value: &str) -> Option<u8> {
     match value {
         "security_only" => Some(0),
         "security_full" => Some(1),

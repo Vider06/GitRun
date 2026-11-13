@@ -809,7 +809,7 @@ pub struct WorkflowModel {
     verus,
     verus_spec(returns byte.is_ascii_digit() || (byte >= b'a' && byte <= b'f'))
 )]
-fn workload_id_byte_is_valid(byte: u8) -> bool {
+pub(crate) fn workload_id_byte_is_valid(byte: u8) -> bool {
     byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
 }
 

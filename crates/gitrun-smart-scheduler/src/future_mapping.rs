@@ -156,7 +156,7 @@ pub fn calculate_think_report(
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns p90.saturating_add(trend).min(100_000)))]
-fn bounded_peak_demand(p90: u32, trend: u32) -> u32 {
+pub(crate) fn bounded_peak_demand(p90: u32, trend: u32) -> u32 {
     p90.saturating_add(trend).min(100_000)
 }
 

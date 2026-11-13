@@ -243,7 +243,7 @@ fn is_interpreter_or_command_wrapper(name: &str) -> bool {
                 )
     )
 )]
-fn is_simple_command_byte(byte: u8) -> bool {
+pub(crate) fn is_simple_command_byte(byte: u8) -> bool {
     byte.is_ascii_lowercase()
         || byte.is_ascii_uppercase()
         || byte.is_ascii_digit()

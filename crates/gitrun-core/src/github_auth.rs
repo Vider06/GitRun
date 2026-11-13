@@ -117,7 +117,7 @@ fn read_env_file_value(path: &Path, wanted_key: &str) -> Result<String, GitHubAu
         returns (first == 34 && last == 34) || (first == 39 && last == 39)
     )
 )]
-fn has_matching_quote_bytes(first: u8, last: u8) -> bool {
+pub(crate) fn has_matching_quote_bytes(first: u8, last: u8) -> bool {
     (first == 34 && last == 34) || (first == 39 && last == 39)
 }
 

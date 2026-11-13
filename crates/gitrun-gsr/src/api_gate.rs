@@ -165,7 +165,7 @@ pub fn authorize(
     verus,
     verus_spec(returns api_enabled && operation_supported && policy_enabled)
 )]
-fn api_operation_authorized(
+pub(crate) fn api_operation_authorized(
     api_enabled: bool,
     operation_supported: bool,
     policy_enabled: bool,

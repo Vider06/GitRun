@@ -202,7 +202,7 @@ impl AppAuth {
 /// `gitrun-scheduler/src/main.rs`'s GTUU scheduler.
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns id > 0))]
-fn is_positive_github_id_value(id: u64) -> bool {
+pub(crate) fn is_positive_github_id_value(id: u64) -> bool {
     id > 0
 }
 

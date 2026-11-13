@@ -39,7 +39,7 @@ pub struct StateStore {
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns name == "health.json" || name == "last-crash"))]
-fn state_file_leaf_is_allowed(name: &str) -> bool {
+pub(crate) fn state_file_leaf_is_allowed(name: &str) -> bool {
     name == "health.json" || name == "last-crash"
 }
 

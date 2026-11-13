@@ -25,13 +25,13 @@ use std::os::unix::net::UnixStream;
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns !key_present))]
-fn argument_key_is_available(key_present: bool) -> bool {
+pub(crate) fn argument_key_is_available(key_present: bool) -> bool {
     !key_present
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns !operation_already_selected))]
-fn operation_slot_is_available(operation_already_selected: bool) -> bool {
+pub(crate) fn operation_slot_is_available(operation_already_selected: bool) -> bool {
     !operation_already_selected
 }
 

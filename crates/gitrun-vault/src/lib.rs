@@ -636,13 +636,13 @@ fn secret_associated_data(name: &str, scope: &Scope) -> Vec<u8> {
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns codepoint != 0 && codepoint != 1 && codepoint != 61))]
-fn secret_name_codepoint_is_allowed(codepoint: u32) -> bool {
+pub(crate) fn secret_name_codepoint_is_allowed(codepoint: u32) -> bool {
     codepoint != 0 && codepoint != 1 && codepoint != 61
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns codepoint != 1))]
-fn scope_component_codepoint_is_allowed(codepoint: u32) -> bool {
+pub(crate) fn scope_component_codepoint_is_allowed(codepoint: u32) -> bool {
     codepoint != 1
 }
 

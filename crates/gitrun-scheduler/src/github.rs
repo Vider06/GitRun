@@ -420,19 +420,19 @@ const MAX_API_ATTEMPTS: usize = 10;
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns attempts.clamp(1, MAX_API_ATTEMPTS)))]
-fn clamp_api_attempts(attempts: usize) -> usize {
+pub(crate) fn clamp_api_attempts(attempts: usize) -> usize {
     attempts.clamp(1, MAX_API_ATTEMPTS)
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns matches!(status, 408 | 500 | 502 | 503 | 504)))]
-fn retryable_http_status(status: u16) -> bool {
+pub(crate) fn retryable_http_status(status: u16) -> bool {
     matches!(status, 408 | 500 | 502 | 503 | 504)
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns 2u64.saturating_pow(attempt.saturating_sub(1) as u32).min(8)))]
-fn retry_delay_seconds(attempt: usize) -> u64 {
+pub(crate) fn retry_delay_seconds(attempt: usize) -> u64 {
     2_u64
         .saturating_pow(attempt.saturating_sub(1) as u32)
         .min(8)
@@ -443,7 +443,7 @@ fn retry_delay_seconds(attempt: usize) -> u64 {
     verus,
     verus_spec(returns reset_epoch.saturating_sub(now_epoch).max(1) as u64)
 )]
-fn rate_limit_reset_seconds(reset_epoch: i64, now_epoch: i64) -> u64 {
+pub(crate) fn rate_limit_reset_seconds(reset_epoch: i64, now_epoch: i64) -> u64 {
     reset_epoch.saturating_sub(now_epoch).max(1) as u64
 }
 

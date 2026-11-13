@@ -431,7 +431,7 @@ fn cat_allowed() -> bool {
         returns stdout_is_terminal && stderr_is_terminal && !no_cat && !ci && !term_is_dumb
     )
 )]
-fn cat_is_allowed(
+pub(crate) fn cat_is_allowed(
     stdout_is_terminal: bool,
     stderr_is_terminal: bool,
     no_cat: bool,

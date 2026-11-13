@@ -412,7 +412,7 @@ pub fn check_permanent_containers(
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns byte == b'/'))]
-fn registry_image_separator_byte(byte: u8) -> bool {
+pub(crate) fn registry_image_separator_byte(byte: u8) -> bool {
     byte == b'/'
 }
 

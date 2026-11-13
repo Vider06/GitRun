@@ -166,7 +166,7 @@ fn read_state_file(path: &Path) -> Result<Option<StateFile>, StateError> {
     verus,
     verus_spec(returns byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 )]
-fn repository_identity_byte_is_valid(byte: u8) -> bool {
+pub(crate) fn repository_identity_byte_is_valid(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
 }
 

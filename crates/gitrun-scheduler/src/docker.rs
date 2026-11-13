@@ -371,7 +371,7 @@ pub fn sanitize(value: &str, replacement: char) -> String {
     verus,
     verus_spec(returns matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 )]
-fn valid_workload_routing_byte(byte: u8) -> bool {
+pub(crate) fn valid_workload_routing_byte(byte: u8) -> bool {
     matches!(byte, b'0'..=b'9' | b'a'..=b'f')
 }
 

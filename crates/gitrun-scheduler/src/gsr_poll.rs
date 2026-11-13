@@ -237,13 +237,13 @@ impl BanStore {
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns now.saturating_add(duration_seconds)))]
-fn ban_expiry_timestamp(now: u64, duration_seconds: u64) -> u64 {
+pub(crate) fn ban_expiry_timestamp(now: u64, duration_seconds: u64) -> u64 {
     now.saturating_add(duration_seconds)
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns until > now))]
-fn ban_is_active(until: u64, now: u64) -> bool {
+pub(crate) fn ban_is_active(until: u64, now: u64) -> bool {
     until > now
 }
 

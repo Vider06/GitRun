@@ -35,7 +35,7 @@ pub enum CompatibilityStatus {
         }
     )
 )]
-fn aggregate_compatibility_status(
+pub(crate) fn aggregate_compatibility_status(
     has_incompatible: bool,
     has_warning: bool,
 ) -> CompatibilityStatus {

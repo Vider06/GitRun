@@ -880,7 +880,9 @@ mod kani_verification {
         assert_eq!(ban_is_active(until, now), until > now);
         assert!(!ban_is_active(now, now));
         assert!(!ban_is_active(now.saturating_sub(1), now));
-        assert!(ban_is_active(now.saturating_add(1), now));
+        if let Some(next) = now.checked_add(1) {
+            assert!(ban_is_active(next, now));
+        }
     }
 }
 

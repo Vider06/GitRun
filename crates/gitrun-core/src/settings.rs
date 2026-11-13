@@ -347,7 +347,10 @@ pub struct ApiPolicyOverride {
     verus,
     verus_spec(returns globally_enabled && override_enabled.unwrap_or(globally_enabled))
 )]
-pub(crate) fn repository_api_enabled(globally_enabled: bool, override_enabled: Option<bool>) -> bool {
+pub(crate) fn repository_api_enabled(
+    globally_enabled: bool,
+    override_enabled: Option<bool>,
+) -> bool {
     globally_enabled && override_enabled.unwrap_or(globally_enabled)
 }
 

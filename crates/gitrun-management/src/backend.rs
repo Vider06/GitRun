@@ -39,7 +39,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager};
 
 #[path = "control_manager.rs"]
-#[cfg(not(any(kani, verus)))]
 mod control_manager;
 #[path = "updater.rs"]
 #[cfg(not(any(kani, verus)))]

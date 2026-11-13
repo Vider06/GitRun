@@ -19,7 +19,6 @@ use thiserror::Error;
 
 pub mod policy_logic;
 pub mod release_policy;
-#[cfg(not(any(kani, verus)))]
 pub mod state;
 #[cfg(not(any(kani, verus)))]
 pub use release_policy::{

@@ -1,21 +1,21 @@
 #[cfg(not(any(kani, verus)))]
 pub mod api_service;
-#pub mod backoff;
-#pub mod dock_registry;
-#pub mod docker;
-#pub mod github;
+pub mod backoff;
+pub mod dock_registry;
+pub mod docker;
+pub mod github;
 #[cfg(not(any(kani, verus)))]
 pub mod gsr_bridge;
-#pub mod gsr_poll;
-#pub mod gtuu;
+pub mod gsr_poll;
+pub mod gtuu;
 #[cfg(not(any(kani, verus)))]
 pub mod gtuu_startup;
-#pub mod logic_containers;
-#pub mod reconcile;
-#pub mod resource_pressure;
-#pub mod state;
-#pub mod vm;
-#pub mod vm_resolution;
+pub mod logic_containers;
+pub mod reconcile;
+pub mod resource_pressure;
+pub mod state;
+pub mod vm;
+pub mod vm_resolution;
 
 #[cfg(not(any(kani, verus)))]
 pub use backoff::RateLimitTracker;

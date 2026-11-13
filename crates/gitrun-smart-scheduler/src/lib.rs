@@ -5,8 +5,8 @@
 //! unavailable, or in shadow mode. This crate emits only a bounded runner-floor
 //! recommendation; it has no GitHub, Docker, shell, secret-store, or GSR authority.
 
-#pub mod future_mapping;
-#pub mod queueing;
+pub mod future_mapping;
+pub mod queueing;
 
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};

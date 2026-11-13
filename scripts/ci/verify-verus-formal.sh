@@ -185,6 +185,9 @@ echo "Verifying the standalone CLI presenter proof."
 run_verus_target "crates/gitrun-cli/src/presenter.rs" \
   "crates/gitrun-cli/src/presenter.rs"
 
+run_verus_target "verification/kani/updater_policy.rs" \
+  "verification/kani/updater_policy.rs"
+
 declare -a package_order=()
 declare -A package_seen=()
 for source in "${production_sources[@]}"; do

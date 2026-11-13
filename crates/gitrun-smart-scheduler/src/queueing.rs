@@ -22,6 +22,7 @@ const MAX_RUNNERS: u32 = 10_000;
     verus,
     verus_spec(returns bounded_growth_upper(current_floor, max_additional_runners, max_runners))
 )]
+/// Crate-visible for the generated Verus dual specification; not a public API.
 pub(crate) fn bounded_growth_upper(
     current_floor: u32,
     max_additional_runners: u32,

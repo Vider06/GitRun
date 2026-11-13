@@ -42,6 +42,7 @@ const MAX_COOLDOWN: Duration = Duration::from_secs(MAX_COOLDOWN_SECONDS);
     verus,
     verus_spec(returns cap_cooldown_seconds(seconds))
 )]
+/// Crate-visible for the generated Verus dual specification; not a public API.
 pub(crate) fn cap_cooldown_seconds(seconds: u64) -> u64 {
     seconds.min(MAX_COOLDOWN_SECONDS)
 }

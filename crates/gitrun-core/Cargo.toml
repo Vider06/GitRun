@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "Rust core primitives for GitRun"
 
 [dependencies]
+vstd = "=0.0.0-2026-11-01-0251"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -16,3 +17,6 @@ jsonwebtoken = { version = "11.1.0", features = ["aws_lc_rs"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(verus)'] }
+
+[package.metadata.verus]
+verify = true

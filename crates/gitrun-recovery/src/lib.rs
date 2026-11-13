@@ -1,4 +1,3 @@
-#[cfg(not(any(kani, verus)))]
 pub mod json_recovery;
 #[cfg(feature = "desktop")]
 #[cfg(not(any(kani, verus)))]

@@ -15,7 +15,6 @@ use thiserror::Error;
 
 #[cfg(not(any(kani, verus)))]
 pub mod ipc;
-#[cfg(not(any(kani, verus)))]
 pub mod protocol;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

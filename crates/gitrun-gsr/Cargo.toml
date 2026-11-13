@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "GSR (GitSecureRun): external watchdog + hardening layer for GitRun's runner processes"
 
 [dependencies]
+vstd = "=0.0.0-2026-11-01-0251"
 gitrun-core = { path = "../gitrun-core" }
 gitrun-platform = { path = "../gitrun-platform" }
 gitrun-exe = { path = "../gitrun-exe" }
@@ -30,3 +31,6 @@ path = "src/bin/gitrun-api.rs"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(verus)'] }
+
+[package.metadata.verus]
+verify = true

@@ -26,6 +26,12 @@ else
   exit 1
 fi
 chmod +x "$root/installed/verus"
+if [[ ! -f "$root/installed/cargo-verus" ]]; then
+  echo "Verus archive is missing its cargo-verus integration binary." >&2
+  exit 1
+fi
+chmod +x "$root/installed/cargo-verus"
+"$root/installed/cargo-verus" --help >/dev/null
 echo "$root/installed" >> "$GITHUB_PATH"
 echo "VERUS_PATH=$root/installed/verus" >> "$GITHUB_ENV"
 "$root/installed/verus" --version

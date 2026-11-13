@@ -1,33 +1,21 @@
 #[cfg(not(any(kani, verus)))]
 pub mod api_service;
-#[cfg(not(any(kani, verus)))]
-pub mod backoff;
-#[cfg(not(any(kani, verus)))]
-pub mod dock_registry;
-#[cfg(not(any(kani, verus)))]
-pub mod docker;
-#[cfg(not(any(kani, verus)))]
-pub mod github;
+#pub mod backoff;
+#pub mod dock_registry;
+#pub mod docker;
+#pub mod github;
 #[cfg(not(any(kani, verus)))]
 pub mod gsr_bridge;
-#[cfg(not(any(kani, verus)))]
-pub mod gsr_poll;
-#[cfg(not(any(kani, verus)))]
-pub mod gtuu;
+#pub mod gsr_poll;
+#pub mod gtuu;
 #[cfg(not(any(kani, verus)))]
 pub mod gtuu_startup;
-#[cfg(not(any(kani, verus)))]
-pub mod logic_containers;
-#[cfg(not(any(kani, verus)))]
-pub mod reconcile;
-#[cfg(not(any(kani, verus)))]
-pub mod resource_pressure;
-#[cfg(not(any(kani, verus)))]
-pub mod state;
-#[cfg(not(any(kani, verus)))]
-pub mod vm;
-#[cfg(not(any(kani, verus)))]
-pub mod vm_resolution;
+#pub mod logic_containers;
+#pub mod reconcile;
+#pub mod resource_pressure;
+#pub mod state;
+#pub mod vm;
+#pub mod vm_resolution;
 
 #[cfg(not(any(kani, verus)))]
 pub use backoff::RateLimitTracker;

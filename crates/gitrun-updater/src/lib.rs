@@ -17,10 +17,8 @@ use std::{
 #[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
-#[cfg(not(any(kani, verus)))]
-pub mod policy_logic;
-#[cfg(not(any(kani, verus)))]
-pub mod release_policy;
+#pub mod policy_logic;
+#pub mod release_policy;
 #[cfg(not(any(kani, verus)))]
 pub mod state;
 #[cfg(not(any(kani, verus)))]

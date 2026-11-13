@@ -6,6 +6,7 @@ license = "Apache-2.0"
 description = "GitRun autoscaler: reconciles desired vs actual runner containers against GitHub Actions and Docker"
 
 [dependencies]
+vstd = "=0.0.0-2026-11-01-0251"
 gitrun-core = { path = "../gitrun-core" }
 gitrun-platform = { path = "../gitrun-platform" }
 gitrun-smart-scheduler = { path = "../gitrun-smart-scheduler" }
@@ -36,3 +37,6 @@ filetime = "0.2"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(verus)'] }
+
+[package.metadata.verus]
+verify = true

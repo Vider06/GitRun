@@ -10,6 +10,7 @@ default = []
 desktop = ["dep:tauri"]
 
 [dependencies]
+vstd = "=0.0.0-2026-11-01-0251"
 gitrun-core = { path = "../gitrun-core" }
 gitrun-scheduler = { path = "../gitrun-scheduler" }
 gitrun-setup = { path = "../gitrun-setup" }
@@ -26,3 +27,6 @@ tauri = { version = "2", optional = true, features = [] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(verus)'] }
+
+[package.metadata.verus]
+verify = true

@@ -15,7 +15,6 @@ use std::{
 #[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
-#[cfg(not(any(kani, verus)))]
 mod resources;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

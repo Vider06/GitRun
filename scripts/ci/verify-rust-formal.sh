@@ -114,6 +114,21 @@ run_kani_target() {
   return 0
 }
 
+run_kani_binary() {
+  local package="$1"
+  local binary="$2"
+  local source="$3"
+  if cargo --locked kani -p "$package" --bin "$binary"; then
+    record_result "$source" PROVEN
+  else
+    local rc=$?
+    proof_failures=$((proof_failures + 1))
+    record_result "$source" FAILED
+    echo "Kani binary verification failed: $package/$binary (exit $rc)." >&2
+  fi
+  return 0
+}
+
 run_kani_package() {
   local package="$1"
   shift
@@ -314,6 +329,9 @@ run_kani_target "$policy_harness" \
 run_kani_target "crates/gitrun-cli/src/presenter.rs" \
   "crates/gitrun-cli/src/presenter.rs"
 
+# Verify the GSR API binary separately from its library proof scopes.
+run_kani_binary "gitrun-gsr" "gitrun-api" "crates/gitrun-gsr/src/bin/gitrun-api.rs"
+
 # Verify each proof-bearing crate through Cargo so Kani receives the
 # package edition, dependency graph, and cfg(kani) context. A direct
 # `kani path/to/module.rs` invocation compiles that module as an isolated
@@ -324,6 +342,9 @@ declare -A package_seen=()
 for source in "${proof_sources[@]}"; do
   package="${source#crates/}"
   package="${package%%/*}"
+  if [[ "$package" == "gitrun-cli" ]]; then
+    continue
+  fi
   if [[ -z "${package_seen[$package]:-}" ]]; then
     package_seen[$package]=1
     package_order+=("$package")
@@ -333,7 +354,7 @@ done
 for package in "${package_order[@]}"; do
   package_sources=()
   for source in "${proof_sources[@]}"; do
-    if [[ "$source" == "crates/$package/"* ]]; then
+    if [[ "$source" == "crates/$package/"* && "$source" != "crates/gitrun-gsr/src/bin/gitrun-api.rs" ]]; then
       package_sources+=("$source")
     fi
   done

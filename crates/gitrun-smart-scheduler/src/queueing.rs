@@ -22,7 +22,11 @@ const MAX_RUNNERS: u32 = 10_000;
     verus,
     verus_spec(returns bounded_growth_upper(current_floor, max_additional_runners, max_runners))
 )]
-pub(crate) fn bounded_growth_upper(current_floor: u32, max_additional_runners: u32, max_runners: u32) -> u32 {
+pub(crate) fn bounded_growth_upper(
+    current_floor: u32,
+    max_additional_runners: u32,
+    max_runners: u32,
+) -> u32 {
     current_floor
         .saturating_add(max_additional_runners)
         .min(max_runners)

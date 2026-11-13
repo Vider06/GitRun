@@ -61,6 +61,8 @@ record_result() {
   printf '%s\t%s\n' "$source" "$status" >> "$results"
 }
 
+proof_failures=0
+
 run_verus_target() {
   local entrypoint="$1"
   shift
@@ -72,11 +74,13 @@ run_verus_target() {
     done
   else
     local rc=$?
+    proof_failures=$((proof_failures + 1))
     for source in "${sources[@]}"; do
       record_result "$source" FAILED
     done
-    return "$rc"
+    echo "Verus target failed: $entrypoint (exit $rc); continuing to inspect remaining production proof targets." >&2
   fi
+  return 0
 }
 
 finish_verus_report() {
@@ -150,5 +154,10 @@ for source in "${production_sources[@]}"; do
   echo "Verifying production invariants in $source."
   run_verus_target "$source" "$source"
 done
+
+if [ "$proof_failures" -ne 0 ]; then
+  echo "Verus found $proof_failures failing production proof target(s); see the per-source diagnostics above." >&2
+  exit 1
+fi
 
 phase=complete

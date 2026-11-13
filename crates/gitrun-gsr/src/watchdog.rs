@@ -24,7 +24,7 @@ use vstd::prelude::*;
     verus,
     verus_spec(returns pid_is_representable(pid))
 )]
-const fn pid_is_representable(pid: u32) -> bool {
+pub const fn pid_is_representable(pid: u32) -> bool {
     pid > 0 && pid <= 2_147_483_647
 }
 

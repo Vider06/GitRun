@@ -412,7 +412,9 @@ pub struct GitHubClient {
 /// overall request so a slow-to-connect network (bad DNS, dead route) fails
 /// fast without also capping how long a legitimately large paginated
 /// response (many queued jobs across many runs) is allowed to take.
+#[cfg(not(any(kani, verus)))]
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(not(any(kani, verus)))]
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
 const DEFAULT_API_ATTEMPTS: usize = 3;

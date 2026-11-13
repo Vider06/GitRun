@@ -12,19 +12,29 @@
 //! Writes are serialized per VM and committed through a temporary file plus
 //! rename, so readers never observe a partially written JSON document.
 
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::fs;
+#[cfg(not(any(kani, verus)))]
 use std::path::{Path, PathBuf};
+#[cfg(not(any(kani, verus)))]
 use std::thread;
+#[cfg(not(any(kani, verus)))]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
+#[cfg(not(any(kani, verus)))]
 const LOCK_WAIT: Duration = Duration::from_millis(20);
+#[cfg(not(any(kani, verus)))]
 const LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(not(target_os = "linux"))]
+#[cfg(not(any(kani, verus)))]
 const STALE_LOCK_AGE: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum DecisionError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -32,16 +42,19 @@ pub enum DecisionError {
     Decode(#[from] serde_json::Error),
 }
 
+#[cfg(not(any(kani, verus)))]
 pub type Result<T> = std::result::Result<T, DecisionError>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg(not(any(kani, verus)))]
 pub enum DecisionChoice {
     RetryKvm,
     UseVirtualBox,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct PendingDecision {
     pub vm_name: String,
     pub error: String,
@@ -50,6 +63,7 @@ pub struct PendingDecision {
     pub responded_at: Option<u64>,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -57,15 +71,51 @@ fn now() -> u64 {
         .unwrap_or(0)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn decisions_dir(state_dir: &Path) -> PathBuf {
     state_dir.join("hypervisor-decisions")
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_uppercase()
+                || byte.is_ascii_digit()
+                || byte == b'-'
+    )
+)]
+pub(crate) fn decision_filename_byte_is_literal(byte: u8) -> bool {
+    byte.is_ascii_lowercase() || byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'-'
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns if decision_filename_byte_is_literal(byte) {
+            byte as u16
+        } else {
+            256 + byte as u16
+        }
+    )
+)]
+pub(crate) fn decision_filename_byte_code(byte: u8) -> u16 {
+    if decision_filename_byte_is_literal(byte) {
+        byte as u16
+    } else {
+        256 + byte as u16
+    }
+}
+
+#[cfg(not(any(kani, verus)))]
 fn decision_filename(vm_name: &str) -> String {
     let mut encoded = String::new();
     for byte in vm_name.bytes() {
-        if byte.is_ascii_alphanumeric() || byte == b'-' {
-            encoded.push(byte as char);
+        if decision_filename_byte_is_literal(byte) {
+            encoded.push(decision_filename_byte_code(byte) as u8 as char);
         } else {
             encoded.push_str(&format!("_{byte:02x}"));
         }
@@ -76,14 +126,17 @@ fn decision_filename(vm_name: &str) -> String {
     format!("{encoded}.json")
 }
 
+#[cfg(not(any(kani, verus)))]
 fn decision_path(state_dir: &Path, vm_name: &str) -> PathBuf {
     decisions_dir(state_dir).join(decision_filename(vm_name))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn lock_path(state_dir: &Path, vm_name: &str) -> PathBuf {
     decision_path(state_dir, vm_name).with_extension("lock")
 }
 
+#[cfg(not(any(kani, verus)))]
 struct DecisionLock {
     #[cfg(target_os = "linux")]
     _file: fs::File,
@@ -91,6 +144,7 @@ struct DecisionLock {
     path: PathBuf,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Drop for DecisionLock {
     fn drop(&mut self) {
         // Linux releases flock automatically when the descriptor closes. Do
@@ -111,6 +165,7 @@ extern "C" {
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn acquire_lock(state_dir: &Path, vm_name: &str) -> Result<DecisionLock> {
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::OpenOptionsExt;
@@ -180,6 +235,7 @@ fn acquire_lock(state_dir: &Path, vm_name: &str) -> Result<DecisionLock> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn write_record(path: &Path, record: &PendingDecision) -> Result<()> {
     use std::io::Write;
 
@@ -229,6 +285,7 @@ fn write_record(path: &Path, record: &PendingDecision) -> Result<()> {
 }
 
 // Atomic lock/record handling keeps dashboard responses durable across process boundaries.
+#[cfg(not(any(kani, verus)))]
 pub fn request(state_dir: &Path, vm_name: &str, error: &str) -> Result<()> {
     let dir = decisions_dir(state_dir);
     fs::create_dir_all(&dir)?;
@@ -245,6 +302,7 @@ pub fn request(state_dir: &Path, vm_name: &str, error: &str) -> Result<()> {
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn respond(state_dir: &Path, vm_name: &str, choice: DecisionChoice) -> Result<()> {
     let _lock = acquire_lock(state_dir, vm_name)?;
     let path = decision_path(state_dir, vm_name);
@@ -254,6 +312,7 @@ pub fn respond(state_dir: &Path, vm_name: &str, choice: DecisionChoice) -> Resul
     write_record(&path, &record)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn poll(state_dir: &Path, vm_name: &str) -> Result<Option<PendingDecision>> {
     match fs::read_to_string(decision_path(state_dir, vm_name)) {
         Ok(raw) => Ok(Some(serde_json::from_str(&raw)?)),
@@ -262,6 +321,7 @@ pub fn poll(state_dir: &Path, vm_name: &str) -> Result<Option<PendingDecision>> 
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn clear(state_dir: &Path, vm_name: &str) -> Result<()> {
     let _lock = acquire_lock(state_dir, vm_name)?;
     match fs::remove_file(decision_path(state_dir, vm_name)) {
@@ -271,6 +331,7 @@ pub fn clear(state_dir: &Path, vm_name: &str) -> Result<()> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn list_pending(state_dir: &Path) -> Result<Vec<PendingDecision>> {
     let dir = decisions_dir(state_dir);
     let entries = match fs::read_dir(&dir) {
@@ -393,3 +454,95 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{decision_filename_byte_code, decision_filename_byte_is_literal};
+
+    /// Proves that the per-byte filename code is injective over the full u8 domain.
+    #[kani::proof]
+    fn decision_filename_byte_code_is_injective() {
+        let left: u8 = kani::any();
+        let right: u8 = kani::any();
+        if decision_filename_byte_code(left) == decision_filename_byte_code(right) {
+            assert_eq!(left, right);
+        }
+    }
+
+    /// Literal output is restricted to the safe ASCII filename alphabet.
+    #[kani::proof]
+    fn decision_filename_literal_alphabet_is_closed() {
+        let byte: u8 = kani::any();
+        assert_eq!(
+            decision_filename_byte_is_literal(byte),
+            decision_filename_byte_code(byte) <= u8::MAX as u16
+        );
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{decision_filename_byte_code, decision_filename_byte_is_literal};
+    use vstd::prelude::*;
+
+    verus! {
+        /// Proves that two equal per-byte codes came from the same original byte.
+        proof fn decision_filename_byte_code_is_injective(left: u8, right: u8)
+            requires
+                decision_filename_byte_code(left) == decision_filename_byte_code(right),
+            ensures
+                left == right,
+        {
+            if decision_filename_byte_is_literal(left) {
+                if decision_filename_byte_is_literal(right) {
+                    assert(decision_filename_byte_code(left) == left as u16);
+                    assert(decision_filename_byte_code(right) == right as u16);
+                    assert(left as u16 == right as u16);
+                    assert(left == right) by (bit_vector);
+                } else {
+                    assert(decision_filename_byte_code(left) < 256);
+                    assert(decision_filename_byte_code(right) >= 256);
+                    assert(false);
+                }
+            } else {
+                if decision_filename_byte_is_literal(right) {
+                    assert(decision_filename_byte_code(left) >= 256);
+                    assert(decision_filename_byte_code(right) < 256);
+                    assert(false);
+                } else {
+                    assert(
+                        decision_filename_byte_code(left)
+                            == 256 + left as u16
+                    );
+                    assert(
+                        decision_filename_byte_code(right)
+                            == 256 + right as u16
+                    );
+                    assert(left as u16 == right as u16);
+                    assert(left == right) by (bit_vector);
+                }
+            }
+        }
+
+        /// The raw/literal branch and escaped branch occupy disjoint code ranges.
+        proof fn decision_filename_literal_alphabet_is_closed(byte: u8)
+            ensures
+                decision_filename_byte_is_literal(byte)
+                    == (decision_filename_byte_code(byte) <= u8::MAX as u16),
+        {
+            if decision_filename_byte_is_literal(byte) {
+                assert(decision_filename_byte_code(byte) == byte as u16);
+                assert(byte as u16 <= u8::MAX as u16);
+            } else {
+                assert(decision_filename_byte_code(byte) == 256 + byte as u16);
+                assert(decision_filename_byte_code(byte) > u8::MAX as u16);
+            }
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

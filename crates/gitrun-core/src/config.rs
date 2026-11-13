@@ -1,8 +1,12 @@
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::{env, fs, io::Read, path::Path};
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum ConfigError {
     #[error("unable to read configuration: {0}")]
     Io(#[from] std::io::Error),
@@ -17,6 +21,7 @@ pub enum ConfigError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct Config {
     pub repositories: Vec<String>,
     /// Host sizing profile: standard, small, or large.
@@ -192,6 +197,7 @@ pub struct Config {
     pub gsr_zizmor_license_accepted: bool,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -252,6 +258,7 @@ impl Default for Config {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Config {
     /// Reads configuration from the real process environment. Passes
     /// through every `GITRUN_`-prefixed variable rather than an explicit
@@ -887,6 +894,7 @@ impl Config {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_time(value: &str) -> Result<(), ConfigError> {
     let bytes = value.as_bytes();
     if bytes.len() != 5
@@ -908,6 +916,7 @@ fn validate_time(value: &str) -> Result<(), ConfigError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_single_line(key: &str, value: &str) -> Result<(), ConfigError> {
     if value.contains('\n') || value.contains('\r') {
         return Err(ConfigError::Invalid(format!(
@@ -920,6 +929,7 @@ fn validate_single_line(key: &str, value: &str) -> Result<(), ConfigError> {
 /// Accept rooted POSIX paths and fully-qualified Windows drive/UNC paths
 /// regardless of the host compiling this crate; configuration can describe a
 /// different runner/host platform than the one running unit tests.
+#[cfg(not(any(kani, verus)))]
 fn is_absolute_filesystem_path(value: &str) -> bool {
     let path = Path::new(value);
     path.is_absolute()
@@ -934,6 +944,7 @@ fn is_absolute_filesystem_path(value: &str) -> bool {
 /// Validate every filesystem used by resource-pressure backpressure. Reject
 /// malformed entries at startup instead of accepting a partial list and
 /// discovering a bad path only when the scheduler samples host pressure.
+#[cfg(not(any(kani, verus)))]
 fn validate_resource_pressure_paths(value: &str) -> Result<(), ConfigError> {
     let paths: Vec<&str> = value.split(';').map(str::trim).collect();
     if paths.is_empty() || paths.iter().any(|path| path.is_empty()) {
@@ -957,6 +968,7 @@ fn validate_resource_pressure_paths(value: &str) -> Result<(), ConfigError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn parse_repositories(raw: &str) -> Result<Vec<String>, ConfigError> {
     let mut repositories = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -977,6 +989,7 @@ fn parse_repositories(raw: &str) -> Result<Vec<String>, ConfigError> {
 /// Used for `gsr_command_blacklist`/`gsr_command_whitelist` — same shape as
 /// `parse_repositories` above but without the repo-format check, since
 /// these are free-form substrings rather than `owner/repo` pairs.
+#[cfg(not(any(kani, verus)))]
 fn split_csv(raw: &str) -> Vec<String> {
     raw.split(',')
         .map(str::trim)
@@ -984,6 +997,7 @@ fn split_csv(raw: &str) -> Vec<String> {
         .map(str::to_owned)
         .collect()
 }
+#[cfg(not(any(kani, verus)))]
 fn value_u8(value: &Option<String>, key: &str, default: u8) -> Result<u8, ConfigError> {
     match value {
         Some(raw) => raw.trim().parse::<u8>().map_err(|_| ConfigError::Integer {
@@ -994,16 +1008,42 @@ fn value_u8(value: &Option<String>, key: &str, default: u8) -> Result<u8, Config
     }
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns byte.is_ascii_digit()))]
+pub(crate) fn is_config_ascii_digit(byte: u8) -> bool {
+    byte.is_ascii_digit()
+}
+
 fn is_positive_decimal_integer(value: &str) -> bool {
-    !value.is_empty()
-        && value.bytes().all(|byte| byte.is_ascii_digit())
-        && value.parse::<u64>().is_ok_and(|number| number > 0)
+    if value.is_empty() {
+        return false;
+    }
+
+    let mut number = 0_u64;
+    for byte in value.bytes() {
+        if !is_config_ascii_digit(byte) {
+            return false;
+        }
+        let Some(next) = number
+            .checked_mul(10)
+            .and_then(|current| current.checked_add(u64::from(byte - b'0')))
+        else {
+            return false;
+        };
+        number = next;
+    }
+
+    number > 0
 }
 
 fn is_positive_u64(value: &str) -> bool {
-    value.trim().parse::<u64>().map(|n| n > 0).unwrap_or(false)
+    // Keep the legacy surrounding-whitespace behavior without delegating to
+    // FromStr (whose parser pulls in an unnecessarily expensive proof path).
+    let value = value.trim_matches(char::is_whitespace);
+    is_positive_decimal_integer(value)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_positive_decimal(value: &str) -> bool {
     let value = value.trim();
     if value.is_empty() || value.starts_with('.') || value.ends_with('.') {
@@ -1030,6 +1070,7 @@ fn is_positive_decimal(value: &str) -> bool {
             .unwrap_or(false)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_positive_docker_size(value: &str) -> bool {
     let value = value.trim();
     if value.is_empty() {
@@ -1049,6 +1090,7 @@ fn is_positive_docker_size(value: &str) -> bool {
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_valid_docker_name(value: &str) -> bool {
     let value = value.trim();
     !value.is_empty()
@@ -1061,22 +1103,45 @@ fn is_valid_docker_name(value: &str) -> bool {
             .is_some_and(|c| c.is_ascii_alphanumeric())
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-')
+    )
+)]
+pub(crate) fn is_repository_component_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-')
+}
+
+fn valid_repository_component(part: &str) -> bool {
+    !part.is_empty()
+        && !matches!(part, "." | "..")
+        && part.bytes().all(is_repository_component_byte)
+}
+
 fn is_repository(value: &str) -> bool {
-    fn valid_component(part: &str) -> bool {
-        !part.is_empty()
-            && !matches!(part, "." | "..")
-            && part
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
+    // Scan bytes directly: str::split('/') routes through the standard
+    // pattern-search implementation, which is costly for this Kani harness.
+    let bytes = value.as_bytes();
+    let mut separator = None;
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte == b'/' {
+            if separator.is_some() {
+                return false;
+            }
+            separator = Some(index);
+        }
     }
 
-    let mut parts = value.split('/');
-    matches!(
-        (parts.next(), parts.next(), parts.next()),
-        (Some(owner), Some(repo), None)
-            if valid_component(owner) && valid_component(repo)
-    )
+    let Some(separator) = separator else {
+        return false;
+    };
+    let owner = &value[..separator];
+    let repository = &value[separator + 1..];
+    valid_repository_component(owner) && valid_repository_component(repository)
 }
+#[cfg(not(any(kani, verus)))]
 fn value_u32(value: &Option<String>, key: &str, default: u32) -> Result<u32, ConfigError> {
     match value {
         Some(v) => v.trim().parse().map_err(|_| ConfigError::Integer {
@@ -1086,6 +1151,7 @@ fn value_u32(value: &Option<String>, key: &str, default: u32) -> Result<u32, Con
         None => Ok(default),
     }
 }
+#[cfg(not(any(kani, verus)))]
 fn value_u64(value: &Option<String>, key: &str, default: u64) -> Result<u64, ConfigError> {
     match value {
         Some(v) => v.trim().parse().map_err(|_| ConfigError::Integer {
@@ -1095,6 +1161,7 @@ fn value_u64(value: &Option<String>, key: &str, default: u64) -> Result<u64, Con
         None => Ok(default),
     }
 }
+#[cfg(not(any(kani, verus)))]
 fn parse_bool(key: &str, value: &str) -> Result<bool, ConfigError> {
     match value.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Ok(true),
@@ -1105,6 +1172,7 @@ fn parse_bool(key: &str, value: &str) -> Result<bool, ConfigError> {
         }),
     }
 }
+#[cfg(not(any(kani, verus)))]
 fn unquote(value: &str) -> String {
     if value.len() >= 2 {
         let b = value.as_bytes();
@@ -1569,3 +1637,86 @@ mod tests {
         assert!(config.validate().is_ok());
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{
+        is_config_ascii_digit, is_positive_decimal_integer, is_positive_u64, is_repository,
+        is_repository_component_byte, valid_repository_component,
+    };
+
+    #[kani::proof]
+    fn ascii_digit_classifier_is_exact() {
+        let byte: u8 = kani::any();
+        assert_eq!(is_config_ascii_digit(byte), byte.is_ascii_digit());
+    }
+
+    #[kani::proof]
+    fn repository_component_byte_alphabet_is_exact() {
+        let byte: u8 = kani::any();
+        let expected = byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-');
+        assert_eq!(is_repository_component_byte(byte), expected);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(32)]
+    fn config_id_and_repository_boundaries_are_exact() {
+        assert!(is_positive_decimal_integer("1"));
+        assert!(is_positive_decimal_integer("0001"));
+        assert!(is_positive_decimal_integer("18446744073709551615"));
+        assert!(!is_positive_decimal_integer(""));
+        assert!(!is_positive_decimal_integer("0"));
+        assert!(!is_positive_decimal_integer("0000"));
+        assert!(!is_positive_decimal_integer("+1"));
+        assert!(!is_positive_decimal_integer("-1"));
+        assert!(!is_positive_decimal_integer("1 "));
+        assert!(!is_positive_decimal_integer("18446744073709551616"));
+        assert!(is_positive_u64(" 1 "));
+        assert!(is_positive_u64("\t0001\n"));
+        assert!(!is_positive_u64("0"));
+        assert!(!is_positive_u64(" 0 "));
+        assert!(!is_positive_u64("+1"));
+        assert!(!is_positive_u64("18446744073709551616"));
+        assert!(valid_repository_component("owner"));
+        assert!(valid_repository_component("repo.name_1"));
+        assert!(!valid_repository_component(""));
+        assert!(!valid_repository_component("."));
+        assert!(!valid_repository_component(".."));
+        assert!(!valid_repository_component("owner/repo"));
+        assert!(is_repository("owner/repo"));
+        assert!(is_repository("owner/repo.name_1"));
+        assert!(!is_repository(""));
+        assert!(!is_repository("owner"));
+        assert!(!is_repository("/repo"));
+        assert!(!is_repository("owner/"));
+        assert!(!is_repository("owner/repo/extra"));
+        assert!(!is_repository("../repo"));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{is_config_ascii_digit, is_repository_component_byte};
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn ascii_digit_classifier_is_exact(byte: u8)
+            ensures
+                is_config_ascii_digit(byte) == byte.is_ascii_digit(),
+        {
+        }
+
+        proof fn repository_component_byte_alphabet_is_exact(byte: u8)
+            ensures
+                is_repository_component_byte(byte)
+                    == (byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-')),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

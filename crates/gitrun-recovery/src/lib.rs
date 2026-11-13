@@ -1,31 +1,49 @@
 pub mod json_recovery;
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 pub mod ui;
+#[cfg(not(any(kani, verus)))]
 pub use json_recovery::{
     run_json_recovery_action, run_json_recovery_root_action, JsonRecoveryAction, JsonRecoveryReport,
 };
 
+#[cfg(not(any(kani, verus)))]
 use gitrun_core::{Config, StateError, StateStore};
+#[cfg(not(any(kani, verus)))]
 use gitrun_setup::InstallationState;
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
 };
 
+#[cfg(not(any(kani, verus)))]
 const SYSTEMD_UNIT: &str = include_str!("../../../systemd/gitrun.service");
+#[cfg(not(any(kani, verus)))]
 const GSR_SYSTEMD_UNIT: &str = include_str!("../../../systemd/gitrun-gsr.service");
+#[cfg(not(any(kani, verus)))]
 const CONTROL_SYSTEMD_UNIT: &str = include_str!("../../../systemd/gitrun-control.service");
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(any(kani, verus)), derive(Serialize, Deserialize))]
+#[cfg_attr(verus, verus_verify)]
 pub enum Severity {
     Info,
     Warning,
     Critical,
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns severity == Severity::Critical))]
+pub(crate) fn recovery_severity_is_critical(severity: Severity) -> bool {
+    matches!(severity, Severity::Critical)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct RecoveryIssue {
     pub code: String,
     pub severity: Severity,
@@ -35,6 +53,7 @@ pub struct RecoveryIssue {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg(not(any(kani, verus)))]
 pub struct UpdateStatus {
     pub checked: bool,
     pub available: bool,
@@ -45,6 +64,7 @@ pub struct UpdateStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct RecoveryReport {
     pub healthy: bool,
     pub version: String,
@@ -58,14 +78,16 @@ pub struct RecoveryReport {
     pub issues: Vec<RecoveryIssue>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl RecoveryReport {
     pub fn has_critical(&self) -> bool {
         self.issues
             .iter()
-            .any(|issue| issue.severity == Severity::Critical)
+            .any(|issue| recovery_severity_is_critical(issue.severity))
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn inspect() -> RecoveryReport {
     let version = current_version();
     let config_path = configured_config_file();
@@ -263,6 +285,7 @@ pub fn inspect() -> RecoveryReport {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn startup(target: StartupTarget) -> Result<RecoveryReport, String> {
     let mut report = inspect();
 
@@ -361,6 +384,7 @@ pub fn startup(target: StartupTarget) -> Result<RecoveryReport, String> {
     Ok(report)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn run_gtuu() -> Result<gitrun_scheduler::GtuuStartupReport, String> {
     // GTUU may reconcile host Docker containers and install privileged system
     // updates. Hidden CLI command names are not an authorization boundary.
@@ -370,6 +394,7 @@ pub fn run_gtuu() -> Result<gitrun_scheduler::GtuuStartupReport, String> {
     gitrun_scheduler::gtuu_startup::run_gtuu_startup_once().map_err(|error| error.to_string())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn find_gitrun_binary() -> Option<PathBuf> {
     let candidates = [
         std::env::var("GITRUN_BINARY_PATH").ok().map(PathBuf::from),
@@ -391,6 +416,7 @@ pub fn find_gitrun_binary() -> Option<PathBuf> {
 // This resolver is deliberately separate from find_gitrun_binary(): that
 // function supports development/test overrides and must never select the
 // executable used for a privileged pkexec handoff.
+#[cfg(not(any(kani, verus)))]
 fn installed_gitrun_candidates() -> [PathBuf; 2] {
     [
         PathBuf::from("/usr/local/bin/gitrun"),
@@ -399,6 +425,7 @@ fn installed_gitrun_candidates() -> [PathBuf; 2] {
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn is_trusted_root_executable(path: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
 
@@ -412,10 +439,12 @@ fn is_trusted_root_executable(path: &Path) -> bool {
 }
 
 #[cfg(not(unix))]
+#[cfg(not(any(kani, verus)))]
 fn is_trusted_root_executable(_path: &Path) -> bool {
     false
 }
 
+#[cfg(not(any(kani, verus)))]
 fn find_trusted_installed_gitrun_binary() -> Option<PathBuf> {
     installed_gitrun_candidates()
         .into_iter()
@@ -423,6 +452,7 @@ fn find_trusted_installed_gitrun_binary() -> Option<PathBuf> {
         .and_then(|path| fs::canonicalize(path).ok())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn find_trusted_pkexec() -> Option<PathBuf> {
     let path = PathBuf::from("/usr/bin/pkexec");
     is_trusted_root_executable(&path)
@@ -430,6 +460,7 @@ fn find_trusted_pkexec() -> Option<PathBuf> {
         .flatten()
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn configured_config_file() -> Option<PathBuf> {
     std::env::var("GITRUN_CONFIG_FILE")
         .ok()
@@ -445,6 +476,7 @@ pub fn configured_config_file() -> Option<PathBuf> {
         })
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn current_version() -> String {
     std::env::var("GITRUN_VERSION")
         .ok()
@@ -462,6 +494,7 @@ pub fn current_version() -> String {
         .unwrap_or_else(|| "0.0.0".into())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_protected_state_permission(error: &StateError) -> bool {
     matches!(
         error,
@@ -469,6 +502,7 @@ fn is_protected_state_permission(error: &StateError) -> bool {
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 fn unit_matches_contract(installed: &str, packaged: &str) -> bool {
     let normalized_lines = |content: &str| -> Vec<String> {
         content
@@ -481,6 +515,7 @@ fn unit_matches_contract(installed: &str, packaged: &str) -> bool {
     normalized_lines(installed) == normalized_lines(packaged)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn service_unit_is_valid() -> bool {
     let scheduler_valid = fs::read_to_string("/etc/systemd/system/gitrun.service")
         .map(|content| unit_matches_contract(&content, SYSTEMD_UNIT))
@@ -494,6 +529,7 @@ pub fn service_unit_is_valid() -> bool {
     scheduler_valid && gsr_valid && control_valid
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn repair_service_unit() -> Result<(), String> {
     if !cfg!(target_os = "linux") {
         return Err("system service repair currently targets Linux".into());
@@ -557,10 +593,12 @@ pub fn repair_service_unit() -> Result<(), String> {
     run_systemctl("restart", "gitrun-gsr.service")
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn is_root_for_ui() -> bool {
     is_root()
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn restart_service() -> Result<(), String> {
     if is_root() {
         return repair_service_unit();
@@ -582,6 +620,7 @@ pub fn restart_service() -> Result<(), String> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run_systemctl(action: &str, unit: &str) -> Result<(), String> {
     let systemctl = Path::new("/usr/bin/systemctl");
     if !is_trusted_root_executable(systemctl) {
@@ -602,6 +641,7 @@ fn run_systemctl(action: &str, unit: &str) -> Result<(), String> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn command_succeeds(program: &str, args: &[&str]) -> bool {
     Command::new(program)
         .args(args)
@@ -610,6 +650,7 @@ fn command_succeeds(program: &str, args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_root() -> bool {
     Command::new("/usr/bin/id")
         .arg("-u")
@@ -620,6 +661,7 @@ fn is_root() -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn launch_dashboard() -> Result<std::process::ExitStatus, String> {
     let binary = find_gitrun_binary().ok_or("GitRun executable was not found")?;
     Command::new(binary)
@@ -628,6 +670,7 @@ pub fn launch_dashboard() -> Result<std::process::ExitStatus, String> {
         .map_err(|error| format!("unable to launch GitRun dashboard: {error}"))
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn launch_scheduler() -> Result<std::process::ExitStatus, String> {
     let binary = find_gitrun_binary().ok_or("GitRun CLI executable was not found")?;
     Command::new(binary)
@@ -636,6 +679,7 @@ pub fn launch_scheduler() -> Result<std::process::ExitStatus, String> {
         .map_err(|error| format!("unable to launch GitRun scheduler: {error}"))
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn mark_startup_healthy() -> Result<(), String> {
     let config_path = configured_config_file();
     let state_dir = config_path
@@ -648,6 +692,7 @@ pub fn mark_startup_healthy() -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn record_failure(message: &str) -> Result<(), String> {
     let config_path = configured_config_file();
     let state_dir = config_path
@@ -665,23 +710,27 @@ pub fn record_failure(message: &str) -> Result<(), String> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub enum StartupTarget {
     Scheduler,
     Dashboard,
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn set_file_mode(path: &Path, mode: u32) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|error| error.to_string())
 }
 
 #[cfg(not(unix))]
+#[cfg(not(any(kani, verus)))]
 fn set_file_mode(_path: &Path, _mode: u32) -> Result<(), String> {
     Ok(())
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 mod tests {
     use super::*;
 
@@ -818,3 +867,35 @@ WantedBy=multi-user.target
         assert!(!report.has_critical());
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{recovery_severity_is_critical, Severity};
+
+    #[kani::proof]
+    fn recovery_critical_severity_classification_is_exact() {
+        assert!(!recovery_severity_is_critical(Severity::Info));
+        assert!(!recovery_severity_is_critical(Severity::Warning));
+        assert!(recovery_severity_is_critical(Severity::Critical));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{recovery_severity_is_critical, Severity};
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn recovery_critical_severity_classification_is_exact() {
+            assert(!recovery_severity_is_critical(Severity::Info));
+            assert(!recovery_severity_is_critical(Severity::Warning));
+            assert(recovery_severity_is_critical(Severity::Critical));
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

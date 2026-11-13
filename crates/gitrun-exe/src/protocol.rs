@@ -4,14 +4,22 @@
 //! A transport can carry these envelopes over a Unix socket or another
 //! protected local channel, while the executor still verifies the GSR MAC.
 
+#[cfg(not(any(kani, verus)))]
 use crate::AuthorizedOperation;
+#[cfg(not(any(kani, verus)))]
 use hmac::{digest::KeyInit, Hmac, Mac};
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use sha2::Sha256;
+#[cfg(not(any(kani, verus)))]
 use std::collections::{HashMap, VecDeque};
+#[cfg(not(any(kani, verus)))]
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
+#[cfg(not(any(kani, verus)))]
 type HmacSha256 = Hmac<Sha256>;
 
 const NONCE_LEN: usize = 32;
@@ -21,9 +29,35 @@ const DEFAULT_REPLAY_CACHE_SIZE: usize = 4096;
 
 const MIN_CHANNEL_KEY_LEN: usize = 32;
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns length >= MIN_CHANNEL_KEY_LEN))]
+pub(crate) fn channel_key_length_is_valid(length: usize) -> bool {
+    length >= MIN_CHANNEL_KEY_LEN
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns length == NONCE_LEN))]
+pub(crate) fn nonce_length_is_valid(length: usize) -> bool {
+    length == NONCE_LEN
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns length == MAC_LEN))]
+pub(crate) fn mac_length_is_valid(length: usize) -> bool {
+    length == MAC_LEN
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns current.abs_diff(timestamp) <= maximum_skew))]
+pub(crate) fn timestamp_is_within_skew(current: u64, timestamp: u64, maximum_skew: u64) -> bool {
+    current.abs_diff(timestamp) <= maximum_skew
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct ChannelKey(#[serde(with = "serde_bytes_hex")] Vec<u8>);
 
+#[cfg(not(any(kani, verus)))]
 impl ChannelKey {
     pub fn generate() -> Result<Self, ChannelAuthError> {
         let mut key = vec![0u8; MIN_CHANNEL_KEY_LEN];
@@ -32,7 +66,7 @@ impl ChannelKey {
     }
 
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, ChannelAuthError> {
-        if bytes.len() < MIN_CHANNEL_KEY_LEN {
+        if !channel_key_length_is_valid(bytes.len()) {
             return Err(ChannelAuthError::WeakKey);
         }
         Ok(Self(bytes))
@@ -43,13 +77,14 @@ impl ChannelKey {
     }
 
     fn validate(&self) -> Result<(), ChannelAuthError> {
-        if self.0.len() < MIN_CHANNEL_KEY_LEN {
+        if !channel_key_length_is_valid(self.0.len()) {
             return Err(ChannelAuthError::WeakKey);
         }
         Ok(())
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 impl<'de> Deserialize<'de> for ChannelKey {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -61,6 +96,7 @@ impl<'de> Deserialize<'de> for ChannelKey {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct SignedRequest {
     pub request: AuthorizedOperation,
     pub timestamp: u64,
@@ -76,6 +112,7 @@ pub struct SignedRequest {
     pub mac: Vec<u8>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl SignedRequest {
     pub fn sign(request: AuthorizedOperation, key: &ChannelKey) -> Result<Self, ChannelAuthError> {
         key.validate()?;
@@ -105,12 +142,12 @@ impl SignedRequest {
         replay: &mut ReplayGuard,
     ) -> Result<(), ChannelAuthError> {
         key.validate()?;
-        if self.nonce.len() != NONCE_LEN {
+        if !nonce_length_is_valid(self.nonce.len()) {
             return Err(ChannelAuthError::InvalidNonce);
         }
 
         let current = now()?;
-        if current.abs_diff(self.timestamp) > max_clock_skew_secs {
+        if !timestamp_is_within_skew(current, self.timestamp, max_clock_skew_secs) {
             return Err(ChannelAuthError::Expired);
         }
 
@@ -124,6 +161,9 @@ impl SignedRequest {
         let mut mac = <HmacSha256 as KeyInit>::new_from_slice(&key.0)
             .map_err(|_| ChannelAuthError::WeakKey)?;
         mac.update(&bytes);
+        if !mac_length_is_valid(self.mac.len()) {
+            return Err(ChannelAuthError::Authentication);
+        }
         mac.verify_slice(&self.mac)
             .map_err(|_| ChannelAuthError::Authentication)?;
 
@@ -138,14 +178,16 @@ impl SignedRequest {
 }
 
 #[derive(Serialize)]
+#[cfg(not(any(kani, verus)))]
 struct SigningPayload<'a> {
     request: &'a AuthorizedOperation,
     timestamp: u64,
     nonce: &'a [u8],
 }
 
+#[cfg(not(any(kani, verus)))]
 fn compute_mac(key: &[u8], payload: &[u8]) -> Result<Vec<u8>, ChannelAuthError> {
-    if key.len() < MIN_CHANNEL_KEY_LEN {
+    if !channel_key_length_is_valid(key.len()) {
         return Err(ChannelAuthError::WeakKey);
     }
     let mut mac =
@@ -154,10 +196,12 @@ fn compute_mac(key: &[u8], payload: &[u8]) -> Result<Vec<u8>, ChannelAuthError> 
     Ok(mac.finalize().into_bytes().to_vec())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn now() -> Result<u64, ChannelAuthError> {
     unix_timestamp(SystemTime::now())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn unix_timestamp(time: SystemTime) -> Result<u64, ChannelAuthError> {
     time.duration_since(UNIX_EPOCH)
         .map(|value| value.as_secs())
@@ -165,12 +209,14 @@ fn unix_timestamp(time: SystemTime) -> Result<u64, ChannelAuthError> {
 }
 
 #[derive(Debug)]
+#[cfg(not(any(kani, verus)))]
 pub struct ReplayGuard {
     expires_at: HashMap<Vec<u8>, u64>,
     order: VecDeque<(Vec<u8>, u64)>,
     max_entries: usize,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl ReplayGuard {
     pub fn new(max_entries: usize) -> Self {
         Self {
@@ -218,6 +264,7 @@ impl ReplayGuard {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Default for ReplayGuard {
     fn default() -> Self {
         Self::new(DEFAULT_REPLAY_CACHE_SIZE)
@@ -225,6 +272,7 @@ impl Default for ReplayGuard {
 }
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum ChannelAuthError {
     #[error("secure randomness unavailable: {0}")]
     Randomness(#[source] getrandom::Error),
@@ -246,6 +294,7 @@ pub enum ChannelAuthError {
     Authentication,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn deserialize_nonce<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -258,6 +307,7 @@ where
     Ok(bytes)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn deserialize_mac<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -503,3 +553,84 @@ mod tests {
             .is_ok());
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{
+        channel_key_length_is_valid, mac_length_is_valid, nonce_length_is_valid,
+        timestamp_is_within_skew, MAC_LEN, MIN_CHANNEL_KEY_LEN, NONCE_LEN,
+    };
+
+    #[kani::proof]
+    fn channel_key_nonce_and_mac_lengths_are_exact() {
+        let key_length: usize = kani::any();
+        let nonce_length: usize = kani::any();
+        let mac_length: usize = kani::any();
+        assert_eq!(
+            channel_key_length_is_valid(key_length),
+            key_length >= MIN_CHANNEL_KEY_LEN
+        );
+        assert_eq!(
+            nonce_length_is_valid(nonce_length),
+            nonce_length == NONCE_LEN
+        );
+        assert_eq!(mac_length_is_valid(mac_length), mac_length == MAC_LEN);
+    }
+
+    #[kani::proof]
+    fn timestamp_skew_check_is_symmetric_and_overflow_safe() {
+        let current: u64 = kani::any();
+        let timestamp: u64 = kani::any();
+        let maximum_skew: u64 = kani::any();
+        assert_eq!(
+            timestamp_is_within_skew(current, timestamp, maximum_skew),
+            current.abs_diff(timestamp) <= maximum_skew
+        );
+        assert_eq!(
+            timestamp_is_within_skew(current, timestamp, maximum_skew),
+            timestamp_is_within_skew(timestamp, current, maximum_skew)
+        );
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{
+        channel_key_length_is_valid, mac_length_is_valid, nonce_length_is_valid,
+        timestamp_is_within_skew, MAC_LEN, MIN_CHANNEL_KEY_LEN, NONCE_LEN,
+    };
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn channel_key_nonce_and_mac_lengths_are_exact(
+            key_length: usize,
+            nonce_length: usize,
+            mac_length: usize,
+        )
+            ensures
+                channel_key_length_is_valid(key_length) == (key_length >= MIN_CHANNEL_KEY_LEN),
+                nonce_length_is_valid(nonce_length) == (nonce_length == NONCE_LEN),
+                mac_length_is_valid(mac_length) == (mac_length == MAC_LEN),
+        {
+        }
+
+        proof fn timestamp_skew_check_is_symmetric_and_overflow_safe(
+            current: u64,
+            timestamp: u64,
+            maximum_skew: u64,
+        )
+            ensures
+                timestamp_is_within_skew(current, timestamp, maximum_skew)
+                    == (current.abs_diff(timestamp) <= maximum_skew),
+                timestamp_is_within_skew(current, timestamp, maximum_skew)
+                    == timestamp_is_within_skew(timestamp, current, maximum_skew),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

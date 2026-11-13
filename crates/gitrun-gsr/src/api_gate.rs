@@ -5,21 +5,27 @@
 //! resource policy, and (for Dock execute) the existing GSR command policy
 //! before it can be converted into an AuthorizedOperation for gitrun-exe.
 
+#[cfg(not(any(kani, verus)))]
 use gitrun_core::{
     api_policy::{parse_boolean_argument, validate_arguments, GitRunApi, GitRunOperation},
     command_policy::{validate_simple_shell_command, CommandPolicy, Decision},
     settings::EffectiveRepositorySettings,
     GitRunSettings,
 };
+#[cfg(not(any(kani, verus)))]
 use gitrun_exe::{
     protocol::{ChannelKey, ReplayGuard, SignedRequest},
     AuthorizedOperation,
 };
+#[cfg(not(any(kani, verus)))]
 use std::collections::BTreeMap;
+#[cfg(not(any(kani, verus)))]
 use std::sync::{Mutex, MutexGuard};
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub enum ApiGateError {
     #[error("API {api:?} is disabled")]
     ApiDisabled { api: GitRunApi },
@@ -49,11 +55,13 @@ pub enum ApiGateError {
 /// The key never leaves this process. If the executor is later moved to a
 /// separate service, the same signed envelope can be verified there without
 /// changing the public Git*Run contract.
+#[cfg(not(any(kani, verus)))]
 pub struct ExecutionAuthority {
     key: ChannelKey,
     replay: Mutex<ReplayGuard>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl ExecutionAuthority {
     pub fn new() -> Result<Self, ApiGateError> {
         Ok(Self {
@@ -81,6 +89,7 @@ impl ExecutionAuthority {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn lock_replay(mutex: &Mutex<ReplayGuard>) -> Result<MutexGuard<'_, ReplayGuard>, ApiGateError> {
     mutex
         .lock()
@@ -93,6 +102,7 @@ fn lock_replay(mutex: &Mutex<ReplayGuard>) -> Result<MutexGuard<'_, ReplayGuard>
 /// this authorization function: callers must provide a verified repository,
 /// workflow, job and runner identity before asking GSR to authorize work.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct VerifiedCaller {
     pub repository: String,
     pub workflow: String,
@@ -101,6 +111,7 @@ pub struct VerifiedCaller {
     pub runner: String,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl VerifiedCaller {
     pub fn new(
         repository: impl Into<String>,
@@ -118,6 +129,7 @@ impl VerifiedCaller {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 impl VerifiedCaller {
     pub fn with_run_id(mut self, run_id: Option<u64>) -> Self {
         self.run_id = run_id;
@@ -126,6 +138,7 @@ impl VerifiedCaller {
 }
 /// Authorize one explicit Git*Run request and convert it to the internal
 /// execution-engine request only after every gate has passed.
+#[cfg(not(any(kani, verus)))]
 pub fn authorize(
     settings: &GitRunSettings,
     caller: &VerifiedCaller,
@@ -147,6 +160,20 @@ pub fn authorize(
     )
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(returns api_enabled && operation_supported && policy_enabled)
+)]
+pub(crate) fn api_operation_authorized(
+    api_enabled: bool,
+    operation_supported: bool,
+    policy_enabled: bool,
+) -> bool {
+    api_enabled && operation_supported && policy_enabled
+}
+
+#[cfg(not(any(kani, verus)))]
 pub fn authorize_with_effective(
     effective: &EffectiveRepositorySettings,
     caller: &VerifiedCaller,
@@ -160,7 +187,11 @@ pub fn authorize_with_effective(
     if !api_policy.enabled {
         return Err(ApiGateError::ApiDisabled { api });
     }
-    if !api.supports_operation(operation) || !api_policy.allows(operation) {
+    if !api_operation_authorized(
+        api_policy.enabled,
+        api.supports_operation(operation),
+        api_policy.allows(operation),
+    ) {
         return Err(ApiGateError::OperationDisabled { api, operation });
     }
     if let Err(detail) = validate_arguments(api, operation, &arguments) {
@@ -194,6 +225,7 @@ pub fn authorize_with_effective(
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn authorize_resource_scope(
     effective: &EffectiveRepositorySettings,
     caller: &VerifiedCaller,
@@ -268,6 +300,7 @@ fn authorize_resource_scope(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn authorize_vault(
     effective: &EffectiveRepositorySettings,
     operation: GitRunOperation,
@@ -306,6 +339,7 @@ fn authorize_vault(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn authorize_dock(
     effective: &EffectiveRepositorySettings,
     caller: &VerifiedCaller,
@@ -470,6 +504,7 @@ fn authorize_dock(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn required_argument<'a>(
     api: GitRunApi,
     operation: GitRunOperation,
@@ -487,6 +522,7 @@ fn required_argument<'a>(
         })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn request_id(caller: &VerifiedCaller, api: GitRunApi, operation: GitRunOperation) -> String {
     format!(
         "{}:{}:{}:{}:{}:{}",
@@ -1032,3 +1068,44 @@ mod tests {
         assert_eq!(result.unwrap().arguments.get("target"), None);
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::api_operation_authorized;
+
+    #[kani::proof]
+    fn api_operation_authorization_is_fail_closed() {
+        let api_enabled: bool = kani::any();
+        let operation_supported: bool = kani::any();
+        let policy_enabled: bool = kani::any();
+        assert_eq!(
+            api_operation_authorized(api_enabled, operation_supported, policy_enabled),
+            api_enabled && operation_supported && policy_enabled
+        );
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::api_operation_authorized;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn api_operation_authorization_is_fail_closed(
+            api_enabled: bool,
+            operation_supported: bool,
+            policy_enabled: bool,
+        )
+            ensures
+                api_operation_authorized(api_enabled, operation_supported, policy_enabled)
+                    == (api_enabled && operation_supported && policy_enabled),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

@@ -2,25 +2,38 @@
 //!
 //! This module is advisory only. It cannot create runners or bypass GSR,
 //! deterministic reconciliation, operator ceilings or the adaptive host budget.
+#[cfg(not(any(kani, verus)))]
 use super::{
     valid_repository, KittyError, Observation, Result, WorkloadResourceObservation, BUCKET_SECONDS,
     MIN_RESOURCE_PROFILE_JOBS,
 };
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 
+#[cfg(not(any(kani, verus)))]
 const SCHEMA_VERSION: u32 = 1;
+#[cfg(not(any(kani, verus)))]
 const MAP_BUCKETS: usize = 12;
+#[cfg(not(any(kani, verus)))]
 const MAP_TTL: u64 = 3_600;
+#[cfg(not(any(kani, verus)))]
 const PATCH_TTL: u64 = 60;
+#[cfg(not(any(kani, verus)))]
 const MIN_CPU: f64 = 0.25;
+#[cfg(not(any(kani, verus)))]
 const MIN_MEMORY: u64 = 512 * 1024 * 1024;
+#[cfg(not(any(kani, verus)))]
 const MAX_CPU: f64 = 256.0;
+#[cfg(not(any(kani, verus)))]
 const MAX_MEMORY: u64 = 1_u64 << 60;
+#[cfg(not(any(kani, verus)))]
 const MAX_RUNNERS: u32 = 10_000;
+#[cfg(not(any(kani, verus)))]
 const WINDOWS: [usize; 5] = [12, 72, 288, 672, 2_016];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[cfg(not(any(kani, verus)))]
 pub struct ThinkWindow {
     pub lookback_buckets: usize,
     pub sample_count: usize,
@@ -30,6 +43,7 @@ pub struct ThinkWindow {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+#[cfg(not(any(kani, verus)))]
 pub struct ThinkReport {
     pub stable: bool,
     pub iterations: u8,
@@ -39,6 +53,7 @@ pub struct ThinkReport {
     pub reason: String,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl ThinkReport {
     pub fn validate(&self) -> Result<()> {
         if !(2..=5).contains(&self.iterations)
@@ -70,6 +85,7 @@ impl ThinkReport {
 
 /// Compare 1-hour, 6-hour, 24-hour, 3.5-day and 7-day windows. Each requires
 /// 75% coverage. Missing data or disagreement prevents predictive growth.
+#[cfg(not(any(kani, verus)))]
 pub fn calculate_think_report(
     history: &[Observation],
     now_epoch: u64,
@@ -138,6 +154,13 @@ pub fn calculate_think_report(
     Ok(report)
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns p90.saturating_add(trend).min(100_000)))]
+pub(crate) fn bounded_peak_demand(p90: u32, trend: u32) -> u32 {
+    p90.saturating_add(trend).min(100_000)
+}
+
+#[cfg(not(any(kani, verus)))]
 fn estimate_peak(values: &[u32]) -> u32 {
     if values.is_empty() {
         return 0;
@@ -161,11 +184,12 @@ fn estimate_peak(values: &[u32]) -> u32 {
     let trend = recent_mean
         .saturating_sub(older_mean)
         .min(u64::from(p90 / 2 + 2)) as u32;
-    p90.saturating_add(trend).min(100_000)
+    bounded_peak_demand(p90, trend)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+#[cfg(not(any(kani, verus)))]
 pub struct FutureMapBucket {
     pub start_epoch: u64,
     pub end_epoch: u64,
@@ -178,6 +202,7 @@ pub struct FutureMapBucket {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+#[cfg(not(any(kani, verus)))]
 pub enum FutureMapPatchOperation {
     SetForecastPeak {
         peak_demand: u32,
@@ -192,6 +217,7 @@ pub enum FutureMapPatchOperation {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+#[cfg(not(any(kani, verus)))]
 pub struct FutureMapPatch {
     pub base_revision: u64,
     pub revision: u64,
@@ -213,6 +239,7 @@ pub struct FutureMapPatch {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
+#[cfg(not(any(kani, verus)))]
 pub struct FutureMapping {
     pub schema_version: u32,
     pub repository: String,
@@ -232,6 +259,7 @@ pub struct FutureMapping {
     pub last_patch: Option<FutureMapPatch>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl FutureMapping {
     #[allow(clippy::too_many_arguments)]
     pub fn build(
@@ -582,6 +610,7 @@ impl FutureMapping {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn make_patch(old: &FutureMapping, next: &FutureMapping, now: u64) -> FutureMapPatch {
     let mut operations = Vec::new();
     if old.forecast_peak_concurrency != next.forecast_peak_concurrency {
@@ -743,3 +772,44 @@ mod tests {
             .is_err());
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::bounded_peak_demand;
+
+    #[kani::proof]
+    fn predictive_peak_is_bounded_for_all_u32_inputs() {
+        let p90: u32 = kani::any();
+        let trend: u32 = kani::any();
+        let peak = bounded_peak_demand(p90, trend);
+        assert!(peak <= 100_000);
+        assert_eq!(peak, p90.saturating_add(trend).min(100_000));
+        if p90.saturating_add(trend) <= 100_000 {
+            assert_eq!(peak, p90.saturating_add(trend));
+        }
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::bounded_peak_demand;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn predictive_peak_is_bounded_for_all_u32_inputs(p90: u32, trend: u32)
+            ensures
+                bounded_peak_demand(p90, trend) <= 100_000,
+                bounded_peak_demand(p90, trend)
+                    == p90.saturating_add(trend).min(100_000),
+                p90.saturating_add(trend) <= 100_000
+                    ==> bounded_peak_demand(p90, trend) == p90.saturating_add(trend),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

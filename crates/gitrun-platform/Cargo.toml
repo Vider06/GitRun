@@ -4,3 +4,12 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "GitRun host platform detection and runtime compatibility checks"
+
+[dependencies]
+vstd = "=0.0.0-2026-11-01-0251"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(verus)'] }
+
+[package.metadata.verus]
+verify = true

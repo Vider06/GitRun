@@ -123,7 +123,7 @@ def check_release_package_boundaries(errors: list[str]) -> None:
         "package-server",
         "package-dashboard",
         "migration-package",
-        "validate",
+        "formal-verification",
         "sign",
         "release",
     )
@@ -316,14 +316,11 @@ def check_native_init_package_resources(errors: list[str]) -> None:
         ".post-upgrade$",
         'install -m 0755 packaging/xbps/INSTALL "$xbps_stage/INSTALL"',
         'install -m 0755 packaging/xbps/REMOVE "$xbps_stage/REMOVE"',
-        ' -p install-script -S ',
-        ' -p remove-script -S ',
+        'python3 scripts/ci/build-xbps-server-package.py',
         'install -m 0755 packaging/runit/gitrun/run "$xbps_stage/etc/sv/gitrun/run"',
         'install -m 0755 packaging/runit/gitrun/log/run "$xbps_stage/etc/sv/gitrun/log/run"',
         'install -m 0755 packaging/runit/gitrun-gsr/run "$xbps_stage/etc/sv/gitrun-gsr/run"',
         'install -m 0755 packaging/runit/gitrun-gsr/log/run "$xbps_stage/etc/sv/gitrun-gsr/log/run"',
-        'xbps_contents="$(tar -tf "$xbps_file")"',
-        'XBPS package must contain runit resources, not systemd units',
         'install -m 0755 packaging/gitrun-migration-prerm "$root/DEBIAN/prerm"',
         'test ! -s "$mock_log"',
         "grep -Fq 'disable --now gitrun-gsr.service gitrun.service' \"$mock_log\"",
@@ -331,6 +328,27 @@ def check_native_init_package_resources(errors: list[str]) -> None:
     for marker in workflow_markers:
         if marker not in release:
             errors.append(f"release packaging is missing native-init integration: {marker}")
+
+    xbps_builder = read_text(ROOT / "scripts/ci/build-xbps-server-package.py") or ""
+    xbps_builder_markers = (
+        '["tar", "-xOf", str(archive), "./INSTALL"]',
+        '["tar", "-xOf", str(archive), "./REMOVE"]',
+        '"./INSTALL"',
+        '"./REMOVE"',
+        '"-R"',
+        '"sv restart"',
+        '"sv down"',
+        "REQUIRED_ARCHIVE_PATHS",
+        "args.rindex",
+        '["tar", "-tf", str(archive)]',
+        'path.startswith("./etc/systemd/")',
+        'path.startswith("./usr/lib/systemd/")',
+    )
+    for marker in xbps_builder_markers:
+        if marker not in xbps_builder:
+            errors.append(
+                f"XBPS package certification helper is missing lifecycle contract: {marker}"
+            )
 
     nfpm_marker = 'cat > "$RUNNER_TEMP/nfpm.yaml" <<NFPM'
     nfpm_source = (

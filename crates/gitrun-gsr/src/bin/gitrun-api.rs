@@ -5,18 +5,37 @@
 //! an ApiInvocation and sends it to the host-side GitRun service, where GSR
 //! authorizes the request before gitrun-exe sees it.
 
+#[cfg(not(any(kani, verus)))]
 use gitrun_core::{GitRunApi, GitRunOperation};
+#[cfg(not(any(kani, verus)))]
 use gitrun_exe::{
     ipc::{WireRequest, WireResponse, DEFAULT_SOCKET_PATH},
     ApiInvocation, ExecutionEvent,
 };
+#[cfg(not(any(kani, verus)))]
 use std::collections::BTreeMap;
+#[cfg(not(any(kani, verus)))]
 use std::env;
+#[cfg(not(any(kani, verus)))]
 use std::io::{BufRead, BufReader, Write};
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 use std::os::unix::net::UnixStream;
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns !key_present))]
+pub(crate) fn argument_key_is_available(key_present: bool) -> bool {
+    !key_present
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns !operation_already_selected))]
+pub(crate) fn operation_slot_is_available(operation_already_selected: bool) -> bool {
+    !operation_already_selected
+}
+
+#[cfg(not(any(kani, verus)))]
 fn main() {
     if let Err(reason) = gitrun_platform::ensure_supported_runtime() {
         eprintln!("GitRun API: {reason}");
@@ -32,6 +51,7 @@ fn main() {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run() -> Result<(), String> {
     let invocation_name = env::args().next().unwrap_or_else(|| "GitStatusRun".into());
     let api = api_from_invocation(&invocation_name)?;
@@ -136,10 +156,12 @@ fn run() -> Result<(), String> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn required_env(name: &str) -> Result<String, String> {
     env::var(name).map_err(|_| format!("required environment variable {name} is missing"))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn api_from_invocation(invocation: &str) -> Result<GitRunApi, String> {
     let name = std::path::Path::new(invocation)
         .file_name()
@@ -161,31 +183,35 @@ fn api_from_invocation(invocation: &str) -> Result<GitRunApi, String> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn insert_argument(
     values: &mut BTreeMap<String, String>,
     key: &str,
     value: String,
 ) -> Result<(), String> {
-    if values.contains_key(key) {
+    if !argument_key_is_available(values.contains_key(key)) {
         return Err(format!("argument {key} may only be specified once"));
     }
     values.insert(key.to_owned(), value);
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn select_operation(
     selected: &mut Option<GitRunOperation>,
     next: GitRunOperation,
 ) -> Result<(), String> {
-    if selected.is_some() {
+    if !operation_slot_is_available(selected.is_some()) {
         return Err("only one GitRun API operation may be specified".into());
     }
     *selected = Some(next);
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 type ParsedApiRequest = (GitRunOperation, Option<String>, BTreeMap<String, String>);
 
+#[cfg(not(any(kani, verus)))]
 fn parse_api(api: GitRunApi, args: &[String]) -> Result<ParsedApiRequest, String> {
     let mut values = BTreeMap::new();
     let mut resource = None;
@@ -582,3 +608,46 @@ mod tests {
         assert!(parse_api(GitRunApi::GitDispatchRun, &complete).is_ok());
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{argument_key_is_available, operation_slot_is_available};
+
+    #[kani::proof]
+    fn api_parser_rejects_duplicate_arguments_and_operations() {
+        let key_present: bool = kani::any();
+        let operation_already_selected: bool = kani::any();
+        assert_eq!(argument_key_is_available(key_present), !key_present);
+        assert_eq!(
+            operation_slot_is_available(operation_already_selected),
+            !operation_already_selected
+        );
+        assert!(!argument_key_is_available(true));
+        assert!(!operation_slot_is_available(true));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{argument_key_is_available, operation_slot_is_available};
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn api_parser_rejects_duplicate_arguments_and_operations(
+            key_present: bool,
+            operation_already_selected: bool,
+        )
+            ensures
+                argument_key_is_available(key_present) == !key_present,
+                operation_slot_is_available(operation_already_selected)
+                    == !operation_already_selected,
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

@@ -16,13 +16,17 @@
 //! Containers are still the unit of scaling: many Windows *containers* run
 //! inside that VM, exactly like Linux containers run on the bare host.
 
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(not(any(kani, verus)))]
 static RULES_TMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Where a matched rule's containers should run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub enum Backend {
     /// The host GitRun itself runs on (today's only behavior).
     LocalLinux,
@@ -33,6 +37,7 @@ pub enum Backend {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct LogicRule {
     /// Human-readable name shown in the dashboard, purely descriptive.
     pub name: String,
@@ -47,31 +52,57 @@ pub struct LogicRule {
     pub image: String,
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns if byte.is_ascii_uppercase() {
+            byte + 32
+        } else {
+            byte
+        }
+    )
+)]
+pub(crate) fn ascii_lowercase_label_byte(byte: u8) -> u8 {
+    if byte.is_ascii_uppercase() {
+        byte + 32
+    } else {
+        byte
+    }
+}
+
+fn ascii_case_insensitive_equal(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            ascii_lowercase_label_byte(*left) == ascii_lowercase_label_byte(*right)
+        })
+}
+
 /// Evaluates rules in order, returning the first match's (backend, image).
 /// `job_labels` should be the same labels already fetched from GitHub's jobs
 /// API (see `github.rs`'s `Job.labels`, used today only to filter for
 /// `self-hosted`).
+#[cfg(not(any(kani, verus)))]
 pub fn resolve<'a>(
     rules: &'a [LogicRule],
     job_labels: &[String],
 ) -> Option<(&'a Backend, &'a str)> {
-    let normalized: Vec<String> = job_labels
-        .iter()
-        .map(|label| label.to_ascii_lowercase())
-        .collect();
-
     rules
         .iter()
         .find(|rule| {
             !rule.match_labels.is_empty()
                 && rule.match_labels.iter().all(|required| {
-                    let required = required.to_ascii_lowercase();
-                    normalized.iter().any(|label| label == &required)
+                    job_labels
+                        .iter()
+                        .any(|label| ascii_case_insensitive_equal(required, label))
                 })
         })
         .map(|rule| (&rule.backend, rule.image.as_str()))
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn validate_rules(rules: &[LogicRule]) -> Result<(), LogicRulesError> {
     for (index, rule) in rules.iter().enumerate() {
         if rule.name.trim().is_empty() {
@@ -161,6 +192,7 @@ pub fn validate_rules(rules: &[LogicRule]) -> Result<(), LogicRulesError> {
 /// Loads rules from a JSON file (dashboard writes/reads the same format).
 /// Missing file means "no rules configured yet" — not an error, since a
 /// fresh GitRun install has none and should fall back to default behavior.
+#[cfg(not(any(kani, verus)))]
 pub fn load_rules(path: &std::path::Path) -> Result<Vec<LogicRule>, LogicRulesError> {
     match std::fs::read_to_string(path) {
         Ok(raw) => {
@@ -173,6 +205,7 @@ pub fn load_rules(path: &std::path::Path) -> Result<Vec<LogicRule>, LogicRulesEr
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn save_rules(path: &std::path::Path, rules: &[LogicRule]) -> Result<(), LogicRulesError> {
     validate_rules(rules)?;
 
@@ -222,6 +255,7 @@ pub fn save_rules(path: &std::path::Path, rules: &[LogicRule]) -> Result<(), Log
 }
 
 #[derive(Debug, thiserror::Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum LogicRulesError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -435,3 +469,50 @@ mod tests {
         assert!(loaded.is_empty());
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{ascii_case_insensitive_equal, ascii_lowercase_label_byte};
+
+    #[kani::proof]
+    fn ascii_lowercase_label_byte_is_exact_over_all_u8_values() {
+        let byte: u8 = kani::any();
+        let expected = if byte.is_ascii_uppercase() {
+            byte + 32
+        } else {
+            byte
+        };
+        assert_eq!(ascii_lowercase_label_byte(byte), expected);
+    }
+
+    #[kani::proof]
+    fn workload_label_comparison_is_ascii_case_insensitive() {
+        assert!(ascii_case_insensitive_equal("Windows", "windows"));
+        assert!(ascii_case_insensitive_equal("GPU-CUDA", "gpu-cuda"));
+        assert!(ascii_case_insensitive_equal("self-hosted", "SELF-HOSTED"));
+        assert!(!ascii_case_insensitive_equal("windows", "linux"));
+        assert!(!ascii_case_insensitive_equal("gpu", "gpu-cuda"));
+        assert!(!ascii_case_insensitive_equal("", " "));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::ascii_lowercase_label_byte;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn ascii_lowercase_label_byte_is_exact_over_all_u8_values(byte: u8)
+            ensures
+                ascii_lowercase_label_byte(byte)
+                    == if byte.is_ascii_uppercase() { byte + 32 } else { byte },
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

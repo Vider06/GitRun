@@ -30,5 +30,7 @@ pub mod events;
 pub mod exec_supervisor;
 pub mod watchdog;
 
+#[cfg(not(any(kani, verus)))]
 pub use events::{SecurityEvent, Severity};
+#[cfg(not(any(kani, verus)))]
 pub use watchdog::{run as run_watchdog, WatchConfig};

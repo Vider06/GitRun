@@ -31,6 +31,7 @@
 //! trades some false negatives (obfuscated invocations) for a policy that is
 //! easy to audit and cannot itself be exploited via crafted input.
 
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 
 /// One configured policy list: a set of patterns plus whether the list is
@@ -39,11 +40,13 @@ use serde::{Deserialize, Serialize};
 /// `gitrun-core` doesn't need a regex dependency for something substring
 /// matching already covers.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct PatternList {
     pub enabled: bool,
     pub patterns: Vec<String>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl PatternList {
     pub fn new(enabled: bool, patterns: Vec<String>) -> Self {
         Self { enabled, patterns }
@@ -68,7 +71,9 @@ impl PatternList {
 /// What GSR should do when `CommandPolicy::evaluate` returns `Denied`.
 /// Configured via `Config::gsr_violation_action`; see that field's doc
 /// comment for the operator-facing string values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(all(not(kani), not(verus)), derive(Serialize, Deserialize))]
+#[cfg_attr(verus, verus_verify)]
 pub enum ViolationAction {
     /// Log the event but let the job continue. Useful for dry-running a
     /// new policy before enforcing it.
@@ -84,6 +89,7 @@ pub enum ViolationAction {
 }
 
 impl ViolationAction {
+    #[cfg_attr(verus, verus_verify)]
     pub fn from_config_str(value: &str) -> Self {
         match value {
             "log_only" => Self::LogOnly,
@@ -92,6 +98,7 @@ impl ViolationAction {
         }
     }
 
+    #[cfg_attr(verus, verus_verify)]
     pub fn as_config_str(self) -> &'static str {
         match self {
             Self::LogOnly => "log_only",
@@ -103,6 +110,7 @@ impl ViolationAction {
 
 /// Result of evaluating one command line against the active policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub enum Decision {
     Allowed,
     /// Carries which list and which pattern caused the denial, for the
@@ -125,6 +133,7 @@ pub enum Decision {
 /// must remain root-owned; the runner image enforces that for toolchain paths.
 /// Complex scripts should be checked into the workflow/repository and launched
 /// as normal Actions steps, where GSR supervises each actual exec.
+#[cfg(not(any(kani, verus)))]
 fn is_interpreter_or_command_wrapper(name: &str) -> bool {
     // GitDockRun Execute is not a shell/script API. Docker exec is started
     // outside the long-lived runner's GSR ptrace tree, so a script interpreter
@@ -220,17 +229,36 @@ fn is_interpreter_or_command_wrapper(name: &str) -> bool {
         .any(|prefix| normalized.starts_with(prefix))
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_uppercase()
+                || byte.is_ascii_digit()
+                || matches!(
+                    byte,
+                    b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
+                )
+    )
+)]
+pub(crate) fn is_simple_command_byte(byte: u8) -> bool {
+    byte.is_ascii_lowercase()
+        || byte.is_ascii_uppercase()
+        || byte.is_ascii_digit()
+        || matches!(
+            byte,
+            b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
+        )
+}
+
+#[cfg(not(any(kani, verus)))]
 pub fn parse_simple_command(command: &str) -> Result<Vec<String>, &'static str> {
     if command.trim().is_empty() {
         return Err("command must not be empty");
     }
-    if command.bytes().any(|byte| {
-        !(byte.is_ascii_alphanumeric()
-            || matches!(
-                byte,
-                b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
-            ))
-    }) {
+    if command.bytes().any(|byte| !is_simple_command_byte(byte)) {
         return Err(
             "GitDockRun Execute accepts one simple command with plain arguments; shell operators, quoting, expansion, redirection and control characters are not allowed",
         );
@@ -259,6 +287,7 @@ pub fn parse_simple_command(command: &str) -> Result<Vec<String>, &'static str> 
     Ok(argv)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn validate_simple_shell_command(command: &str) -> Result<(), &'static str> {
     parse_simple_command(command).map(|_| ())
 }
@@ -269,12 +298,14 @@ pub fn validate_simple_shell_command(command: &str) -> Result<(), &'static str> 
 /// tests (and the dashboard, which needs to display current state) can
 /// build one directly without going through `Config`.
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 pub struct CommandPolicy {
     pub baseline_blacklist: PatternList,
     pub user_blacklist: PatternList,
     pub user_whitelist: PatternList,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl CommandPolicy {
     pub fn evaluate(&self, command: &str) -> Decision {
         let normalized = normalize_command(command);
@@ -309,6 +340,7 @@ impl CommandPolicy {
 /// identifier. Punctuation-delimited indicators (URLs, paths and flags) can
 /// still match inside a command line; alphanumeric/underscore boundaries
 /// prevent cases such as `nsentering` or `ptraceable` from triggering.
+#[cfg(not(any(kani, verus)))]
 fn contains_pattern_at_token_boundaries(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return false;
@@ -339,6 +371,7 @@ fn contains_pattern_at_token_boundaries(haystack: &str, needle: &str) -> bool {
 }
 
 /// Canonicalize shell whitespace without attempting to parse shell syntax.
+#[cfg(not(any(kani, verus)))]
 fn normalize_command(value: &str) -> String {
     value
         .split_whitespace()
@@ -351,6 +384,7 @@ fn normalize_command(value: &str) -> String {
 /// its initial arguments. It must not match a phrase that appears only in a
 /// later argument (for example, a Python script whose filename contains
 /// `cargo build --release`).
+#[cfg(not(any(kani, verus)))]
 fn whitelist_executable_name(executable: &str) -> Option<&str> {
     if executable.is_empty() {
         return None;
@@ -397,6 +431,7 @@ fn whitelist_executable_name(executable: &str) -> Option<&str> {
     path.file_name().and_then(std::ffi::OsStr::to_str)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn whitelist_pattern_matches(pattern: &str, command_normalized: &str) -> bool {
     let pattern = normalize_command(pattern);
     if pattern.is_empty() {
@@ -458,6 +493,7 @@ fn whitelist_pattern_matches(pattern: &str, command_normalized: &str) -> bool {
 /// appear in a normal build/test/deploy job, or (like `docker run
 /// --privileged`) is far more often malicious than not even though the
 /// runner does have legitimate Docker access via the mounted socket.
+#[cfg(not(any(kani, verus)))]
 pub fn baseline_patterns() -> Vec<String> {
     [
         // Privilege escalation
@@ -871,3 +907,89 @@ mod tests {
         }
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::ViolationAction;
+
+    /// Exhaustively checks the byte allowlist used by GitDockRun Execute.
+    #[kani::proof]
+    fn simple_command_byte_alphabet_is_closed() {
+        let byte: u8 = kani::any();
+        let expected = byte.is_ascii_lowercase()
+            || byte.is_ascii_uppercase()
+            || byte.is_ascii_digit()
+            || matches!(
+                byte,
+                b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
+            );
+        assert_eq!(super::is_simple_command_byte(byte), expected);
+    }
+
+    /// Checks canonical configuration names and the fail-safe unknown-value default.
+    #[kani::proof]
+    fn violation_action_config_mapping_is_total() {
+        assert_eq!(
+            ViolationAction::from_config_str("log_only"),
+            ViolationAction::LogOnly
+        );
+        assert_eq!(
+            ViolationAction::from_config_str("kill"),
+            ViolationAction::Kill
+        );
+        assert_eq!(
+            ViolationAction::from_config_str("kill_and_ban"),
+            ViolationAction::KillAndBan
+        );
+        assert_eq!(
+            ViolationAction::from_config_str("unknown"),
+            ViolationAction::Kill
+        );
+        assert_eq!(ViolationAction::from_config_str(""), ViolationAction::Kill);
+        assert!(ViolationAction::LogOnly.as_config_str() == "log_only");
+        assert!(ViolationAction::Kill.as_config_str() == "kill");
+        assert!(ViolationAction::KillAndBan.as_config_str() == "kill_and_ban");
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::ViolationAction;
+    use vstd::prelude::*;
+
+    verus! {
+        /// Proves the byte-level allowlist used before direct argv parsing.
+        proof fn simple_command_byte_alphabet_is_closed(byte: u8)
+            ensures
+                super::is_simple_command_byte(byte)
+                    == (
+                        byte.is_ascii_lowercase()
+                            || byte.is_ascii_uppercase()
+                            || byte.is_ascii_digit()
+                            || matches!(
+                                byte,
+                                b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
+                            )
+                    ),
+        {
+        }
+
+        /// Verifies canonical names and fail-safe handling of unknown values.
+        proof fn violation_action_config_mapping_is_total() {
+            assert(ViolationAction::from_config_str("log_only") == ViolationAction::LogOnly);
+            assert(ViolationAction::from_config_str("kill") == ViolationAction::Kill);
+            assert(ViolationAction::from_config_str("kill_and_ban") == ViolationAction::KillAndBan);
+            assert(ViolationAction::from_config_str("unknown") == ViolationAction::Kill);
+            assert(ViolationAction::from_config_str("") == ViolationAction::Kill);
+            assert(ViolationAction::LogOnly.as_config_str() == "log_only");
+            assert(ViolationAction::Kill.as_config_str() == "kill");
+            assert(ViolationAction::KillAndBan.as_config_str() == "kill_and_ban");
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

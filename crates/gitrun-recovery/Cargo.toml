@@ -10,6 +10,7 @@ default = []
 desktop = ["dep:tauri"]
 
 [dependencies]
+vstd = "=0.0.0-2026-11-01-0251"
 gitrun-core = { path = "../gitrun-core" }
 gitrun-platform = { path = "../gitrun-platform" }
 gitrun-scheduler = { path = "../gitrun-scheduler" }
@@ -26,3 +27,9 @@ tauri-build = { version = "2", features = [] }
 name = "gitrun-recovery"
 path = "src/main.rs"
 required-features = ["desktop"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(verus)'] }
+
+[package.metadata.verus]
+verify = true

@@ -25,18 +25,30 @@
 //! deliberately fail closed instead of silently falling back to the weaker
 //! shell-only implementation.
 
+#[cfg(not(any(kani, verus)))]
 use gitrun_core::command_policy::CommandPolicy;
+#[cfg(not(any(kani, verus)))]
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(not(any(kani, verus)))]
 use gitrun_core::command_policy::Decision;
+#[cfg(not(any(kani, verus)))]
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(not(any(kani, verus)))]
 use std::ffi::{CStr, CString};
+#[cfg(not(any(kani, verus)))]
 use std::path::Path;
+#[cfg(not(any(kani, verus)))]
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(not(any(kani, verus)))]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(any(kani, verus)))]
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(not(any(kani, verus)))]
 use std::sync::Arc;
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
+#[cfg(not(any(kani, verus)))]
 #[derive(Debug, Error)]
 pub enum SupervisorError {
     #[error("GSR exec supervisor is only supported on Linux x86_64")]
@@ -53,12 +65,34 @@ pub enum SupervisorError {
     InspectFailed(i32),
 }
 
-#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns (status & 0xff) == 0x7f))]
+pub(crate) fn wait_status_is_stopped(status: i32) -> bool {
+    (status & 0xff) == 0x7f
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns (status & 0x7f) == 0))]
+pub(crate) fn wait_status_is_exited(status: i32) -> bool {
+    (status & 0x7f) == 0
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(returns (status & 0x7f) != 0 && (status & 0xff) != 0x7f)
+)]
+pub(crate) fn wait_status_is_signaled(status: i32) -> bool {
+    let signal = status & 0x7f;
+    signal != 0 && (status & 0xff) != 0x7f
+}
+
+#[cfg(not(any(kani, verus)))]
 pub fn run(_events_path: &Path, _policy: &CommandPolicy) -> Result<i32, SupervisorError> {
     Err(SupervisorError::UnsupportedPlatform)
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(not(any(kani, verus)), target_os = "linux", target_arch = "x86_64"))]
 mod linux {
     use super::*;
     use std::collections::{HashSet, VecDeque};
@@ -1197,16 +1231,15 @@ mod linux {
     }
 
     fn is_stopped(status: i32) -> bool {
-        (status & 0xff) == 0x7f
+        super::wait_status_is_stopped(status)
     }
 
     fn is_exited(status: i32) -> bool {
-        (status & 0x7f) == 0
+        super::wait_status_is_exited(status)
     }
 
     fn is_signaled(status: i32) -> bool {
-        let signal = status & 0x7f;
-        signal != 0 && signal != 0x7f
+        super::wait_status_is_signaled(status)
     }
     #[cfg(test)]
     mod tests {
@@ -1710,6 +1743,7 @@ mod linux {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn run_supervisor(events_path: &Path, policy: &CommandPolicy) -> Result<i32, SupervisorError> {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
@@ -1721,3 +1755,51 @@ pub fn run_supervisor(events_path: &Path, policy: &CommandPolicy) -> Result<i32,
         run(events_path, policy)
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{wait_status_is_exited, wait_status_is_signaled, wait_status_is_stopped};
+
+    #[kani::proof]
+    fn wait_status_classification_is_exact_and_exclusive() {
+        let status: i32 = kani::any();
+        let stopped = wait_status_is_stopped(status);
+        let exited = wait_status_is_exited(status);
+        let signaled = wait_status_is_signaled(status);
+
+        assert_eq!(stopped, (status & 0xff) == 0x7f);
+        assert_eq!(exited, (status & 0x7f) == 0);
+        assert_eq!(signaled, (status & 0x7f) != 0 && (status & 0xff) != 0x7f);
+        assert!(stopped || exited || signaled);
+        assert!(!(stopped && exited));
+        assert!(!(stopped && signaled));
+        assert!(!(exited && signaled));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{wait_status_is_exited, wait_status_is_signaled, wait_status_is_stopped};
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn wait_status_classification_is_exact_and_exclusive(status: i32)
+            ensures
+                wait_status_is_stopped(status) == ((status & 0xff) == 0x7f),
+                wait_status_is_exited(status) == ((status & 0x7f) == 0),
+                wait_status_is_signaled(status)
+                    == ((status & 0x7f) != 0 && (status & 0xff) != 0x7f),
+                wait_status_is_stopped(status) || wait_status_is_exited(status) || wait_status_is_signaled(status),
+                !(wait_status_is_stopped(status) && wait_status_is_exited(status)),
+                !(wait_status_is_stopped(status) && wait_status_is_signaled(status)),
+                !(wait_status_is_exited(status) && wait_status_is_signaled(status)),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

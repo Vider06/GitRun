@@ -7,6 +7,7 @@ license = "Apache-2.0"
 description = "GitRun release update, dependency and rollback manager"
 
 [dependencies]
+vstd = "=0.0.0-2026-11-01-0251"
 gitrun-core = { path = "../gitrun-core" }
 gitrun-platform = { path = "../gitrun-platform" }
 libc = "0.2"
@@ -19,3 +20,9 @@ sha2 = "0.11"
 tar = "0.4"
 thiserror = "2"
 zip = "9"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(verus)'] }
+
+[package.metadata.verus]
+verify = true

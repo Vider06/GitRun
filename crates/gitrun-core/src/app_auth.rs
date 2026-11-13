@@ -14,12 +14,18 @@
 //! existing raw PAT feed it the same way — see `github.rs`'s
 //! `GitHubClient::new`/`with_app_auth`.
 
+#[cfg(not(any(kani, verus)))]
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::sync::Mutex;
+#[cfg(not(any(kani, verus)))]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
+#[cfg(not(any(kani, verus)))]
 #[derive(Debug, Error)]
 pub enum AppAuthError {
     #[error("invalid GitHub App private key (expected PEM-encoded RSA key): {0}")]
@@ -40,9 +46,17 @@ pub enum AppAuthError {
     InvalidIdentifier(&'static str),
 }
 
+#[cfg(kani)]
+#[derive(Debug)]
+pub enum AppAuthError {
+    InvalidIdentifier(&'static str),
+}
+
+#[cfg(not(verus))]
 pub type Result<T> = std::result::Result<T, AppAuthError>;
 
 #[derive(Debug, Serialize)]
+#[cfg(not(any(kani, verus)))]
 struct AppClaims {
     /// Issued-at, backdated by 60s to tolerate clock drift between this host
     /// and GitHub's — a JWT that appears to be issued in the future is
@@ -56,6 +70,7 @@ struct AppClaims {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct InstallationTokenResponse {
     token: String,
     expires_at: String,
@@ -64,11 +79,13 @@ struct InstallationTokenResponse {
 /// A cached installation token plus when it expires, so `token()` can serve
 /// repeated calls cheaply and only round-trip to GitHub when actually
 /// necessary.
+#[cfg(not(any(kani, verus)))]
 struct CachedToken {
     token: String,
     expires_at: SystemTime,
 }
 
+#[cfg(not(any(kani, verus)))]
 pub struct AppAuth {
     app_id: String,
     installation_id: String,
@@ -77,6 +94,7 @@ pub struct AppAuth {
     cached: Mutex<Option<CachedToken>>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl AppAuth {
     /// `private_key_pem` is the App's private key exactly as downloaded from
     /// GitHub (PEM private-key material).
@@ -182,20 +200,50 @@ impl AppAuth {
 /// "2026-09-23T12:34:56Z") without pulling in `chrono` for one field —
 /// same reasoning as the manual date math already used in
 /// `gitrun-scheduler/src/main.rs`'s GTUU scheduler.
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns id > 0))]
+pub(crate) fn is_positive_github_id_value(id: u64) -> bool {
+    id > 0
+}
+
+/// Checks a GitHub numeric identifier without allocation or parser machinery.
+#[cfg(not(verus))]
+fn is_valid_github_id(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+
+    let mut parsed = 0_u64;
+    for &byte in bytes {
+        if !byte.is_ascii_digit() {
+            return false;
+        }
+        let Some(next) = parsed
+            .checked_mul(10)
+            .and_then(|number| number.checked_add(u64::from(byte - b'0')))
+        else {
+            return false;
+        };
+        parsed = next;
+    }
+    is_positive_github_id_value(parsed)
+}
+
+#[cfg(not(verus))]
 fn validate_github_id(value: String, field: &'static str) -> Result<String> {
-    if value.is_empty()
-        || !value.bytes().all(|byte| byte.is_ascii_digit())
-        || !value.parse::<u64>().is_ok_and(|id| id > 0)
-    {
+    if !is_valid_github_id(&value) {
         return Err(AppAuthError::InvalidIdentifier(field));
     }
     Ok(value)
 }
 
+#[cfg(not(any(kani, verus)))]
 const TOKEN_REFRESH_MARGIN: Duration = Duration::from_secs(120);
 
 /// A successful HTTP response is not enough: never hand a caller a token
 /// that is already expired or too close to expiry to survive a normal request.
+#[cfg(not(any(kani, verus)))]
 fn validate_token_expiration(raw: &str, now: SystemTime) -> Result<SystemTime> {
     let expires_at =
         parse_github_timestamp(raw).ok_or_else(|| AppAuthError::InvalidTimestamp(raw.into()))?;
@@ -210,6 +258,7 @@ fn validate_token_expiration(raw: &str, now: SystemTime) -> Result<SystemTime> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn parse_github_timestamp(raw: &str) -> Option<SystemTime> {
     let bytes = raw.as_bytes();
     if bytes.len() < 20
@@ -397,3 +446,53 @@ mod tests {
         assert!(matches!(result, Err(AppAuthError::InvalidPrivateKey(_))));
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{is_positive_github_id_value, is_valid_github_id};
+
+    /// Proves the production positive-ID predicate across the full u64 domain.
+    #[kani::proof]
+    fn github_app_numeric_id_must_be_positive() {
+        let id: u64 = kani::any();
+        assert_eq!(is_positive_github_id_value(id), id > 0);
+    }
+
+    /// Proves the production byte parser on malformed and boundary identifiers.
+    /// These cases deliberately avoid allocating String values inside Kani.
+    #[kani::proof]
+    fn github_app_id_string_validation_rejects_invalid_values() {
+        assert!(!is_valid_github_id(""));
+        assert!(!is_valid_github_id("0"));
+        assert!(!is_valid_github_id("0000"));
+        assert!(!is_valid_github_id("-1"));
+        assert!(!is_valid_github_id("+1"));
+        assert!(!is_valid_github_id("1x"));
+        assert!(!is_valid_github_id("1 "));
+        assert!(!is_valid_github_id("18446744073709551616"));
+        assert!(is_valid_github_id("1"));
+        assert!(is_valid_github_id("0001"));
+        assert!(is_valid_github_id("18446744073709551615"));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::is_positive_github_id_value;
+    use vstd::prelude::*;
+
+    verus! {
+        /// Verifies the positivity predicate for every possible numeric GitHub ID.
+        proof fn github_app_numeric_id_must_be_positive(id: u64)
+            ensures
+                is_positive_github_id_value(id) == (id > 0),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

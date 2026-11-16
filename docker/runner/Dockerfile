@@ -11,7 +11,7 @@ ARG POWERSHELL_SHA256=492FF26BB958336BF61E597CE19E07648B4003BD2A08659E02F0E3E044
 
 # Build the GSR shell agent with a pinned Rust toolchain. BuildKit cache mounts
 # are persisted explicitly by the CI cache-dance step.
-FROM rust:1.99.1-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b AS gsr-builder
+FROM rust:1.100.0-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea AS gsr-builder
 
 WORKDIR /usr/src/gitrun
 
@@ -28,7 +28,7 @@ RUN --mount=type=cache,id=gitrun-runner-cargo-registry-v11,target=/usr/local/car
     && test -x /usr/src/gitrun/gitrun-gsr-agent \
     && test -x /usr/src/gitrun/gitrun-api
 
-FROM node:26.13.0-bookworm@sha256:fa52d1669505e29b58c042875b1d65c229e0787a3610fd52869b22b68e480853
+FROM node:26.13.1-bookworm@sha256:b7087bc4d973034b30854b378ba107f9fab622b47514cb7e2592e41b8bab8d49
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 

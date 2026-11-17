@@ -41,9 +41,60 @@ pub struct StateStore {
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
-#[cfg_attr(verus, verus_spec(returns name == "health.json" || name == "last-crash"))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns
+            (name.as_bytes().len() == 11
+                && name.as_bytes()[0] == b'h'
+                && name.as_bytes()[1] == b'e'
+                && name.as_bytes()[2] == b'a'
+                && name.as_bytes()[3] == b'l'
+                && name.as_bytes()[4] == b't'
+                && name.as_bytes()[5] == b'h'
+                && name.as_bytes()[6] == b'.'
+                && name.as_bytes()[7] == b'j'
+                && name.as_bytes()[8] == b's'
+                && name.as_bytes()[9] == b'o'
+                && name.as_bytes()[10] == b'n')
+            || (name.as_bytes().len() == 10
+                && name.as_bytes()[0] == b'l'
+                && name.as_bytes()[1] == b'a'
+                && name.as_bytes()[2] == b's'
+                && name.as_bytes()[3] == b't'
+                && name.as_bytes()[4] == b'-'
+                && name.as_bytes()[5] == b'c'
+                && name.as_bytes()[6] == b'r'
+                && name.as_bytes()[7] == b'a'
+                && name.as_bytes()[8] == b's'
+                && name.as_bytes()[9] == b'h')
+    )
+)]
 pub(crate) fn state_file_leaf_is_allowed(name: &str) -> bool {
-    name == "health.json" || name == "last-crash"
+    let bytes = name.as_bytes();
+    (bytes.len() == 11
+        && bytes[0] == b'h'
+        && bytes[1] == b'e'
+        && bytes[2] == b'a'
+        && bytes[3] == b'l'
+        && bytes[4] == b't'
+        && bytes[5] == b'h'
+        && bytes[6] == b'.'
+        && bytes[7] == b'j'
+        && bytes[8] == b's'
+        && bytes[9] == b'o'
+        && bytes[10] == b'n')
+        || (bytes.len() == 10
+            && bytes[0] == b'l'
+            && bytes[1] == b'a'
+            && bytes[2] == b's'
+            && bytes[3] == b't'
+            && bytes[4] == b'-'
+            && bytes[5] == b'c'
+            && bytes[6] == b'r'
+            && bytes[7] == b'a'
+            && bytes[8] == b's'
+            && bytes[9] == b'h')
 }
 
 #[cfg(not(any(kani, verus)))]

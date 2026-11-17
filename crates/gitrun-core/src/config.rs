@@ -904,10 +904,10 @@ fn validate_time(value: &str) -> Result<(), ConfigError> {
         || bytes[2] != b':'
         || !bytes[..2]
             .iter()
-            .all(|byte| (*byte >= b'0' && *byte <= b'9'))
+            .all(|byte| *byte >= b'0' && *byte <= b'9')
         || !bytes[3..]
             .iter()
-            .all(|byte| (*byte >= b'0' && *byte <= b'9'))
+            .all(|byte| *byte >= b'0' && *byte <= b'9')
     {
         return Err(ConfigError::Invalid(format!(
             "invalid container update time: {value}"
@@ -1018,7 +1018,7 @@ fn value_u8(value: &Option<String>, key: &str, default: u8) -> Result<u8, Config
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns (byte >= b'0' && byte <= b'9')))]
 pub(crate) fn is_config_ascii_digit(byte: u8) -> bool {
-    (byte >= b'0' && byte <= b'9')
+    byte >= b'0' && byte <= b'9'
 }
 
 fn is_positive_decimal_integer(value: &str) -> bool {

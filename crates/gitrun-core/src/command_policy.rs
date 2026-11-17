@@ -43,7 +43,7 @@ use vstd::contrib::exec_spec::*;
 #[cfg(verus)]
 verus! {
     exec_spec_verified! {
-        spec fn config_bytes_is_log_only(value: Seq<u8>) -> bool {
+        pub open spec fn config_bytes_is_log_only(value: Seq<u8>) -> bool {
             value.len() == 8
                 && value[0] == b'l'
                 && value[1] == b'o'
@@ -55,7 +55,7 @@ verus! {
                 && value[7] == b'y'
         }
 
-        spec fn config_bytes_is_kill_and_ban(value: Seq<u8>) -> bool {
+        pub open spec fn config_bytes_is_kill_and_ban(value: Seq<u8>) -> bool {
             value.len() == 12
                 && value[0] == b'k'
                 && value[1] == b'i'
@@ -74,12 +74,12 @@ verus! {
 }
 
 #[cfg(not(verus))]
-fn exec_config_bytes_is_log_only(value: &[u8]) -> bool {
+pub fn exec_config_bytes_is_log_only(value: &[u8]) -> bool {
     value == b"log_only"
 }
 
 #[cfg(not(verus))]
-fn exec_config_bytes_is_kill_and_ban(value: &[u8]) -> bool {
+pub fn exec_config_bytes_is_kill_and_ban(value: &[u8]) -> bool {
     value == b"kill_and_ban"
 }
 

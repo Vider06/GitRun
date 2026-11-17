@@ -94,9 +94,10 @@ pub enum ViolationAction {
 impl ViolationAction {
     #[cfg_attr(verus, verus_verify(dual_spec, open))]
     pub fn from_config_str(value: &str) -> Self {
-        if value == "log_only" {
+        let bytes = value.as_bytes();
+        if bytes.len() == 8 && bytes.starts_with(b"log_only") {
             Self::LogOnly
-        } else if value == "kill_and_ban" {
+        } else if bytes.len() == 12 && bytes.starts_with(b"kill_and_ban") {
             Self::KillAndBan
         } else {
             Self::Kill

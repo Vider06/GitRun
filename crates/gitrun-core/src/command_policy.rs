@@ -110,7 +110,13 @@ impl ViolationAction {
         verus,
         verus_spec(
             returns
-                value == "log_only" ==> Self::LogOnly
+                if value == "log_only" {
+                    Self::LogOnly
+                } else if value == "kill_and_ban" {
+                    Self::KillAndBan
+                } else {
+                    Self::Kill
+                }
         )
     )]
     pub fn from_config_str(value: &str) -> Self {

@@ -237,9 +237,9 @@ fn is_interpreter_or_command_wrapper(name: &str) -> bool {
     verus,
     verus_spec(
         returns
-            byte.is_ascii_lowercase()
-                || byte.is_ascii_uppercase()
-                || byte.is_ascii_digit()
+            (byte >= b'a' && byte <= b'z')
+                || (byte >= b'A' && byte <= b'Z')
+                || (byte >= b'0' && byte <= b'9')
                 || matches!(
                     byte,
                     b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
@@ -247,9 +247,9 @@ fn is_interpreter_or_command_wrapper(name: &str) -> bool {
     )
 )]
 pub(crate) fn is_simple_command_byte(byte: u8) -> bool {
-    byte.is_ascii_lowercase()
-        || byte.is_ascii_uppercase()
-        || byte.is_ascii_digit()
+    (byte >= b'a' && byte <= b'z')
+        || (byte >= b'A' && byte <= b'Z')
+        || (byte >= b'0' && byte <= b'9')
         || matches!(
             byte,
             b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
@@ -919,9 +919,9 @@ mod kani_verification {
     #[kani::proof]
     fn simple_command_byte_alphabet_is_closed() {
         let byte: u8 = kani::any();
-        let expected = byte.is_ascii_lowercase()
-            || byte.is_ascii_uppercase()
-            || byte.is_ascii_digit()
+        let expected = (byte >= b'a' && byte <= b'z')
+            || (byte >= b'A' && byte <= b'Z')
+            || (byte >= b'0' && byte <= b'9')
             || matches!(
                 byte,
                 b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
@@ -966,9 +966,9 @@ mod verus_verification {
             ensures
                 super::is_simple_command_byte(byte)
                     == (
-                        byte.is_ascii_lowercase()
-                            || byte.is_ascii_uppercase()
-                            || byte.is_ascii_digit()
+                        (byte >= b'a' && byte <= b'z')
+                            || (byte >= b'A' && byte <= b'Z')
+                            || (byte >= b'0' && byte <= b'9')
                             || matches!(
                                 byte,
                                 b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'

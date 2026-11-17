@@ -5,6 +5,9 @@
 //! Detection is deliberately conservative: unknown libc ABIs and unknown
 //! service/package managers remain unknown instead of being guessed.
 
+#[cfg(verus)]
+use vstd::prelude::*;
+
 #[cfg(not(any(kani, verus)))]
 use std::env;
 #[cfg(not(any(kani, verus)))]

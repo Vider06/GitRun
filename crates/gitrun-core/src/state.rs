@@ -40,6 +40,14 @@ pub struct StateStore {
     root: PathBuf,
 }
 
+#[cfg(not(verus))]
+pub(crate) fn state_file_leaf_is_allowed(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    (bytes.len() == 11 && bytes.starts_with(b"health.json"))
+        || (bytes.len() == 10 && bytes.starts_with(b"last-crash"))
+}
+
+#[cfg(verus)]
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(
     verus,

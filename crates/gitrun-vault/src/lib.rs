@@ -43,7 +43,7 @@
 //! backdoor); back it up if the vault holds anything that isn't otherwise
 //! recoverable.
 
-#[cfg(verus)]
+#[allow(unused_imports)]
 use vstd::prelude::*;
 
 #[cfg(not(any(kani, verus)))]

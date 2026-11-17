@@ -5,7 +5,7 @@
 //! It intentionally exposes stable domain APIs while keeping implementation
 //! details inside their respective modules.
 
-#[cfg(verus)]
+#[allow(unused_imports)]
 use vstd::prelude::*;
 
 // Keep shared modules explicit so crate consumers can audit the public surface.

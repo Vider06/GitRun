@@ -26,67 +26,66 @@ const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 /// dispatcher for arbitrary backend strings.
 #[cfg_attr(verus, verus_verify)]
 fn action_is_allowed(operation: &str, action: &str) -> bool {
-    // Match byte patterns instead of str equality / matches!(str, ...).
-    // The latter lowers to memcmp, which creates an expensive CBMC builtin
-    // proof path for this closed, finite protocol vocabulary.
+    // Compare exact byte slices instead of slice patterns. Kani's CBMC backend
+    // was treating the slice-pattern pointer checks as an invalid path for
+    // concrete string literals; equality preserves the closed byte vocabulary.
     match operation.as_bytes() {
-        [b'r', b'e', b'a', b'd'] => matches!(
-            action.as_bytes(),
-            [b'f', b'i', b'r', b's', b't', b'_', b'r', b'u', b'n']
-                | [b'o', b'v', b'e', b'r', b'v', b'i', b'e', b'w']
-                | [b'h', b'e', b'a', b'l', b't', b'h']
-                | [b'r', b'u', b'n', b'n', b'e', b'r', b's']
-                | [b'h', b'o', b's', b't', b'_', b'r', b'e', b's', b'o', b'u', b'r', b'c', b'e', b's']
-                | [b'r', b'e', b'p', b'o', b's', b'i', b't', b'o', b'r', b'y', b'_', b'a', b'c', b't', b'i', b'v', b'i', b't', b'y']
-                | [b'r', b'e', b'p', b'o', b'_', b'd', b'e', b't', b'a', b'i', b'l']
-                | [b'r', b'e', b'p', b'o', b'_', b'b', b'o', b'o', b't', b's', b't', b'r', b'a', b'p']
-                | [b'c', b'o', b'n', b'f', b'i', b'g']
-                | [b'g', b'i', b't', b'r', b'u', b'n', b'_', b's', b'e', b't', b't', b'i', b'n', b'g', b's']
-                | [b's', b'e', b'c', b'u', b'r', b'i', b't', b'y', b'_', b's', b'u', b'm', b'm', b'a', b'r', b'y']
-                | [b'v', b'a', b'u', b'l', b't', b'_', b's', b'e', b'c', b'r', b'e', b't', b's']
-                | [b'g', b's', b'r', b'_', b's', b't', b'a', b't', b'u', b's']
-                | [b'g', b's', b'r', b'_', b'e', b'v', b'e', b'n', b't', b's']
-                | [b's', b'e', b'r', b'v', b'i', b'c', b'e', b'_', b'l', b'o', b'g', b's']
-                | [b'z', b'i', b'z', b'm', b'o', b'r']
-                | [b'l', b'o', b'g', b'i', b'c', b'_', b'r', b'u', b'l', b'e', b's']
-                | [b'v', b'm', b'_', b'c', b'o', b'n', b'f', b'i', b'g', b's']
-                | [b'h', b'y', b'p', b'e', b'r', b'v', b'i', b's', b'o', b'r', b'_', b'd', b'e', b'c', b'i', b's', b'i', b'o', b'n', b's']
-                | [b'k', b'i', b't', b't', b'y']
-                | [b'r', b'e', b'p', b'o', b'_', b'a', b'p', b'i', b'_', b'p', b'o', b'l', b'i', b'c', b'i', b'e', b's']
-                | [b'd', b'o', b'c', b'k', b'_', b'r', b'e', b'q', b'u', b'i', b'r', b'e', b'm', b'e', b'n', b't', b's']
-                | [b'u', b'p', b'd', b'a', b't', b'e', b's']
-                | [b'u', b'p', b'd', b'a', b't', b'e', b'r', b'_', b's', b'e', b't', b't', b'i', b'n', b'g', b's']
-                | [b'u', b'p', b'd', b'a', b't', b'e', b'r', b'_', b'i', b'n', b'f', b'o']
-                | [b'i', b'p', b'c', b'_', b'p', b'i', b'n', b'g'] if cfg!(test)
-        ),
-        [b'w', b'r', b'i', b't', b'e'] => matches!(
-            action.as_bytes(),
-            [b'c', b'o', b'n', b'n', b'e', b'c', b't', b'_', b'r', b'e', b'p', b'o', b's', b'i', b't', b'o', b'r', b'y']
-                | [b'v', b'm', b'_', b'c', b'o', b'n', b'f', b'i', b'g', b's', b'_', b'r', b'e', b'p', b'l', b'a', b'c', b'e']
-                | [b'f', b'a', b's', b't', b'_', b's', b't', b'o', b'p']
-                | [b'v', b'a', b'u', b'l', b't', b'_', b's', b'e', b't']
-                | [b'v', b'a', b'u', b'l', b't', b'_', b'd', b'e', b'l', b'e', b't', b'e']
-                | [b'z', b'i', b'z', b'm', b'o', b'r', b'_', b'i', b'n', b's', b't', b'a', b'l', b'l']
-                | [b'z', b'i', b'z', b'm', b'o', b'r', b'_', b'd', b'i', b's', b'a', b'b', b'l', b'e']
-                | [b'l', b'o', b'g', b'i', b'c', b'_', b'r', b'u', b'l', b'e', b's', b'_', b's', b'a', b'v', b'e']
-                | [b'v', b'm', b'_', b's', b'a', b'v', b'e']
-                | [b'v', b'm', b'_', b'd', b'e', b'l', b'e', b't', b'e']
-                | [b'h', b'y', b'p', b'e', b'r', b'v', b'i', b's', b'o', b'r', b'_', b'r', b'e', b's', b'p', b'o', b'n', b'd']
-                | [b'k', b'i', b't', b't', b'y', b'_', b's', b'a', b'v', b'e']
-                | [b'g', b'i', b't', b'r', b'u', b'n', b'_', b's', b'e', b't', b't', b'i', b'n', b'g', b's', b'_', b's', b'a', b'v', b'e']
-                | [b'c', b'o', b'n', b'f', b'i', b'g', b'_', b's', b'a', b'v', b'e']
-                | [b'd', b'a', b's', b'h', b'b', b'o', b'a', b'r', b'd', b'_', b's', b'e', b't', b't', b'i', b'n', b'g', b's', b'_', b's', b'a', b'v', b'e']
-                | [b'u', b'p', b'd', b'a', b't', b'e', b'r', b'_', b's', b'e', b't', b't', b'i', b'n', b'g', b's', b'_', b's', b'a', b'v', b'e']
-                | [b'u', b'p', b'd', b'a', b't', b'e', b'r', b'_', b'o', b'p', b'e', b'r', b'a', b't', b'i', b'o', b'n', b'_', b'r', b'e', b'c', b'o', b'r', b'd']
-                | [b's', b'e', b'r', b'v', b'i', b'c', b'e', b'_', b'c', b'o', b'n', b't', b'r', b'o', b'l']
-                | [b'm', b'a', b'i', b'n', b't', b'e', b'n', b'a', b'n', b'c', b'e', b'_', b't', b'a', b's', b'k']
-                | [b'j', b's', b'o', b'n', b'_', b'r', b'e', b'c', b'o', b'v', b'e', b'r', b'y']
-                | [b'i', b'p', b'c', b'_', b't', b'e', b's', b't', b'_', b'w', b'r', b'i', b't', b'e'] if cfg!(test)
-        ),
+        b"read" => {
+            let action = action.as_bytes();
+            action == b"first_run"
+                || action == b"overview"
+                || action == b"health"
+                || action == b"runners"
+                || action == b"host_resources"
+                || action == b"repository_activity"
+                || action == b"repo_detail"
+                || action == b"repo_bootstrap"
+                || action == b"config"
+                || action == b"gitrun_settings"
+                || action == b"security_summary"
+                || action == b"vault_secrets"
+                || action == b"gsr_status"
+                || action == b"gsr_events"
+                || action == b"service_logs"
+                || action == b"zizmor"
+                || action == b"logic_rules"
+                || action == b"vm_configs"
+                || action == b"hypervisor_decisions"
+                || action == b"kitty"
+                || action == b"repo_api_policies"
+                || action == b"dock_requirements"
+                || action == b"updates"
+                || action == b"updater_settings"
+                || action == b"updater_info"
+                || (cfg!(test) && action == b"ipc_ping")
+        }
+        b"write" => {
+            let action = action.as_bytes();
+            action == b"connect_repository"
+                || action == b"vm_configs_replace"
+                || action == b"fast_stop"
+                || action == b"vault_set"
+                || action == b"vault_delete"
+                || action == b"zizmor_install"
+                || action == b"zizmor_disable"
+                || action == b"logic_rules_save"
+                || action == b"vm_save"
+                || action == b"vm_delete"
+                || action == b"hypervisor_respond"
+                || action == b"kitty_save"
+                || action == b"gitrun_settings_save"
+                || action == b"config_save"
+                || action == b"dashboard_settings_save"
+                || action == b"updater_settings_save"
+                || action == b"updater_operation_record"
+                || action == b"service_control"
+                || action == b"maintenance_task"
+                || action == b"json_recovery"
+                || (cfg!(test) && action == b"ipc_test_write")
+        }
         _ => false,
     }
 }
-
 #[cfg(not(any(kani, verus)))]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

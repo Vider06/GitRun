@@ -847,15 +847,22 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-
     #[test]
     fn repository_identity_requires_exactly_two_safe_segments() {
         for valid in ["owner/repo", "Vider06/GitRun", "owner_1/repo.name"] {
             assert!(valid_repository_identity(valid), "{valid}");
         }
         for invalid in [
-            "", "/repo", "owner/", "owner/repo/extra", "owner//repo", "../repo",
-            "owner/..", "owner /repo", " owner/repo", "owner/repo ",
+            "",
+            "/repo",
+            "owner/",
+            "owner/repo/extra",
+            "owner//repo",
+            "../repo",
+            "owner/..",
+            "owner /repo",
+            " owner/repo",
+            "owner/repo ",
         ] {
             assert!(!valid_repository_identity(invalid), "{invalid}");
         }

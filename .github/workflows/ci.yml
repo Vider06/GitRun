@@ -1909,8 +1909,12 @@ jobs:
           esac
           test -s "$out/GitRun-Server-$VERSION-$TARGET-server.tar.gz"
           test -s "$out/GitRun-Server-$VERSION-$TARGET-server.tar.zst"
-          tar -tzf "$out/GitRun-Server-$VERSION-$TARGET-server.tar.gz" | grep -Fq 'usr/bin/gitrun'
-          tar --zstd -tf "$out/GitRun-Server-$VERSION-$TARGET-server.tar.zst" | grep -Fq 'usr/bin/gitrun'
+          gzip_listing="$RUNNER_TEMP/gitrun-server-gzip-listing.txt"
+          tar -tzf "$out/GitRun-Server-$VERSION-$TARGET-server.tar.gz" > "$gzip_listing"
+          grep -Fq 'usr/bin/gitrun' "$gzip_listing"
+          zstd_listing="$RUNNER_TEMP/gitrun-server-zstd-listing.txt"
+          tar --zstd -tf "$out/GitRun-Server-$VERSION-$TARGET-server.tar.zst" > "$zstd_listing"
+          grep -Fq 'usr/bin/gitrun' "$zstd_listing"
           test -s "$out/GitRun-Server-$VERSION-linux-$cpu-xbps.xbps"
           if [[ "$TARGET" == *-gnu ]]; then
             deb="$out/GitRun-Server-$VERSION-linux-$cpu-deb.deb"

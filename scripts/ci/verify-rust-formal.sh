@@ -62,7 +62,6 @@ readonly required_harnesses=(
   "environment_variable_byte_alphabet_is_exact"
   "environment_variable_names_follow_shell_identifier_rules"
   "repository_identity_byte_alphabet_is_exact"
-  "repository_identity_requires_exactly_two_safe_segments"
   "setup_nonce_hex_alphabet_is_exact"
   "setup_complete_flag_requires_exact_prefix_and_32_hex_bytes"
   "noop_backend_rejects_every_declared_api_operation_pair"

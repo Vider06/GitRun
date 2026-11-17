@@ -812,6 +812,7 @@ pub struct WorkflowModel {
     verus,
     verus_spec(returns (byte >= b'0' && byte <= b'9') || (byte >= b'a' && byte <= b'f'))
 )]
+#[allow(clippy::manual_range_contains)] // Keep explicit byte bounds compatible with Verus.
 pub fn workload_id_byte_is_valid(byte: u8) -> bool {
     (byte >= b'0' && byte <= b'9') || (byte >= b'a' && byte <= b'f')
 }
@@ -941,6 +942,7 @@ fn valid_generated_gitrun_job_id_for_repository(code: &str, repository: &str) ->
 }
 
 #[cfg(not(any(kani, verus)))]
+#[allow(clippy::manual_range_contains)] // Keep explicit byte bounds consistent with the Verus-checked validator.
 fn generated_gitrun_job_sequence(code: &str) -> Option<u64> {
     let (repo_hash, sequence) = code.strip_prefix("grj-")?.split_once('-')?;
     if repo_hash.len() != 16

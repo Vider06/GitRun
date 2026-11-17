@@ -46,9 +46,29 @@ pub struct StateStore {
     verus_spec(returns name == "health.json" || name == "last-crash")
 )]
 pub(crate) fn state_file_leaf_is_allowed(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    (bytes.len() == 11 && bytes.starts_with(b"health.json"))
-        || (bytes.len() == 10 && bytes.starts_with(b"last-crash"))
+    (name.len() == 11
+        && name.get_char(0) == 'h'
+        && name.get_char(1) == 'e'
+        && name.get_char(2) == 'a'
+        && name.get_char(3) == 'l'
+        && name.get_char(4) == 't'
+        && name.get_char(5) == 'h'
+        && name.get_char(6) == '.'
+        && name.get_char(7) == 'j'
+        && name.get_char(8) == 's'
+        && name.get_char(9) == 'o'
+        && name.get_char(10) == 'n')
+        || (name.len() == 10
+            && name.get_char(0) == 'l'
+            && name.get_char(1) == 'a'
+            && name.get_char(2) == 's'
+            && name.get_char(3) == 't'
+            && name.get_char(4) == '-'
+            && name.get_char(5) == 'c'
+            && name.get_char(6) == 'r'
+            && name.get_char(7) == 'a'
+            && name.get_char(8) == 's'
+            && name.get_char(9) == 'h')
 }
 
 #[cfg(not(any(kani, verus)))]

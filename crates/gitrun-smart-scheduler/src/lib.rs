@@ -5,6 +5,9 @@
 //! unavailable, or in shadow mode. This crate emits only a bounded runner-floor
 //! recommendation; it has no GitHub, Docker, shell, secret-store, or GSR authority.
 
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 pub mod future_mapping;
 pub mod queueing;
 

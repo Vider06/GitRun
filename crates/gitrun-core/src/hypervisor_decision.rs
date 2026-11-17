@@ -84,14 +84,14 @@ fn decisions_dir(state_dir: &Path) -> PathBuf {
     verus,
     verus_spec(
         returns
-            byte.is_ascii_lowercase()
-                || byte.is_ascii_uppercase()
-                || byte.is_ascii_digit()
+            (byte >= b'a' && byte <= b'z')
+                || (byte >= b'A' && byte <= b'Z')
+                || (byte >= b'0' && byte <= b'9')
                 || byte == b'-'
     )
 )]
 pub(crate) fn decision_filename_byte_is_literal(byte: u8) -> bool {
-    byte.is_ascii_lowercase() || byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'-'
+    (byte >= b'a' && byte <= b'z') || (byte >= b'A' && byte <= b'Z') || (byte >= b'0' && byte <= b'9') || byte == b'-'
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]

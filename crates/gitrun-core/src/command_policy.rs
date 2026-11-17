@@ -109,10 +109,30 @@ impl ViolationAction {
         )
     )]
     pub fn from_config_bytes(value: &[u8]) -> Self {
-        if value@ == seq![b'l', b'o', b'g', b'_', b'o', b'n', b'l', b'y']
+        if value.len() == 8
+            && *vstd::slice::slice_index_get(value, 0) == b'l'
+            && *vstd::slice::slice_index_get(value, 1) == b'o'
+            && *vstd::slice::slice_index_get(value, 2) == b'g'
+            && *vstd::slice::slice_index_get(value, 3) == b'_'
+            && *vstd::slice::slice_index_get(value, 4) == b'o'
+            && *vstd::slice::slice_index_get(value, 5) == b'n'
+            && *vstd::slice::slice_index_get(value, 6) == b'l'
+            && *vstd::slice::slice_index_get(value, 7) == b'y'
         {
             Self::LogOnly
-        } else if value@ == seq![b'k', b'i', b'l', b'l', b'_', b'a', b'n', b'd', b'_', b'b', b'a', b'n']
+        } else if value.len() == 12
+            && *vstd::slice::slice_index_get(value, 0) == b'k'
+            && *vstd::slice::slice_index_get(value, 1) == b'i'
+            && *vstd::slice::slice_index_get(value, 2) == b'l'
+            && *vstd::slice::slice_index_get(value, 3) == b'l'
+            && *vstd::slice::slice_index_get(value, 4) == b'_'
+            && *vstd::slice::slice_index_get(value, 5) == b'a'
+            && *vstd::slice::slice_index_get(value, 6) == b'n'
+            && *vstd::slice::slice_index_get(value, 7) == b'd'
+            && *vstd::slice::slice_index_get(value, 8) == b'_'
+            && *vstd::slice::slice_index_get(value, 9) == b'b'
+            && *vstd::slice::slice_index_get(value, 10) == b'a'
+            && *vstd::slice::slice_index_get(value, 11) == b'n'
         {
             Self::KillAndBan
         } else {

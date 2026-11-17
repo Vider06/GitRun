@@ -5,6 +5,9 @@
 //! an ApiInvocation and sends it to the host-side GitRun service, where GSR
 //! authorizes the request before gitrun-exe sees it.
 
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 #[cfg(not(any(kani, verus)))]
 use gitrun_core::{GitRunApi, GitRunOperation};
 #[cfg(not(any(kani, verus)))]

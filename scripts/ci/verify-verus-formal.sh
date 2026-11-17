@@ -84,6 +84,10 @@ record_successful_verus_results() {
   local error_count
   local source
   local counts
+  local minimum_expected="${#sources[@]}"
+  if (( minimum_expected == 0 )); then
+    minimum_expected=1
+  fi
   if ! counts="$(verus_result_counts "$output")"; then
     proof_failures=$((proof_failures + 1))
     for source in "${sources[@]}"; do
@@ -93,12 +97,12 @@ record_successful_verus_results() {
     return 1
   fi
   read -r verified_count error_count <<< "$counts"
-  if (( verified_count == 0 || error_count != 0 )); then
+  if (( verified_count < minimum_expected || error_count != 0 )); then
     proof_failures=$((proof_failures + 1))
     for source in "${sources[@]}"; do
       record_result "$source" UNVERIFIED
     done
-    echo "Verus returned $verified_count verified and $error_count errors for $target; refusing to mark its sources PROVEN." >&2
+    echo "Verus returned $verified_count verified and $error_count errors for $target (minimum expected: $minimum_expected); refusing to mark its sources PROVEN." >&2
     return 1
   fi
   for source in "${sources[@]}"; do

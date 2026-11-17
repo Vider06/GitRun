@@ -5,6 +5,9 @@
 //! It intentionally exposes stable domain APIs while keeping implementation
 //! details inside their respective modules.
 
+#[cfg(verus)]
+use vstd::prelude::*;
+
 // Keep shared modules explicit so crate consumers can audit the public surface.
 pub mod api_policy;
 #[path = "app_auth.rs"]

@@ -6,7 +6,7 @@ use vstd::prelude::*;
 #[cfg(verus)]
 verus! {
     exec_spec_verified! {
-        spec fn state_file_leaf_is_allowed_spec(name: Seq<u8>) -> bool {
+        pub open spec fn state_file_leaf_is_allowed_spec(name: Seq<u8>) -> bool {
             (name.len() == 11
                 && name[0] == b'h'
                 && name[1] == b'e'
@@ -35,7 +35,7 @@ verus! {
 }
 
 #[cfg(not(verus))]
-fn exec_state_file_leaf_is_allowed_spec(name: &[u8]) -> bool {
+pub fn exec_state_file_leaf_is_allowed_spec(name: &[u8]) -> bool {
     name == b"health.json" || name == b"last-crash"
 }
 

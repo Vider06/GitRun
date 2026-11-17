@@ -1,3 +1,6 @@
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 #[cfg(not(any(kani, verus)))]
 pub mod api_service;
 pub mod backoff;

@@ -28,7 +28,7 @@ pub enum LinuxAbi {
 }
 
 impl LinuxAbi {
-    #[cfg_attr(verus, verus_verify)]
+    #[cfg_attr(verus, verus_verify(dual_spec, open))]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Gnu => "gnu",
@@ -50,7 +50,7 @@ pub enum PackageManager {
 }
 
 impl PackageManager {
-    #[cfg_attr(verus, verus_verify)]
+    #[cfg_attr(verus, verus_verify(dual_spec, open))]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Apt => "apt/dpkg",
@@ -64,7 +64,7 @@ impl PackageManager {
         }
     }
 
-    #[cfg_attr(verus, verus_verify)]
+    #[cfg_attr(verus, verus_verify(dual_spec, open))]
     const fn command(self) -> &'static str {
         match self {
             Self::Apt => "apt-get",
@@ -93,7 +93,7 @@ pub enum ManagedService {
 }
 
 impl ManagedService {
-    #[cfg_attr(verus, verus_verify)]
+    #[cfg_attr(verus, verus_verify(dual_spec, open))]
     pub const fn systemd_unit(self) -> &'static str {
         match self {
             Self::Scheduler => "gitrun.service",
@@ -101,7 +101,7 @@ impl ManagedService {
         }
     }
 
-    #[cfg_attr(verus, verus_verify)]
+    #[cfg_attr(verus, verus_verify(dual_spec, open))]
     pub const fn openrc_service(self) -> &'static str {
         match self {
             Self::Scheduler => "gitrun",
@@ -109,7 +109,7 @@ impl ManagedService {
         }
     }
 
-    #[cfg_attr(verus, verus_verify)]
+    #[cfg_attr(verus, verus_verify(dual_spec, open))]
     pub const fn runit_service_path(self) -> &'static str {
         match self {
             Self::Scheduler => "/var/service/gitrun",
@@ -162,7 +162,7 @@ pub struct ServiceCommand {
     pub args: Vec<String>,
 }
 
-#[cfg_attr(verus, verus_verify)]
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
 pub const fn service_command_candidates(manager: ServiceManager) -> &'static [&'static str] {
     match manager {
         ServiceManager::Systemd => &["/usr/bin/systemctl", "/bin/systemctl"],

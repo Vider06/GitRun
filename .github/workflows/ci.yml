@@ -1940,8 +1940,9 @@ jobs:
             grep -Fq 'etc/init.d/gitrun-gsr' <<< "$apk_contents"
           fi
           xbps="$out/GitRun-Server-$VERSION-linux-$cpu-xbps.xbps"
-          xbps_contents="$(tar -tf "$xbps")"
-          grep -F './usr/bin/gitrun' <<< "$xbps_contents"
+          xbps_listing="$RUNNER_TEMP/gitrun-xbps-package-listing.txt"
+          tar -tf "$xbps" > "$xbps_listing"
+          grep -Fxq './usr/bin/gitrun' "$xbps_listing"
           sha256sum "$out"/* > "$out/SHA256SUMS"
           echo "Audited every generated Server package for $TARGET."
       - name: Upload immutable target packages

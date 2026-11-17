@@ -5,6 +5,9 @@
 //! and authorized by GSR before they reach this layer. There is deliberately
 //! no variant for arbitrary shell/Docker commands.
 
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 use gitrun_core::api_policy::{GitRunApi, GitRunOperation};
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};

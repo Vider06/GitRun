@@ -210,7 +210,7 @@ mod kani_verification {
 
 #[cfg(verus)]
 mod verus_verification {
-    use super::state_file_leaf_is_allowed;
+    use super::state_file_leaf_is_allowed_bytes;
     use vstd::prelude::*;
 
     verus! {

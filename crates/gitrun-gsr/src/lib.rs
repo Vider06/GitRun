@@ -23,6 +23,9 @@
 //! Actions runner, so workflow code does not inherit that tracing capability.
 //! events.rs remains the shared integration point for durable security events.
 
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 pub mod agent;
 pub mod api_gate;
 pub mod automation_gate;

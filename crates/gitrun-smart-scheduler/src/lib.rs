@@ -810,10 +810,10 @@ pub struct WorkflowModel {
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(
     verus,
-    verus_spec(returns byte.is_ascii_digit() || (byte >= b'a' && byte <= b'f'))
+    verus_spec(returns (byte >= b'0' && byte <= b'9') || (byte >= b'a' && byte <= b'f'))
 )]
 pub fn workload_id_byte_is_valid(byte: u8) -> bool {
-    byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+    (byte >= b'0' && byte <= b'9') || (byte >= b'a' && byte <= b'f')
 }
 
 fn valid_workload_id(code: &str) -> bool {
@@ -946,11 +946,11 @@ fn generated_gitrun_job_sequence(code: &str) -> Option<u64> {
     if repo_hash.len() != 16
         || repo_hash
             .bytes()
-            .any(|byte| !(byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+            .any(|byte| !((byte >= b'0' && byte <= b'9') || (byte >= b'a' && byte <= b'f')))
         || sequence.len() != 16
         || sequence
             .bytes()
-            .any(|byte| !(byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+            .any(|byte| !((byte >= b'0' && byte <= b'9') || (byte >= b'a' && byte <= b'f')))
     {
         return None;
     }
@@ -7079,7 +7079,7 @@ mod kani_verification {
         let byte: u8 = kani::any();
         assert_eq!(
             workload_id_byte_is_valid(byte),
-            byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+            (byte >= b'0' && byte <= b'9') || (byte >= b'a' && byte <= b'f')
         );
     }
 
@@ -7105,7 +7105,7 @@ mod verus_verification {
         proof fn workload_id_hex_byte_alphabet_is_exact(byte: u8)
             ensures
                 workload_id_byte_is_valid(byte)
-                    == (byte.is_ascii_digit() || (byte >= b'a' && byte <= b'f')),
+                    == ((byte >= b'0' && byte <= b'9') || (byte >= b'a' && byte <= b'f')),
         {
         }
     }

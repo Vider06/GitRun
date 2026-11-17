@@ -37,6 +37,52 @@ use vstd::prelude::*;
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 
+#[cfg(verus)]
+use vstd::contrib::exec_spec::*;
+
+#[cfg(verus)]
+verus! {
+    exec_spec_verified! {
+        spec fn config_bytes_is_log_only(value: Seq<u8>) -> bool {
+            value.len() == 8
+                && value[0] == b'l'
+                && value[1] == b'o'
+                && value[2] == b'g'
+                && value[3] == b'_'
+                && value[4] == b'o'
+                && value[5] == b'n'
+                && value[6] == b'l'
+                && value[7] == b'y'
+        }
+
+        spec fn config_bytes_is_kill_and_ban(value: Seq<u8>) -> bool {
+            value.len() == 12
+                && value[0] == b'k'
+                && value[1] == b'i'
+                && value[2] == b'l'
+                && value[3] == b'l'
+                && value[4] == b'_'
+                && value[5] == b'a'
+                && value[6] == b'n'
+                && value[7] == b'd'
+                && value[8] == b'_'
+                && value[9] == b'b'
+                && value[10] == b'a'
+                && value[11] == b'n'
+        }
+    }
+}
+
+#[cfg(not(verus))]
+fn exec_config_bytes_is_log_only(value: &[u8]) -> bool {
+    value == b"log_only"
+}
+
+#[cfg(not(verus))]
+fn exec_config_bytes_is_kill_and_ban(value: &[u8]) -> bool {
+    value == b"kill_and_ban"
+}
+
 /// One configured policy list: a set of patterns plus whether the list is
 /// active at all. Kept as plain `Vec<String>` (not compiled regex) so the
 /// list can be shown back to an operator in the dashboard unchanged and so
@@ -99,9 +145,9 @@ impl ViolationAction {
         verus,
         verus_spec(
             returns
-                if value@ == seq![b'l', b'o', b'g', b'_', b'o', b'n', b'l', b'y'] {
+                if config_bytes_is_log_only(value@) {
                     Self::LogOnly
-                } else if value@ == seq![b'k', b'i', b'l', b'l', b'_', b'a', b'n', b'd', b'_', b'b', b'a', b'n'] {
+                } else if config_bytes_is_kill_and_ban(value@) {
                     Self::KillAndBan
                 } else {
                     Self::Kill
@@ -109,31 +155,9 @@ impl ViolationAction {
         )
     )]
     pub fn from_config_bytes(value: &[u8]) -> Self {
-        if value.len() == 8
-            && value[0] == b'l'
-            && value[1] == b'o'
-            && value[2] == b'g'
-            && value[3] == b'_'
-            && value[4] == b'o'
-            && value[5] == b'n'
-            && value[6] == b'l'
-            && value[7] == b'y'
-        {
+        if exec_config_bytes_is_log_only(value) {
             Self::LogOnly
-        } else if value.len() == 12
-            && value[0] == b'k'
-            && value[1] == b'i'
-            && value[2] == b'l'
-            && value[3] == b'l'
-            && value[4] == b'_'
-            && value[5] == b'a'
-            && value[6] == b'n'
-            && value[7] == b'd'
-            && value[8] == b'_'
-            && value[9] == b'b'
-            && value[10] == b'a'
-            && value[11] == b'n'
-        {
+        } else if exec_config_bytes_is_kill_and_ban(value) {
             Self::KillAndBan
         } else {
             Self::Kill

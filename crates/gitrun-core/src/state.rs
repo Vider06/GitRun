@@ -51,11 +51,29 @@ pub struct StateStore {
     )
 )]
 pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
-    matches!(
-        name,
-        [b'h', b'e', b'a', b'l', b't', b'h', b'.', b'j', b's', b'o', b'n']
-            | [b'l', b'a', b's', b't', b'-', b'c', b'r', b'a', b's', b'h']
-    )
+    (name.len() == 11
+        && name[0] == b'h'
+        && name[1] == b'e'
+        && name[2] == b'a'
+        && name[3] == b'l'
+        && name[4] == b't'
+        && name[5] == b'h'
+        && name[6] == b'.'
+        && name[7] == b'j'
+        && name[8] == b's'
+        && name[9] == b'o'
+        && name[10] == b'n')
+        || (name.len() == 10
+            && name[0] == b'l'
+            && name[1] == b'a'
+            && name[2] == b's'
+            && name[3] == b't'
+            && name[4] == b'-'
+            && name[5] == b'c'
+            && name[6] == b'r'
+            && name[7] == b'a'
+            && name[8] == b's'
+            && name[9] == b'h')
 }
 
 #[cfg(not(verus))]

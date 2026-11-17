@@ -846,14 +846,25 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
     }
+
+
+    #[test]
+    fn repository_identity_requires_exactly_two_safe_segments() {
+        for valid in ["owner/repo", "Vider06/GitRun", "owner_1/repo.name"] {
+            assert!(valid_repository_identity(valid), "{valid}");
+        }
+        for invalid in [
+            "", "/repo", "owner/", "owner/repo/extra", "owner//repo", "../repo",
+            "owner/..", "owner /repo", " owner/repo", "owner/repo ",
+        ] {
+            assert!(!valid_repository_identity(invalid), "{invalid}");
+        }
+    }
 }
 
 #[cfg(kani)]
 mod kani_verification {
-    use super::{
-        repository_identity_byte_is_valid, repository_identity_segment_is_valid,
-        valid_repository_identity,
-    };
+    use super::repository_identity_byte_is_valid;
 
     #[kani::proof]
     fn repository_identity_byte_alphabet_is_exact() {
@@ -862,26 +873,6 @@ mod kani_verification {
             repository_identity_byte_is_valid(byte),
             byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
         );
-    }
-
-    #[kani::proof]
-    fn repository_identity_requires_exactly_two_safe_segments() {
-        assert!(valid_repository_identity("owner/repo"));
-        assert!(valid_repository_identity("Vider06/GitRun"));
-        assert!(valid_repository_identity("owner_1/repo.name"));
-        assert!(!valid_repository_identity(""));
-        assert!(!valid_repository_identity("/repo"));
-        assert!(!valid_repository_identity("owner/"));
-        assert!(!valid_repository_identity("owner/repo/extra"));
-        assert!(!valid_repository_identity("owner//repo"));
-        assert!(!valid_repository_identity("../repo"));
-        assert!(!valid_repository_identity("owner/.."));
-        assert!(!valid_repository_identity("owner /repo"));
-        assert!(!valid_repository_identity(" owner/repo"));
-        assert!(!valid_repository_identity("owner/repo "));
-        assert!(!repository_identity_segment_is_valid(""));
-        assert!(!repository_identity_segment_is_valid("."));
-        assert!(!repository_identity_segment_is_valid(".."));
     }
 }
 

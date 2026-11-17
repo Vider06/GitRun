@@ -67,9 +67,10 @@ proof_failures=0
 verus_result_counts() {
   local output="$1"
   local result_line
-  result_line="$(printf '%s\\n' "$output" | grep -E 'verification results:: [0-9]+ verified, [0-9]+ errors' | tail -n 1 || true)"
-  if [[ "$result_line" =~ verification\\ results::\\ ([0-9]+)\\ verified,\\ ([0-9]+)\\ errors ]]; then
-    printf '%s %s\\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+  result_line="$(printf '%s\n' "$output" | grep -E 'verification results:: [0-9]+ verified, [0-9]+ errors' | tail -n 1 || true)"
+  local result_pattern='verification results:: ([0-9]+) verified, ([0-9]+) errors'
+  if [[ "$result_line" =~ $result_pattern ]]; then
+    printf '%s %s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
     return 0
   fi
   return 1
@@ -113,11 +114,11 @@ run_verus_target() {
   local output
   local rc
   if output="$("$verus" --cfg verus "$entrypoint" 2>&1)"; then
-    printf '%s\\n' "$output"
+    printf '%s\n' "$output"
     record_successful_verus_results "$output" "$entrypoint" "${sources[@]}" || true
   else
     rc=$?
-    printf '%s\\n' "$output"
+    printf '%s\n' "$output"
     proof_failures=$((proof_failures + 1))
     for source in "${sources[@]}"; do
       record_result "$source" FAILED
@@ -134,11 +135,11 @@ run_verus_package() {
   local output
   local rc
   if output="$(cargo verus verify --locked -p "$package" --lib -- --cfg verus 2>&1)"; then
-    printf '%s\\n' "$output"
+    printf '%s\n' "$output"
     record_successful_verus_results "$output" "Cargo package $package" "${sources[@]}" || true
   else
     rc=$?
-    printf '%s\\n' "$output"
+    printf '%s\n' "$output"
     proof_failures=$((proof_failures + 1))
     for source in "${sources[@]}"; do
       record_result "$source" FAILED
@@ -155,11 +156,11 @@ run_verus_binary() {
   local output
   local rc
   if output="$(cargo verus verify --locked -p "$package" --bin "$binary" -- --cfg verus 2>&1)"; then
-    printf '%s\\n' "$output"
+    printf '%s\n' "$output"
     record_successful_verus_results "$output" "Cargo binary $package/$binary" "$source" || true
   else
     rc=$?
-    printf '%s\\n' "$output"
+    printf '%s\n' "$output"
     proof_failures=$((proof_failures + 1))
     record_result "$source" FAILED
     echo "Verus Cargo binary verification failed: $package/$binary (exit $rc)." >&2
@@ -228,11 +229,11 @@ phase=smoke
 echo "Verifying the pinned verifier smoke test."
 smoke_output="$("$verus" --cfg verus verification/verus/smoke.rs 2>&1)" || {
   smoke_rc=$?
-  printf '%s\\n' "$smoke_output"
+  printf '%s\n' "$smoke_output"
   echo "Verus smoke verification failed (exit $smoke_rc)." >&2
   exit "$smoke_rc"
 }
-printf '%s\\n' "$smoke_output"
+printf '%s\n' "$smoke_output"
 if ! record_successful_verus_results "$smoke_output" "Verus smoke test"; then
   exit 1
 fi

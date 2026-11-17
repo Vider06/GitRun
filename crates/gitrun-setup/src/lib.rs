@@ -1,3 +1,6 @@
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 #[cfg(not(any(kani, verus)))]
 use gitrun_core::{Config, GitRunSettings};
 #[cfg(not(any(kani, verus)))]

@@ -108,7 +108,7 @@ impl ViolationAction {
                 }
         )
     )]
-    fn from_config_bytes(value: &[u8]) -> Self {
+    pub fn from_config_bytes(value: &[u8]) -> Self {
         if value.len() == 8
             && value[0] == b'l'
             && value[1] == b'o'

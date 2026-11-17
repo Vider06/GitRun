@@ -34,7 +34,9 @@ pub use command_policy::{
 pub use config::{Config, ConfigError};
 #[cfg(not(any(kani, verus)))]
 pub use github_auth::{GitHubAuth, GitHubAuthError};
-pub use runner::{Runner, RunnerPool, RunnerState};
+pub use runner::Runner;
+#[cfg(not(verus))]
+pub use runner::{RunnerPool, RunnerState};
 #[cfg(not(any(kani, verus)))]
 pub use settings::{
     ApiPolicyOverride, DockerPolicy, EffectiveRepositorySettings, GitRunSettings,

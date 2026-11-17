@@ -28,9 +28,7 @@ pub(crate) fn bounded_growth_upper(
     max_additional_runners: u32,
     max_runners: u32,
 ) -> u32 {
-    current_floor
-        .saturating_add(max_additional_runners)
-        .min(max_runners)
+    if current_floor.saturating_add(max_additional_runners) < max_runners { current_floor.saturating_add(max_additional_runners) } else { max_runners }
 }
 
 #[cfg(not(verus))]
@@ -398,7 +396,7 @@ mod kani_verification {
         let upper = bounded_growth_upper(current, additional, maximum);
         assert!(upper <= maximum);
         assert!(upper <= current.saturating_add(additional));
-        assert!(upper >= current.min(maximum));
+        assert!(upper >= if current < maximum { current } else { maximum });
         if current.saturating_add(additional) <= maximum {
             assert_eq!(upper, current.saturating_add(additional));
         } else {
@@ -423,7 +421,7 @@ mod verus_verification {
                 bounded_growth_upper(current, additional, maximum) <= maximum,
                 bounded_growth_upper(current, additional, maximum)
                     <= current.saturating_add(additional),
-                bounded_growth_upper(current, additional, maximum) >= current.min(maximum),
+                bounded_growth_upper(current, additional, maximum) >= if current < maximum { current } else { maximum },
                 current.saturating_add(additional) <= maximum
                     ==> bounded_growth_upper(current, additional, maximum)
                         == current.saturating_add(additional),

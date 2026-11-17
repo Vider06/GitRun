@@ -504,7 +504,9 @@ mod verus_verification {
                     assert(decision_filename_byte_code(left) == left as u16);
                     assert(decision_filename_byte_code(right) == right as u16);
                     assert(left as u16 == right as u16);
-                    assert(left == right) by (bit_vector);
+                    assert(left == right) by (bit_vector)
+                        requires
+                            left as u16 == right as u16;
                 } else {
                     assert(decision_filename_byte_code(left) < 256);
                     assert(decision_filename_byte_code(right) >= 256);
@@ -525,7 +527,9 @@ mod verus_verification {
                             == 256 + right as u16
                     );
                     assert(left as u16 == right as u16);
-                    assert(left == right) by (bit_vector);
+                    assert(left == right) by (bit_vector)
+                        requires
+                            left as u16 == right as u16;
                 }
             }
         }

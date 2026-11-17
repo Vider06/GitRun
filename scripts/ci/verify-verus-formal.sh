@@ -138,6 +138,11 @@ run_verus_package() {
   local -a sources=("$@")
   local output
   local rc
+  # Cargo may report an up-to-date target without invoking Verus, which means
+  # there is no fresh verifier summary to attribute to this production package.
+  # Remove only this package's artifacts so every certification unit executes
+  # Verus now; dependencies remain cached.
+  cargo clean -p "$package"
   if output="$(cargo verus verify --locked -p "$package" --lib -- --cfg verus 2>&1)"; then
     printf '%s\n' "$output"
     record_successful_verus_results "$output" "Cargo package $package" "${sources[@]}" || true
@@ -159,6 +164,9 @@ run_verus_binary() {
   local source="$3"
   local output
   local rc
+  # Force a fresh package build for the binary target as well. An old cached
+  # artifact is not evidence that this binary's current sources were verified.
+  cargo clean -p "$package"
   if output="$(cargo verus verify --locked -p "$package" --bin "$binary" -- --cfg verus 2>&1)"; then
     printf '%s\n' "$output"
     record_successful_verus_results "$output" "Cargo binary $package/$binary" "$source" || true

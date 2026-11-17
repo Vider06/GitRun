@@ -51,8 +51,29 @@ pub struct StateStore {
     )
 )]
 pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
-    name@ == seq![b'h', b'e', b'a', b'l', b't', b'h', b'.', b'j', b's', b'o', b'n']
-        || name@ == seq![b'l', b'a', b's', b't', b'-', b'c', b'r', b'a', b's', b'h']
+    (name.len() == 11
+        && *vstd::slice::slice_index_get(name, 0) == b'h'
+        && *vstd::slice::slice_index_get(name, 1) == b'e'
+        && *vstd::slice::slice_index_get(name, 2) == b'a'
+        && *vstd::slice::slice_index_get(name, 3) == b'l'
+        && *vstd::slice::slice_index_get(name, 4) == b't'
+        && *vstd::slice::slice_index_get(name, 5) == b'h'
+        && *vstd::slice::slice_index_get(name, 6) == b'.'
+        && *vstd::slice::slice_index_get(name, 7) == b'j'
+        && *vstd::slice::slice_index_get(name, 8) == b's'
+        && *vstd::slice::slice_index_get(name, 9) == b'o'
+        && *vstd::slice::slice_index_get(name, 10) == b'n')
+        || (name.len() == 10
+            && *vstd::slice::slice_index_get(name, 0) == b'l'
+            && *vstd::slice::slice_index_get(name, 1) == b'a'
+            && *vstd::slice::slice_index_get(name, 2) == b's'
+            && *vstd::slice::slice_index_get(name, 3) == b't'
+            && *vstd::slice::slice_index_get(name, 4) == b'-'
+            && *vstd::slice::slice_index_get(name, 5) == b'c'
+            && *vstd::slice::slice_index_get(name, 6) == b'r'
+            && *vstd::slice::slice_index_get(name, 7) == b'a'
+            && *vstd::slice::slice_index_get(name, 8) == b's'
+            && *vstd::slice::slice_index_get(name, 9) == b'h')
 }
 
 #[cfg(not(verus))]

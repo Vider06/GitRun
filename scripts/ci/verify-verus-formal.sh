@@ -64,17 +64,60 @@ record_result() {
 
 proof_failures=0
 
+verus_result_counts() {
+  local output="$1"
+  local result_line
+  result_line="$(printf '%s\\n' "$output" | grep -E 'verification results:: [0-9]+ verified, [0-9]+ errors' | tail -n 1 || true)"
+  if [[ "$result_line" =~ verification\\ results::\\ ([0-9]+)\\ verified,\\ ([0-9]+)\\ errors ]]; then
+    printf '%s %s\\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+    return 0
+  fi
+  return 1
+}
+
+record_successful_verus_results() {
+  local output="$1"
+  local target="$2"
+  local -a sources=("${@:3}")
+  local verified_count
+  local error_count
+  local source
+  local counts
+  if ! counts="$(verus_result_counts "$output")"; then
+    proof_failures=$((proof_failures + 1))
+    for source in "${sources[@]}"; do
+      record_result "$source" UNVERIFIED
+    done
+    echo "Verus returned success without a parseable verification summary for $target; refusing to mark its sources PROVEN." >&2
+    return 1
+  fi
+  read -r verified_count error_count <<< "$counts"
+  if (( verified_count == 0 || error_count != 0 )); then
+    proof_failures=$((proof_failures + 1))
+    for source in "${sources[@]}"; do
+      record_result "$source" UNVERIFIED
+    done
+    echo "Verus returned $verified_count verified and $error_count errors for $target; refusing to mark its sources PROVEN." >&2
+    return 1
+  fi
+  for source in "${sources[@]}"; do
+    record_result "$source" PROVEN
+  done
+  return 0
+}
+
 run_verus_target() {
   local entrypoint="$1"
   shift
   local -a sources=("$@")
-  local source
-  if "$verus" --cfg verus "$entrypoint"; then
-    for source in "${sources[@]}"; do
-      record_result "$source" PROVEN
-    done
+  local output
+  local rc
+  if output="$("$verus" --cfg verus "$entrypoint" 2>&1)"; then
+    printf '%s\\n' "$output"
+    record_successful_verus_results "$output" "$entrypoint" "${sources[@]}" || true
   else
-    local rc=$?
+    rc=$?
+    printf '%s\\n' "$output"
     proof_failures=$((proof_failures + 1))
     for source in "${sources[@]}"; do
       record_result "$source" FAILED
@@ -88,13 +131,14 @@ run_verus_package() {
   local package="$1"
   shift
   local -a sources=("$@")
-  local source
-  if cargo verus verify --locked -p "$package" --lib; then
-    for source in "${sources[@]}"; do
-      record_result "$source" PROVEN
-    done
+  local output
+  local rc
+  if output="$(cargo verus verify --locked -p "$package" --lib -- --cfg verus 2>&1)"; then
+    printf '%s\\n' "$output"
+    record_successful_verus_results "$output" "Cargo package $package" "${sources[@]}" || true
   else
-    local rc=$?
+    rc=$?
+    printf '%s\\n' "$output"
     proof_failures=$((proof_failures + 1))
     for source in "${sources[@]}"; do
       record_result "$source" FAILED
@@ -108,10 +152,14 @@ run_verus_binary() {
   local package="$1"
   local binary="$2"
   local source="$3"
-  if cargo verus verify --locked -p "$package" --bin "$binary"; then
-    record_result "$source" PROVEN
+  local output
+  local rc
+  if output="$(cargo verus verify --locked -p "$package" --bin "$binary" -- --cfg verus 2>&1)"; then
+    printf '%s\\n' "$output"
+    record_successful_verus_results "$output" "Cargo binary $package/$binary" "$source" || true
   else
-    local rc=$?
+    rc=$?
+    printf '%s\\n' "$output"
     proof_failures=$((proof_failures + 1))
     record_result "$source" FAILED
     echo "Verus Cargo binary verification failed: $package/$binary (exit $rc)." >&2
@@ -178,7 +226,16 @@ done
 echo "Verus executable: $verus"
 phase=smoke
 echo "Verifying the pinned verifier smoke test."
-"$verus" verification/verus/smoke.rs
+smoke_output="$("$verus" --cfg verus verification/verus/smoke.rs 2>&1)" || {
+  smoke_rc=$?
+  printf '%s\\n' "$smoke_output"
+  echo "Verus smoke verification failed (exit $smoke_rc)." >&2
+  exit "$smoke_rc"
+}
+printf '%s\\n' "$smoke_output"
+if ! record_successful_verus_results "$smoke_output" "Verus smoke test"; then
+  exit 1
+fi
 
 phase=proof
 echo "Verifying the standalone CLI presenter proof."

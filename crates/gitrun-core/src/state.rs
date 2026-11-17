@@ -50,7 +50,7 @@ pub struct StateStore {
                 || name@ == seq![b'l', b'a', b's', b't', b'-', b'c', b'r', b'a', b's', b'h']
     )
 )]
-fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
+pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
     (name.len() == 11
         && name[0] == b'h'
         && name[1] == b'e'

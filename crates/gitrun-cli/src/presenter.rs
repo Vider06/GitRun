@@ -1,3 +1,6 @@
+#[cfg(verus)]
+use vstd::prelude::*;
+
 #[cfg(not(any(kani, verus)))]
 use crossterm::{cursor::MoveToNextLine, execute, terminal};
 #[cfg(not(any(kani, verus)))]

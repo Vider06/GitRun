@@ -31,6 +31,9 @@
 //! trades some false negatives (obfuscated invocations) for a policy that is
 //! easy to audit and cannot itself be exploited via crafted input.
 
+#[cfg(verus)]
+use vstd::prelude::*;
+
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 

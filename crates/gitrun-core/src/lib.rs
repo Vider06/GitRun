@@ -12,10 +12,13 @@ use vstd::prelude::*;
 pub mod api_policy;
 #[path = "app_auth.rs"]
 pub mod app_auth;
+#[allow(clippy::manual_range_contains)] // Explicit byte bounds are retained for Verus compatibility.
 pub mod command_policy;
 pub mod compatibility;
+#[allow(clippy::manual_range_contains)] // Explicit byte bounds are retained for Verus compatibility.
 pub mod config;
 pub mod github_auth;
+#[allow(clippy::manual_range_contains)] // Explicit byte bounds are retained for Verus compatibility.
 pub mod hypervisor_decision;
 pub mod runner;
 pub mod settings;

@@ -19,10 +19,20 @@ use serde::{Deserialize, Serialize};
 
 #[cfg_attr(not(any(kani, verus)), derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(not(verus))]
 pub enum CompatibilityStatus {
     Compatible,
     Warning,
     Incompatible,
+}
+
+#[cfg(verus)]
+verus! {
+    pub enum CompatibilityStatus {
+        Compatible,
+        Warning,
+        Incompatible,
+    }
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]

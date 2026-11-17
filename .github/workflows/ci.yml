@@ -2970,9 +2970,11 @@ jobs:
         shell: bash
         run: bash scripts/ci/verify-rust-formal.sh
       - name: Install pinned Verus verifier
+        if: always()
         shell: bash
         run: bash scripts/ci/install-verus.sh
       - name: Verify Verus smoke and production proofs
+        if: always()
         shell: bash
         run: bash scripts/ci/verify-verus-formal.sh
       - name: Audit dual-verifier proof scope

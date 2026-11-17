@@ -64,7 +64,8 @@ impl PackageManager {
         }
     }
 
-    const fn command(self) -> &'static str {
+    #[cfg_attr(verus, verus_verify(dual_spec, open))]
+    pub const fn command(self) -> &'static str {
         match self {
             Self::Apt => "apt-get",
             Self::Dnf => "dnf",

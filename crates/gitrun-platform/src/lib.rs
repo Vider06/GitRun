@@ -50,6 +50,7 @@ pub enum PackageManager {
 }
 
 impl PackageManager {
+    #[cfg_attr(verus, verus_verify)]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Apt => "apt/dpkg",
@@ -1050,6 +1051,18 @@ mod verus_verification {
     use vstd::prelude::*;
 
     verus! {
+        // These Rust enums are intentionally declared outside verus! for normal
+        // builds. Their external type specifications expose the real variants
+        // to Verus so the following proofs inspect the production definitions.
+        #[verifier::external_type_specification]
+        pub struct ExLinuxAbi(crate::LinuxAbi);
+        #[verifier::external_type_specification]
+        pub struct ExPackageManager(crate::PackageManager);
+        #[verifier::external_type_specification]
+        pub struct ExManagedService(crate::ManagedService);
+        #[verifier::external_type_specification]
+        pub struct ExServiceManager(crate::ServiceManager);
+
         proof fn platform_abi_and_package_manager_names_are_stable() {
             assert(LinuxAbi::Gnu.as_str() == "gnu");
             assert(LinuxAbi::Musl.as_str() == "musl");

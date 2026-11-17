@@ -1,5 +1,8 @@
 //! Authentication source selection shared by GitRun frontends and services.
 
+#[cfg(verus)]
+use vstd::prelude::*;
+
 #[cfg(not(any(kani, verus)))]
 use crate::{app_auth::AppAuth, Config, ConfigError};
 #[cfg(not(any(kani, verus)))]

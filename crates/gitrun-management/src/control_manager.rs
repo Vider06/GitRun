@@ -26,61 +26,60 @@ const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 /// dispatcher for arbitrary backend strings.
 #[cfg_attr(verus, verus_verify)]
 fn action_is_allowed(operation: &str, action: &str) -> bool {
-    // Compare exact byte slices instead of slice patterns. Kani's CBMC backend
-    // was treating the slice-pattern pointer checks as an invalid path for
-    // concrete string literals; equality preserves the closed byte vocabulary.
-    if operation.as_bytes() == b"read" {
-            let action = action.as_bytes();
-            action == b"first_run"
-                || action == b"overview"
-                || action == b"health"
-                || action == b"runners"
-                || action == b"host_resources"
-                || action == b"repository_activity"
-                || action == b"repo_detail"
-                || action == b"repo_bootstrap"
-                || action == b"config"
-                || action == b"gitrun_settings"
-                || action == b"security_summary"
-                || action == b"vault_secrets"
-                || action == b"gsr_status"
-                || action == b"gsr_events"
-                || action == b"service_logs"
-                || action == b"zizmor"
-                || action == b"logic_rules"
-                || action == b"vm_configs"
-                || action == b"hypervisor_decisions"
-                || action == b"kitty"
-                || action == b"repo_api_policies"
-                || action == b"dock_requirements"
-                || action == b"updates"
-                || action == b"updater_settings"
-                || action == b"updater_info"
-                || (cfg!(test) && action == b"ipc_ping")
-        }
-    } else if operation.as_bytes() == b"write" {
-        let action = action.as_bytes();
-            action == b"connect_repository"
-                || action == b"vm_configs_replace"
-                || action == b"fast_stop"
-                || action == b"vault_set"
-                || action == b"vault_delete"
-                || action == b"zizmor_install"
-                || action == b"zizmor_disable"
-                || action == b"logic_rules_save"
-                || action == b"vm_save"
-                || action == b"vm_delete"
-                || action == b"hypervisor_respond"
-                || action == b"kitty_save"
-                || action == b"gitrun_settings_save"
-                || action == b"config_save"
-                || action == b"dashboard_settings_save"
-                || action == b"updater_settings_save"
-                || action == b"updater_operation_record"
-                || action == b"service_control"
-                || action == b"maintenance_task"
-                || action == b"json_recovery"
-                || (cfg!(test) && action == b"ipc_test_write")
+    // Exact byte-slice equality avoids slice-pattern pointer checks in Kani
+    // while preserving a closed, case-sensitive protocol vocabulary.
+    let operation = operation.as_bytes();
+    let action = action.as_bytes();
+
+    if operation == b"read" {
+        action == b"first_run"
+            || action == b"overview"
+            || action == b"health"
+            || action == b"runners"
+            || action == b"host_resources"
+            || action == b"repository_activity"
+            || action == b"repo_detail"
+            || action == b"repo_bootstrap"
+            || action == b"config"
+            || action == b"gitrun_settings"
+            || action == b"security_summary"
+            || action == b"vault_secrets"
+            || action == b"gsr_status"
+            || action == b"gsr_events"
+            || action == b"service_logs"
+            || action == b"zizmor"
+            || action == b"logic_rules"
+            || action == b"vm_configs"
+            || action == b"hypervisor_decisions"
+            || action == b"kitty"
+            || action == b"repo_api_policies"
+            || action == b"dock_requirements"
+            || action == b"updates"
+            || action == b"updater_settings"
+            || action == b"updater_info"
+            || (cfg!(test) && action == b"ipc_ping")
+    } else if operation == b"write" {
+        action == b"connect_repository"
+            || action == b"vm_configs_replace"
+            || action == b"fast_stop"
+            || action == b"vault_set"
+            || action == b"vault_delete"
+            || action == b"zizmor_install"
+            || action == b"zizmor_disable"
+            || action == b"logic_rules_save"
+            || action == b"vm_save"
+            || action == b"vm_delete"
+            || action == b"hypervisor_respond"
+            || action == b"kitty_save"
+            || action == b"gitrun_settings_save"
+            || action == b"config_save"
+            || action == b"dashboard_settings_save"
+            || action == b"updater_settings_save"
+            || action == b"updater_operation_record"
+            || action == b"service_control"
+            || action == b"maintenance_task"
+            || action == b"json_recovery"
+            || (cfg!(test) && action == b"ipc_test_write")
     } else {
         false
     }

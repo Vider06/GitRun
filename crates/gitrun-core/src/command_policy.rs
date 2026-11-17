@@ -94,10 +94,31 @@ pub enum ViolationAction {
 impl ViolationAction {
     #[cfg_attr(verus, verus_verify(dual_spec, open))]
     pub fn from_config_str(value: &str) -> Self {
-        let bytes = value.as_bytes();
-        if bytes.len() == 8 && bytes.starts_with(b"log_only") {
+        if value.len() == 8
+            && value.get_char(0) == 'l'
+            && value.get_char(1) == 'o'
+            && value.get_char(2) == 'g'
+            && value.get_char(3) == '_'
+            && value.get_char(4) == 'o'
+            && value.get_char(5) == 'n'
+            && value.get_char(6) == 'l'
+            && value.get_char(7) == 'y'
+        {
             Self::LogOnly
-        } else if bytes.len() == 12 && bytes.starts_with(b"kill_and_ban") {
+        } else if value.len() == 12
+            && value.get_char(0) == 'k'
+            && value.get_char(1) == 'i'
+            && value.get_char(2) == 'l'
+            && value.get_char(3) == 'l'
+            && value.get_char(4) == '_'
+            && value.get_char(5) == 'a'
+            && value.get_char(6) == 'n'
+            && value.get_char(7) == 'd'
+            && value.get_char(8) == '_'
+            && value.get_char(9) == 'b'
+            && value.get_char(10) == 'a'
+            && value.get_char(11) == 'n'
+        {
             Self::KillAndBan
         } else {
             Self::Kill

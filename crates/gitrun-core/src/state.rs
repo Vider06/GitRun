@@ -54,29 +54,8 @@ pub(crate) fn state_file_leaf_is_allowed(name: &str) -> bool {
     verus_spec(returns name == "health.json" || name == "last-crash")
 )]
 pub(crate) fn state_file_leaf_is_allowed(name: &str) -> bool {
-    (name.len() == 11
-        && name.get_char(0) == 'h'
-        && name.get_char(1) == 'e'
-        && name.get_char(2) == 'a'
-        && name.get_char(3) == 'l'
-        && name.get_char(4) == 't'
-        && name.get_char(5) == 'h'
-        && name.get_char(6) == '.'
-        && name.get_char(7) == 'j'
-        && name.get_char(8) == 's'
-        && name.get_char(9) == 'o'
-        && name.get_char(10) == 'n')
-        || (name.len() == 10
-            && name.get_char(0) == 'l'
-            && name.get_char(1) == 'a'
-            && name.get_char(2) == 's'
-            && name.get_char(3) == 't'
-            && name.get_char(4) == '-'
-            && name.get_char(5) == 'c'
-            && name.get_char(6) == 'r'
-            && name.get_char(7) == 'a'
-            && name.get_char(8) == 's'
-            && name.get_char(9) == 'h')
+    (name.len() == 11 && name.starts_with("health.json"))
+        || (name.len() == 10 && name.starts_with("last-crash"))
 }
 
 #[cfg(not(any(kani, verus)))]

@@ -28,7 +28,11 @@ pub(crate) fn bounded_growth_upper(
     max_additional_runners: u32,
     max_runners: u32,
 ) -> u32 {
-    if current_floor.saturating_add(max_additional_runners) < max_runners { current_floor.saturating_add(max_additional_runners) } else { max_runners }
+    if current_floor.saturating_add(max_additional_runners) < max_runners {
+        current_floor.saturating_add(max_additional_runners)
+    } else {
+        max_runners
+    }
 }
 
 #[cfg(not(verus))]

@@ -1114,7 +1114,10 @@ fn is_valid_docker_name(value: &str) -> bool {
     )
 )]
 pub(crate) fn is_repository_component_byte(byte: u8) -> bool {
-    ((byte >= b'a' && byte <= b'z') || (byte >= b'A' && byte <= b'Z') || (byte >= b'0' && byte <= b'9')) || matches!(byte, b'_' | b'.' | b'-')
+    ((byte >= b'a' && byte <= b'z')
+        || (byte >= b'A' && byte <= b'Z')
+        || (byte >= b'0' && byte <= b'9'))
+        || matches!(byte, b'_' | b'.' | b'-')
 }
 
 fn valid_repository_component(part: &str) -> bool {
@@ -1657,7 +1660,10 @@ mod kani_verification {
     #[kani::proof]
     fn repository_component_byte_alphabet_is_exact() {
         let byte: u8 = kani::any();
-        let expected = ((byte >= b'a' && byte <= b'z') || (byte >= b'A' && byte <= b'Z') || (byte >= b'0' && byte <= b'9')) || matches!(byte, b'_' | b'.' | b'-');
+        let expected = ((byte >= b'a' && byte <= b'z')
+            || (byte >= b'A' && byte <= b'Z')
+            || (byte >= b'0' && byte <= b'9'))
+            || matches!(byte, b'_' | b'.' | b'-');
         assert_eq!(is_repository_component_byte(byte), expected);
     }
 

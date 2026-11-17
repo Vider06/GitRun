@@ -91,7 +91,10 @@ fn decisions_dir(state_dir: &Path) -> PathBuf {
     )
 )]
 pub(crate) fn decision_filename_byte_is_literal(byte: u8) -> bool {
-    (byte >= b'a' && byte <= b'z') || (byte >= b'A' && byte <= b'Z') || (byte >= b'0' && byte <= b'9') || byte == b'-'
+    (byte >= b'a' && byte <= b'z')
+        || (byte >= b'A' && byte <= b'Z')
+        || (byte >= b'0' && byte <= b'9')
+        || byte == b'-'
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]

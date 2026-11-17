@@ -194,7 +194,7 @@ mod tests {
 
 #[cfg(kani)]
 mod kani_verification {
-    use super::state_file_leaf_is_allowed;
+    use super::state_file_leaf_is_allowed_bytes;
 
     #[kani::proof]
     fn state_store_accepts_only_its_two_fixed_leaf_names() {
@@ -214,7 +214,7 @@ mod verus_verification {
     use vstd::prelude::*;
 
     verus! {
-        proof fn state_store_accepts_only_its_two_fixed_leaf_names(name: &str)
+        proof fn state_store_accepts_only_its_two_fixed_leaf_names(name: &[u8])
             ensures
                 state_file_leaf_is_allowed_bytes(name)
                     == (

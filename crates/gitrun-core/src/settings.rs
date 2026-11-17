@@ -11,6 +11,9 @@
 //! Repository settings can only narrow the global policy. They cannot
 //! re-enable an API or operation that the global policy disabled.
 
+#[cfg(verus)]
+use vstd::prelude::*;
+
 #[cfg(not(any(kani, verus)))]
 use crate::api_policy::{ApiPolicy, GitRunApi, GitRunOperation, PolicyMatrix};
 #[cfg(not(any(kani, verus)))]

@@ -43,6 +43,9 @@
 //! backdoor); back it up if the vault holds anything that isn't otherwise
 //! recoverable.
 
+#[cfg(verus)]
+use vstd::prelude::*;
+
 #[cfg(not(any(kani, verus)))]
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 #[cfg(not(any(kani, verus)))]

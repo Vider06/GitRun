@@ -1,5 +1,43 @@
 #[cfg(verus)]
 use vstd::prelude::*;
+#[cfg(verus)]
+use vstd::contrib::exec_spec::*;
+
+#[cfg(verus)]
+verus! {
+    exec_spec_verified! {
+        spec fn state_file_leaf_is_allowed_spec(name: Seq<u8>) -> bool {
+            (name.len() == 11
+                && name[0] == b'h'
+                && name[1] == b'e'
+                && name[2] == b'a'
+                && name[3] == b'l'
+                && name[4] == b't'
+                && name[5] == b'h'
+                && name[6] == b'.'
+                && name[7] == b'j'
+                && name[8] == b's'
+                && name[9] == b'o'
+                && name[10] == b'n')
+                || (name.len() == 10
+                    && name[0] == b'l'
+                    && name[1] == b'a'
+                    && name[2] == b's'
+                    && name[3] == b't'
+                    && name[4] == b'-'
+                    && name[5] == b'c'
+                    && name[6] == b'r'
+                    && name[7] == b'a'
+                    && name[8] == b's'
+                    && name[9] == b'h')
+        }
+    }
+}
+
+#[cfg(not(verus))]
+fn exec_state_file_leaf_is_allowed_spec(name: &[u8]) -> bool {
+    name == b"health.json" || name == b"last-crash"
+}
 
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
@@ -46,34 +84,11 @@ pub struct StateStore {
     verus,
     verus_spec(
         returns
-            name@ == seq![b'h', b'e', b'a', b'l', b't', b'h', b'.', b'j', b's', b'o', b'n']
-                || name@ == seq![b'l', b'a', b's', b't', b'-', b'c', b'r', b'a', b's', b'h']
+            state_file_leaf_is_allowed_spec(name@)
     )
 )]
 pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
-    (name.len() == 11
-        && name[0] == b'h'
-        && name[1] == b'e'
-        && name[2] == b'a'
-        && name[3] == b'l'
-        && name[4] == b't'
-        && name[5] == b'h'
-        && name[6] == b'.'
-        && name[7] == b'j'
-        && name[8] == b's'
-        && name[9] == b'o'
-        && name[10] == b'n')
-        || (name.len() == 10
-            && name[0] == b'l'
-            && name[1] == b'a'
-            && name[2] == b's'
-            && name[3] == b't'
-            && name[4] == b'-'
-            && name[5] == b'c'
-            && name[6] == b'r'
-            && name[7] == b'a'
-            && name[8] == b's'
-            && name[9] == b'h')
+    exec_state_file_leaf_is_allowed_spec(name)
 }
 
 #[cfg(not(verus))]

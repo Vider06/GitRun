@@ -4,6 +4,9 @@
 //! the workflow appears to require and resolves them against the repository's
 //! effective GitRun policy. The analyzer is intentionally conservative.
 
+#[cfg(verus)]
+use vstd::prelude::*;
+
 #[cfg(not(any(kani, verus)))]
 use crate::{
     api_policy::{GitRunApi, GitRunOperation},

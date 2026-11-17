@@ -14,6 +14,9 @@
 //! existing raw PAT feed it the same way — see `github.rs`'s
 //! `GitHubClient::new`/`with_app_auth`.
 
+#[cfg(verus)]
+use vstd::prelude::*;
+
 #[cfg(not(any(kani, verus)))]
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 #[cfg(not(any(kani, verus)))]

@@ -92,12 +92,24 @@ pub enum ViolationAction {
 }
 
 impl ViolationAction {
-    #[cfg_attr(verus, verus_verify)]
+    #[cfg_attr(verus, verus_verify(dual_spec, open))]
     pub fn from_config_str(value: &str) -> Self {
-        match value {
-            "log_only" => Self::LogOnly,
-            "kill_and_ban" => Self::KillAndBan,
-            _ => Self::Kill,
+        let bytes = value.as_bytes();
+        if bytes.len() == 8
+            && bytes[0] == b'l' && bytes[1] == b'o' && bytes[2] == b'g'
+            && bytes[3] == b'_' && bytes[4] == b'o' && bytes[5] == b'n'
+            && bytes[6] == b'l' && bytes[7] == b'y'
+        {
+            Self::LogOnly
+        } else if bytes.len() == 12
+            && bytes[0] == b'k' && bytes[1] == b'i' && bytes[2] == b'l'
+            && bytes[3] == b'l' && bytes[4] == b'_' && bytes[5] == b'a'
+            && bytes[6] == b'n' && bytes[7] == b'd' && bytes[8] == b'_'
+            && bytes[9] == b'b' && bytes[10] == b'a' && bytes[11] == b'n'
+        {
+            Self::KillAndBan
+        } else {
+            Self::Kill
         }
     }
 

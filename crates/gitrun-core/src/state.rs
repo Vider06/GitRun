@@ -1,7 +1,7 @@
 #[cfg(verus)]
-use vstd::prelude::*;
-#[cfg(verus)]
 use vstd::contrib::exec_spec::*;
+#[cfg(verus)]
+use vstd::prelude::*;
 
 #[cfg(verus)]
 verus! {

@@ -5,7 +5,7 @@
 //! Detection is deliberately conservative: unknown libc ABIs and unknown
 //! service/package managers remain unknown instead of being guessed.
 
-#[cfg(verus)]
+#[allow(unused_imports)]
 use vstd::prelude::*;
 
 #[cfg(not(any(kani, verus)))]

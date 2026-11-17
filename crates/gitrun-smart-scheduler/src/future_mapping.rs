@@ -2,6 +2,9 @@
 //!
 //! This module is advisory only. It cannot create runners or bypass GSR,
 //! deterministic reconciliation, operator ceilings or the adaptive host budget.
+
+#[cfg(verus)]
+use vstd::prelude::*;
 #[cfg(not(any(kani, verus)))]
 use super::{
     valid_repository, KittyError, Observation, Result, WorkloadResourceObservation, BUCKET_SECONDS,

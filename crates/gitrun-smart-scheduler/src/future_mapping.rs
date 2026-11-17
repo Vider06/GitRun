@@ -158,9 +158,9 @@ pub fn calculate_think_report(
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
-#[cfg_attr(verus, verus_spec(returns p90.saturating_add(trend).min(100_000)))]
+#[cfg_attr(verus, verus_spec(returns if p90.saturating_add(trend) < 100_000 { p90.saturating_add(trend) } else { 100_000 }))]
 pub(crate) fn bounded_peak_demand(p90: u32, trend: u32) -> u32 {
-    p90.saturating_add(trend).min(100_000)
+    if p90.saturating_add(trend) < 100_000 { p90.saturating_add(trend) } else { 100_000 }
 }
 
 #[cfg(not(any(kani, verus)))]
@@ -786,7 +786,7 @@ mod kani_verification {
         let trend: u32 = kani::any();
         let peak = bounded_peak_demand(p90, trend);
         assert!(peak <= 100_000);
-        assert_eq!(peak, p90.saturating_add(trend).min(100_000));
+        assert_eq!(peak, if p90.saturating_add(trend) < 100_000 { p90.saturating_add(trend) } else { 100_000 });
         if p90.saturating_add(trend) <= 100_000 {
             assert_eq!(peak, p90.saturating_add(trend));
         }
@@ -803,7 +803,7 @@ mod verus_verification {
             ensures
                 bounded_peak_demand(p90, trend) <= 100_000,
                 bounded_peak_demand(p90, trend)
-                    == p90.saturating_add(trend).min(100_000),
+                    == if p90.saturating_add(trend) < 100_000 { p90.saturating_add(trend) } else { 100_000 },
                 p90.saturating_add(trend) <= 100_000
                     ==> bounded_peak_demand(p90, trend) == p90.saturating_add(trend),
         {

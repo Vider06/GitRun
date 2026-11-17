@@ -902,8 +902,8 @@ fn validate_time(value: &str) -> Result<(), ConfigError> {
     let bytes = value.as_bytes();
     if bytes.len() != 5
         || bytes[2] != b':'
-        || !bytes[..2].iter().all(|byte| byte.is_ascii_digit())
-        || !bytes[3..].iter().all(|byte| byte.is_ascii_digit())
+        || !bytes[..2].iter().all(|byte| (byte >= b'0' && byte <= b'9'))
+        || !bytes[3..].iter().all(|byte| (byte >= b'0' && byte <= b'9'))
     {
         return Err(ConfigError::Invalid(format!(
             "invalid container update time: {value}"
@@ -1012,9 +1012,9 @@ fn value_u8(value: &Option<String>, key: &str, default: u8) -> Result<u8, Config
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
-#[cfg_attr(verus, verus_spec(returns byte.is_ascii_digit()))]
+#[cfg_attr(verus, verus_spec(returns (byte >= b'0' && byte <= b'9')))]
 pub(crate) fn is_config_ascii_digit(byte: u8) -> bool {
-    byte.is_ascii_digit()
+    (byte >= b'0' && byte <= b'9')
 }
 
 fn is_positive_decimal_integer(value: &str) -> bool {
@@ -1110,11 +1110,11 @@ fn is_valid_docker_name(value: &str) -> bool {
 #[cfg_attr(
     verus,
     verus_spec(
-        returns byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-')
+        returns ((byte >= b'a' && byte <= b'z') || (byte >= b'A' && byte <= b'Z') || (byte >= b'0' && byte <= b'9')) || matches!(byte, b'_' | b'.' | b'-')
     )
 )]
 pub(crate) fn is_repository_component_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-')
+    ((byte >= b'a' && byte <= b'z') || (byte >= b'A' && byte <= b'Z') || (byte >= b'0' && byte <= b'9')) || matches!(byte, b'_' | b'.' | b'-')
 }
 
 fn valid_repository_component(part: &str) -> bool {
@@ -1651,13 +1651,13 @@ mod kani_verification {
     #[kani::proof]
     fn ascii_digit_classifier_is_exact() {
         let byte: u8 = kani::any();
-        assert_eq!(is_config_ascii_digit(byte), byte.is_ascii_digit());
+        assert_eq!(is_config_ascii_digit(byte), (byte >= b'0' && byte <= b'9'));
     }
 
     #[kani::proof]
     fn repository_component_byte_alphabet_is_exact() {
         let byte: u8 = kani::any();
-        let expected = byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-');
+        let expected = ((byte >= b'a' && byte <= b'z') || (byte >= b'A' && byte <= b'Z') || (byte >= b'0' && byte <= b'9')) || matches!(byte, b'_' | b'.' | b'-');
         assert_eq!(is_repository_component_byte(byte), expected);
     }
 
@@ -1705,14 +1705,14 @@ mod verus_verification {
     verus! {
         proof fn ascii_digit_classifier_is_exact(byte: u8)
             ensures
-                is_config_ascii_digit(byte) == byte.is_ascii_digit(),
+                is_config_ascii_digit(byte) == (byte >= b'0' && byte <= b'9'),
         {
         }
 
         proof fn repository_component_byte_alphabet_is_exact(byte: u8)
             ensures
                 is_repository_component_byte(byte)
-                    == (byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-')),
+                    == (((byte >= b'a' && byte <= b'z') || (byte >= b'A' && byte <= b'Z') || (byte >= b'0' && byte <= b'9')) || matches!(byte, b'_' | b'.' | b'-')),
         {
         }
     }

@@ -902,12 +902,8 @@ fn validate_time(value: &str) -> Result<(), ConfigError> {
     let bytes = value.as_bytes();
     if bytes.len() != 5
         || bytes[2] != b':'
-        || !bytes[..2]
-            .iter()
-            .all(|byte| *byte >= b'0' && *byte <= b'9')
-        || !bytes[3..]
-            .iter()
-            .all(|byte| *byte >= b'0' && *byte <= b'9')
+        || !bytes[..2].iter().all(|byte| *byte >= b'0' && *byte <= b'9')
+        || !bytes[3..].iter().all(|byte| *byte >= b'0' && *byte <= b'9')
     {
         return Err(ConfigError::Invalid(format!(
             "invalid container update time: {value}"

@@ -101,7 +101,7 @@ pub(crate) fn decision_filename_byte_is_literal(byte: u8) -> bool {
         returns if decision_filename_byte_is_literal(byte) {
             byte as u16
         } else {
-            256 + byte as u16
+            256u16 + byte as u16
         }
     )
 )]

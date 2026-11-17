@@ -29,8 +29,7 @@ fn action_is_allowed(operation: &str, action: &str) -> bool {
     // Compare exact byte slices instead of slice patterns. Kani's CBMC backend
     // was treating the slice-pattern pointer checks as an invalid path for
     // concrete string literals; equality preserves the closed byte vocabulary.
-    match operation.as_bytes() {
-        b"read" => {
+    if operation.as_bytes() == b"read" {
             let action = action.as_bytes();
             action == b"first_run"
                 || action == b"overview"
@@ -59,8 +58,8 @@ fn action_is_allowed(operation: &str, action: &str) -> bool {
                 || action == b"updater_info"
                 || (cfg!(test) && action == b"ipc_ping")
         }
-        b"write" => {
-            let action = action.as_bytes();
+    } else if operation.as_bytes() == b"write" {
+        let action = action.as_bytes();
             action == b"connect_repository"
                 || action == b"vm_configs_replace"
                 || action == b"fast_stop"
@@ -82,8 +81,8 @@ fn action_is_allowed(operation: &str, action: &str) -> bool {
                 || action == b"maintenance_task"
                 || action == b"json_recovery"
                 || (cfg!(test) && action == b"ipc_test_write")
-        }
-        _ => false,
+    } else {
+        false
     }
 }
 #[cfg(not(any(kani, verus)))]

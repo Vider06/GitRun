@@ -5,6 +5,9 @@
 //! callers must report missing or failed scans rather than treating them as
 //! a clean result.
 
+#[cfg(verus)]
+use vstd::prelude::*;
+
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 #[cfg(not(any(kani, verus)))]

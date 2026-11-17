@@ -92,41 +92,44 @@ pub enum ViolationAction {
 }
 
 impl ViolationAction {
-    #[cfg(not(verus))]
-    pub fn from_config_str(value: &str) -> Self {
-        let bytes = value.as_bytes();
-        if bytes.len() == 8 && bytes.starts_with(b"log_only") {
-            Self::LogOnly
-        } else if bytes.len() == 12 && bytes.starts_with(b"kill_and_ban") {
-            Self::KillAndBan
-        } else {
-            Self::Kill
-        }
-    }
-
-    #[cfg(verus)]
+    /// Shared byte-oriented implementation. Runtime converts UTF-8 once;
+    /// Verus proves the exact byte-level decision without string APIs.
     #[cfg_attr(verus, verus_verify(dual_spec, open))]
     #[cfg_attr(
         verus,
         verus_spec(
             returns
-                if value == "log_only" {
+                if value@ == seq![b'l', b'o', b'g', b'_', b'o', b'n', b'l', b'y'] {
                     Self::LogOnly
-                } else if value == "kill_and_ban" {
+                } else if value@ == seq![b'k', b'i', b'l', b'l', b'_', b'a', b'n', b'd', b'_', b'b', b'a', b'n'] {
                     Self::KillAndBan
                 } else {
                     Self::Kill
                 }
         )
     )]
-    pub fn from_config_str(value: &str) -> Self {
-        if value.len() == 8 && value.starts_with("log_only") {
+    fn from_config_bytes(value: &[u8]) -> Self {
+        if value.len() == 8
+            && value[0] == b'l' && value[1] == b'o' && value[2] == b'g'
+            && value[3] == b'_' && value[4] == b'o' && value[5] == b'n'
+            && value[6] == b'l' && value[7] == b'y'
+        {
             Self::LogOnly
-        } else if value.len() == 12 && value.starts_with("kill_and_ban") {
+        } else if value.len() == 12
+            && value[0] == b'k' && value[1] == b'i' && value[2] == b'l'
+            && value[3] == b'l' && value[4] == b'_' && value[5] == b'a'
+            && value[6] == b'n' && value[7] == b'd' && value[8] == b'_'
+            && value[9] == b'b' && value[10] == b'a' && value[11] == b'n'
+        {
             Self::KillAndBan
         } else {
             Self::Kill
         }
+    }
+
+    #[cfg(not(verus))]
+    pub fn from_config_str(value: &str) -> Self {
+        Self::from_config_bytes(value.as_bytes())
     }
 
     #[cfg_attr(verus, verus_verify(dual_spec, open))]
@@ -1007,11 +1010,11 @@ mod verus_verification {
 
         /// Verifies canonical names and fail-safe handling of unknown values.
         proof fn violation_action_config_mapping_is_total() {
-            assert(ViolationAction::from_config_str("log_only") == ViolationAction::LogOnly);
-            assert(ViolationAction::from_config_str("kill") == ViolationAction::Kill);
-            assert(ViolationAction::from_config_str("kill_and_ban") == ViolationAction::KillAndBan);
-            assert(ViolationAction::from_config_str("unknown") == ViolationAction::Kill);
-            assert(ViolationAction::from_config_str("") == ViolationAction::Kill);
+            assert(ViolationAction::from_config_bytes(b"log_only") == ViolationAction::LogOnly);
+            assert(ViolationAction::from_config_bytes(b"kill") == ViolationAction::Kill);
+            assert(ViolationAction::from_config_bytes(b"kill_and_ban") == ViolationAction::KillAndBan);
+            assert(ViolationAction::from_config_bytes(b"unknown") == ViolationAction::Kill);
+            assert(ViolationAction::from_config_bytes(b"") == ViolationAction::Kill);
             assert(ViolationAction::LogOnly.as_config_str() == "log_only");
             assert(ViolationAction::Kill.as_config_str() == "kill");
             assert(ViolationAction::KillAndBan.as_config_str() == "kill_and_ban");

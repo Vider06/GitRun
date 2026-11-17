@@ -40,22 +40,32 @@ pub struct StateStore {
     root: PathBuf,
 }
 
-#[cfg(not(verus))]
-pub(crate) fn state_file_leaf_is_allowed(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    (bytes.len() == 11 && bytes.starts_with(b"health.json"))
-        || (bytes.len() == 10 && bytes.starts_with(b"last-crash"))
-}
-
-#[cfg(verus)]
+/// Byte-oriented allowlist shared by the runtime wrapper and formal proof.
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(
     verus,
-    verus_spec(returns name == "health.json" || name == "last-crash")
+    verus_spec(
+        returns
+            name@ == seq![b'h', b'e', b'a', b'l', b't', b'h', b'.', b'j', b's', b'o', b'n']
+                || name@ == seq![b'l', b'a', b's', b't', b'-', b'c', b'r', b'a', b's', b'h']
+    )
 )]
+fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
+    (name.len() == 11
+        && name[0] == b'h' && name[1] == b'e' && name[2] == b'a'
+        && name[3] == b'l' && name[4] == b't' && name[5] == b'h'
+        && name[6] == b'.' && name[7] == b'j' && name[8] == b's'
+        && name[9] == b'o' && name[10] == b'n')
+        || (name.len() == 10
+            && name[0] == b'l' && name[1] == b'a' && name[2] == b's'
+            && name[3] == b't' && name[4] == b'-' && name[5] == b'c'
+            && name[6] == b'r' && name[7] == b'a' && name[8] == b's'
+            && name[9] == b'h')
+}
+
+#[cfg(not(verus))]
 pub(crate) fn state_file_leaf_is_allowed(name: &str) -> bool {
-    (name.len() == 11 && name.starts_with("health.json"))
-        || (name.len() == 10 && name.starts_with("last-crash"))
+    state_file_leaf_is_allowed_bytes(name.as_bytes())
 }
 
 #[cfg(not(any(kani, verus)))]
@@ -188,13 +198,13 @@ mod kani_verification {
 
     #[kani::proof]
     fn state_store_accepts_only_its_two_fixed_leaf_names() {
-        assert!(state_file_leaf_is_allowed("health.json"));
-        assert!(state_file_leaf_is_allowed("last-crash"));
-        assert!(!state_file_leaf_is_allowed(""));
-        assert!(!state_file_leaf_is_allowed("state.json"));
-        assert!(!state_file_leaf_is_allowed("../health.json"));
-        assert!(!state_file_leaf_is_allowed("sub/health.json"));
-        assert!(!state_file_leaf_is_allowed("health.json.tmp"));
+        assert!(state_file_leaf_is_allowed_bytes(b"health.json"));
+        assert!(state_file_leaf_is_allowed_bytes(b"last-crash"));
+        assert!(!state_file_leaf_is_allowed_bytes(b""));
+        assert!(!state_file_leaf_is_allowed_bytes(b"state.json"));
+        assert!(!state_file_leaf_is_allowed_bytes(b"../health.json"));
+        assert!(!state_file_leaf_is_allowed_bytes(b"sub/health.json"));
+        assert!(!state_file_leaf_is_allowed_bytes(b"health.json.tmp"));
     }
 }
 
@@ -206,8 +216,11 @@ mod verus_verification {
     verus! {
         proof fn state_store_accepts_only_its_two_fixed_leaf_names(name: &str)
             ensures
-                state_file_leaf_is_allowed(name)
-                    == (name == "health.json" || name == "last-crash"),
+                state_file_leaf_is_allowed_bytes(name)
+                    == (
+                        name@ == seq![b'h', b'e', b'a', b'l', b't', b'h', b'.', b'j', b's', b'o', b'n']
+                        || name@ == seq![b'l', b'a', b's', b't', b'-', b'c', b'r', b'a', b's', b'h']
+                    ),
         {
         }
     }

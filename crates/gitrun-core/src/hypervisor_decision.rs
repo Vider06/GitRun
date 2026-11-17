@@ -12,6 +12,9 @@
 //! Writes are serialized per VM and committed through a temporary file plus
 //! rename, so readers never observe a partially written JSON document.
 
+#[cfg(verus)]
+use vstd::prelude::*;
+
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 #[cfg(not(any(kani, verus)))]

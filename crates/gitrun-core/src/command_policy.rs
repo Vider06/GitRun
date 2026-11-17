@@ -120,31 +120,9 @@ impl ViolationAction {
         )
     )]
     pub fn from_config_str(value: &str) -> Self {
-        if value.len() == 8
-            && value.get_char(0) == 'l'
-            && value.get_char(1) == 'o'
-            && value.get_char(2) == 'g'
-            && value.get_char(3) == '_'
-            && value.get_char(4) == 'o'
-            && value.get_char(5) == 'n'
-            && value.get_char(6) == 'l'
-            && value.get_char(7) == 'y'
-        {
+        if value.len() == 8 && value.starts_with("log_only") {
             Self::LogOnly
-        } else if value.len() == 12
-            && value.get_char(0) == 'k'
-            && value.get_char(1) == 'i'
-            && value.get_char(2) == 'l'
-            && value.get_char(3) == 'l'
-            && value.get_char(4) == '_'
-            && value.get_char(5) == 'a'
-            && value.get_char(6) == 'n'
-            && value.get_char(7) == 'd'
-            && value.get_char(8) == '_'
-            && value.get_char(9) == 'b'
-            && value.get_char(10) == 'a'
-            && value.get_char(11) == 'n'
-        {
+        } else if value.len() == 12 && value.starts_with("kill_and_ban") {
             Self::KillAndBan
         } else {
             Self::Kill

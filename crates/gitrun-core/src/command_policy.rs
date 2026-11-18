@@ -94,7 +94,7 @@ pub enum ViolationAction {
 impl ViolationAction {
     /// Shared byte-oriented implementation. Runtime converts UTF-8 once;
     /// Verus proves the exact byte-level decision without string APIs.
-    #[cfg_attr(verus, verifier::allow_in_spec)]
+    #[cfg_attr(verus, verus_verify(dual_spec, open))]
     #[cfg_attr(
         verus,
         verus_spec(

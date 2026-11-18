@@ -931,7 +931,7 @@ jobs:
             failure) result="save failed (continue-on-error)" ;;
             *)
               if [ "$CACHE_WRITE_ALLOWED" != true ]; then
-                result="not saved (pull-request cache-write policy)"
+                result="not saved (fork pull-request cache-write policy)"
               elif [ -n "$NPM_MATCH" ] && [ "$NPM_MATCH" = "$NPM_PRIMARY" ]; then
                 result="not saved (exact cache already restored)"
               elif [ "$NPM_PRUNE_SAVE" != true ]; then
@@ -1208,7 +1208,7 @@ jobs:
               failure) echo "save failed (continue-on-error)" ;;
               *)
                 if [ "$CACHE_WRITE_ALLOWED" != true ]; then
-                  echo "not saved (pull-request cache-write policy)"
+                  echo "not saved (fork pull-request cache-write policy)"
                 elif [ -n "$matched" ] && [ "$matched" = "$primary" ]; then
                   echo "not saved (exact cache already restored)"
                 elif [ "$reason" = over-budget ]; then
@@ -3208,7 +3208,7 @@ jobs:
               success) echo "saved" ;;
               failure) echo "save failed (continue-on-error)" ;;
               *)
-                if [ "$CACHE_WRITE_ALLOWED" != true ]; then echo "not saved (pull-request cache-write policy)"
+                if [ "$CACHE_WRITE_ALLOWED" != true ]; then echo "not saved (fork pull-request cache-write policy)"
                 elif [ -n "$matched" ] && [ "$matched" = "$primary" ]; then echo "not saved (exact cache already restored)"
                 else echo "skipped (job did not reach cache save)"; fi
                 ;;

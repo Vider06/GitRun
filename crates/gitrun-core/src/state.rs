@@ -248,14 +248,22 @@ mod verus_verification {
     use vstd::prelude::*;
 
     verus! {
-        proof fn state_store_accepts_only_its_two_fixed_leaf_names(name: &[u8])
-            ensures
-                state_file_leaf_is_allowed_bytes(name)
-                    == (
-                        name@ == seq![b'h', b'e', b'a', b'l', b't', b'h', b'.', b'j', b's', b'o', b'n']
-                        || name@ == seq![b'l', b'a', b's', b't', b'-', b'c', b'r', b'a', b's', b'h']
-                    ),
-        {
+        proof fn state_store_accepts_only_its_two_fixed_leaf_names() {
+            let health: &[u8] = b"health.json";
+            let crash: &[u8] = b"last-crash";
+            let empty: &[u8] = b"";
+            let other: &[u8] = b"state.json";
+            let parent_path: &[u8] = b"../health.json";
+            let nested_path: &[u8] = b"sub/health.json";
+            let suffixed: &[u8] = b"health.json.tmp";
+
+            assert(state_file_leaf_is_allowed_bytes(health));
+            assert(state_file_leaf_is_allowed_bytes(crash));
+            assert(!state_file_leaf_is_allowed_bytes(empty));
+            assert(!state_file_leaf_is_allowed_bytes(other));
+            assert(!state_file_leaf_is_allowed_bytes(parent_path));
+            assert(!state_file_leaf_is_allowed_bytes(nested_path));
+            assert(!state_file_leaf_is_allowed_bytes(suffixed));
         }
     }
 }

@@ -153,7 +153,10 @@ def write_report(
     return counts
 
 
-def write_summary(counts: dict[str, int], total: int, issues: list[str]) -> None:
+def write_summary(
+    counts: dict[str, int], total: int, issues: list[str],
+    kani_job_result: str, verus_job_result: str,
+) -> None:
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if not summary:
         return
@@ -277,6 +280,13 @@ def main() -> int:
     for missing in sorted(sources - set(rows)):
         issues.append(f"Tracked Rust source has no proof-scope mapping: {missing}")
 
+    kani_job_result = os.environ.get("KANI_JOB_RESULT", "unavailable")
+    verus_job_result = os.environ.get("VERUS_JOB_RESULT", "unavailable")
+    if kani_job_result != "success":
+        issues.append(f"Kani job did not succeed: {kani_job_result}.")
+    if verus_job_result != "success":
+        issues.append(f"Verus job did not succeed: {verus_job_result}.")
+
     counts = write_report(sources, rows)
     if counts["PLANNED"]:
         issues.append(
@@ -291,7 +301,7 @@ def main() -> int:
             f"{counts['UNVERIFIED']} implemented source scopes lack successful results "
             "from both Kani and Verus."
         )
-    write_summary(counts, len(sources), issues)
+    write_summary(counts, len(sources), issues, kani_job_result, verus_job_result)
 
     print(
         f"Audited {len(sources)} tracked Rust sources: "

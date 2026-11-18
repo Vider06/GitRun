@@ -1053,6 +1053,7 @@ mod verus_verification {
             let log_only_extra: &[u8] = b"log_only_extra";
             let kill_and_ban_extra: &[u8] = b"kill_and_ban_extra";
 
+            reveal(ViolationAction::from_config_bytes);
             assert(log_only@ == b"log_only"@);
             assert(ViolationAction::from_config_bytes(log_only) == ViolationAction::LogOnly);
             assert(ViolationAction::from_config_bytes(kill) == ViolationAction::Kill);

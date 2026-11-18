@@ -61,7 +61,15 @@ class DualVerifierCoverageTests(unittest.TestCase):
         self.sources_mock = self.sources_patch.start()
         self.addCleanup(self.sources_patch.stop)
         self.environment_patch = patch.dict(
-            os.environ, {"GITHUB_STEP_SUMMARY": str(self.summary)}
+            os.environ,
+            {
+                "GITHUB_STEP_SUMMARY": str(self.summary),
+                # Unit fixtures model successful verifier jobs by default.
+                # Individual tests can still override these outcomes to cover
+                # unavailable/failed workflow dependencies explicitly.
+                "KANI_JOB_RESULT": "success",
+                "VERUS_JOB_RESULT": "success",
+            },
         )
         self.environment_patch.start()
         self.addCleanup(self.environment_patch.stop)

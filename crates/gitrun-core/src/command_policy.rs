@@ -111,31 +111,9 @@ impl ViolationAction {
         )
     )]
     pub fn from_config_bytes(value: &[u8]) -> Self {
-        if value.len() == 8
-            && value[0] == b'l'
-            && value[1] == b'o'
-            && value[2] == b'g'
-            && value[3] == b'_'
-            && value[4] == b'o'
-            && value[5] == b'n'
-            && value[6] == b'l'
-            && value[7] == b'y'
-        {
+        if value == b"log_only" {
             Self::LogOnly
-        } else if value.len() == 12
-            && value[0] == b'k'
-            && value[1] == b'i'
-            && value[2] == b'l'
-            && value[3] == b'l'
-            && value[4] == b'_'
-            && value[5] == b'a'
-            && value[6] == b'n'
-            && value[7] == b'd'
-            && value[8] == b'_'
-            && value[9] == b'b'
-            && value[10] == b'a'
-            && value[11] == b'n'
-        {
+        } else if value == b"kill_and_ban" {
             Self::KillAndBan
         } else {
             Self::Kill

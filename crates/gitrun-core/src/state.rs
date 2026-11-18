@@ -49,10 +49,11 @@ pub struct StateStore {
             name@ == b"health.json"@ || name@ == b"last-crash"@
     )
 )]
+#[allow(clippy::get_first)]
 pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
-    // Exact-length prefix checks avoid slice equality and indexing in Verus.
+    // Exact-length byte checks use Verus-supported slice access.
     (name.len() == 11
-        && name.first() == Some(&b'h')
+        && name.get(0) == Some(&b'h')
         && name.get(1) == Some(&b'e')
         && name.get(2) == Some(&b'a')
         && name.get(3) == Some(&b'l')
@@ -64,7 +65,7 @@ pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
         && name.get(9) == Some(&b'o')
         && name.get(10) == Some(&b'n'))
         || (name.len() == 10
-            && name.first() == Some(&b'l')
+            && name.get(0) == Some(&b'l')
             && name.get(1) == Some(&b'a')
             && name.get(2) == Some(&b's')
             && name.get(3) == Some(&b't')

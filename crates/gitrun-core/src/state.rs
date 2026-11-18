@@ -41,7 +41,7 @@ pub struct StateStore {
 }
 
 /// Byte-oriented allowlist shared by the runtime wrapper and formal proof.
-#[cfg_attr(verus, verifier::allow_in_spec)]
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(
     verus,
     verus_spec(

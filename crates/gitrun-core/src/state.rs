@@ -51,30 +51,9 @@ pub struct StateStore {
 )]
 #[allow(clippy::get_first)]
 pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
-    // Exact-length byte checks use Verus-supported slice access.
-    (name.len() == 11
-        && name.get(0) == Some(&b'h')
-        && name.get(1) == Some(&b'e')
-        && name.get(2) == Some(&b'a')
-        && name.get(3) == Some(&b'l')
-        && name.get(4) == Some(&b't')
-        && name.get(5) == Some(&b'h')
-        && name.get(6) == Some(&b'.')
-        && name.get(7) == Some(&b'j')
-        && name.get(8) == Some(&b's')
-        && name.get(9) == Some(&b'o')
-        && name.get(10) == Some(&b'n'))
-        || (name.len() == 10
-            && name.get(0) == Some(&b'l')
-            && name.get(1) == Some(&b'a')
-            && name.get(2) == Some(&b's')
-            && name.get(3) == Some(&b't')
-            && name.get(4) == Some(&b'-')
-            && name.get(5) == Some(&b'c')
-            && name.get(6) == Some(&b'r')
-            && name.get(7) == Some(&b'a')
-            && name.get(8) == Some(&b's')
-            && name.get(9) == Some(&b'h'))
+    // Compare complete byte slices: this avoids exec-only slice accessors
+    // and preserves exact-name matching (including the length check).
+    name == b"health.json" || name == b"last-crash"
 }
 
 #[cfg(not(verus))]

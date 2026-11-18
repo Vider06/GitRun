@@ -40,7 +40,7 @@ env:
   CACHE_BASE_EPOCH: e2
   # Cache writes are allowed on pushes and same-repository PRs, never fork PRs.
   CI_CACHE_WRITE_ALLOWED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'true' || 'false' }}
-  # Pull requests restore shared caches but never write; only trusted pushes may update cache entries.
+  # Same-repository PRs may write only to their isolated PR cache scope; fork PRs are read-only.
   TARGET_CACHE_MAX_MB: "4096"
   NPM_CACHE_MAX_MB: "600"
   CI_VERBOSE: ${{ vars.GITRUN_CI_VERBOSE == 'true' && '1' || '0' }}
@@ -3796,7 +3796,7 @@ jobs:
   cache-gc:
     name: Cache garbage collection
     needs: summary
-    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (!cancelled() && env.CI_CACHE_WRITE_ALLOWED == 'true') }}
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (!cancelled() && github.event_name != 'pull_request') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:

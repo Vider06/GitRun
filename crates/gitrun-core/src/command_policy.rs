@@ -1056,7 +1056,8 @@ mod verus_verification {
             assert(log_only@ == b"log_only"@);
             assert(ViolationAction::from_config_bytes(log_only) == ViolationAction::LogOnly);
             assert(ViolationAction::from_config_bytes(kill) == ViolationAction::Kill);
-            assert(kill_and_ban@ == b"kill_and_ban"@);\n            assert(ViolationAction::from_config_bytes(kill_and_ban) == ViolationAction::KillAndBan);
+            assert(kill_and_ban@ == b"kill_and_ban"@);
+            assert(ViolationAction::from_config_bytes(kill_and_ban) == ViolationAction::KillAndBan);
             assert(ViolationAction::from_config_bytes(unknown) == ViolationAction::Kill);
             assert(ViolationAction::from_config_bytes(empty) == ViolationAction::Kill);
             assert(ViolationAction::from_config_bytes(log_only_extra) == ViolationAction::Kill);

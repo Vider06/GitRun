@@ -51,8 +51,7 @@ pub struct StateStore {
 )]
 pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
     // Exact-length prefix checks avoid slice equality and indexing in Verus.
-    (name.len() == 11 && name.starts_with(b"health.json"))
-        || (name.len() == 10 && name.starts_with(b"last-crash"))
+    name == b"health.json" || name == b"last-crash"
 }
 
 #[cfg(not(verus))]

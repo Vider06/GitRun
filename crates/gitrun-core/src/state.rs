@@ -50,31 +50,9 @@ pub struct StateStore {
     )
 )]
 pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
-    // Use Option-returning slice accessors: direct indexing triggers a Verus
-    // internal error in this dual-spec function.
-    (name.len() == 11
-        && name.first() == Some(&b'h')
-        && name.get(1) == Some(&b'e')
-        && name.get(2) == Some(&b'a')
-        && name.get(3) == Some(&b'l')
-        && name.get(4) == Some(&b't')
-        && name.get(5) == Some(&b'h')
-        && name.get(6) == Some(&b'.')
-        && name.get(7) == Some(&b'j')
-        && name.get(8) == Some(&b's')
-        && name.get(9) == Some(&b'o')
-        && name.get(10) == Some(&b'n'))
-        || (name.len() == 10
-            && name.first() == Some(&b'l')
-            && name.get(1) == Some(&b'a')
-            && name.get(2) == Some(&b's')
-            && name.get(3) == Some(&b't')
-            && name.get(4) == Some(&b'-')
-            && name.get(5) == Some(&b'c')
-            && name.get(6) == Some(&b'r')
-            && name.get(7) == Some(&b'a')
-            && name.get(8) == Some(&b's')
-            && name.get(9) == Some(&b'h'))
+    // Exact-length prefix checks avoid slice equality and indexing in Verus.
+    (name.len() == 11 && name.starts_with(b"health.json"))
+        || (name.len() == 10 && name.starts_with(b"last-crash"))
 }
 
 #[cfg(not(verus))]

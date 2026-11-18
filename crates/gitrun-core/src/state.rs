@@ -256,8 +256,6 @@ mod verus_verification {
             let parent_path: &[u8] = b"../health.json";
             let nested_path: &[u8] = b"sub/health.json";
             let suffixed: &[u8] = b"health.json.tmp";
-
-            reveal(state_file_leaf_is_allowed_bytes);
             assert(health@ == b"health.json"@);
             assert(state_file_leaf_is_allowed_bytes(health));
             assert(crash@ == b"last-crash"@);

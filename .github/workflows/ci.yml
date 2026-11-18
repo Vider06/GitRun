@@ -3850,6 +3850,9 @@ jobs:
       - platform-compatibility
       - multi-distro-contracts
       - release-contracts
+      - rust-source-inventory
+      - kani-formal-verification
+      - verus-formal-verification
       - formal-verification
       - miri
       - tauri

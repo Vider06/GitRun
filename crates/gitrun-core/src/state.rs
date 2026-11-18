@@ -259,7 +259,8 @@ mod verus_verification {
 
             assert(health@ == b"health.json"@);
             assert(state_file_leaf_is_allowed_bytes(health));
-            assert(crash@ == b"last-crash"@);\n            assert(state_file_leaf_is_allowed_bytes(crash));
+            assert(crash@ == b"last-crash"@);
+            assert(state_file_leaf_is_allowed_bytes(crash));
             assert(!state_file_leaf_is_allowed_bytes(empty));
             assert(!state_file_leaf_is_allowed_bytes(other));
             assert(!state_file_leaf_is_allowed_bytes(parent_path));

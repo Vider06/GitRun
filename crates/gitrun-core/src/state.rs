@@ -53,7 +53,7 @@ pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
     // Use Option-returning slice accessors: direct indexing triggers a Verus
     // internal error in this dual-spec function.
     (name.len() == 11
-        && name.get(0) == Some(&b'h')
+        && name.first() == Some(&b'h')
         && name.get(1) == Some(&b'e')
         && name.get(2) == Some(&b'a')
         && name.get(3) == Some(&b'l')
@@ -65,7 +65,7 @@ pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
         && name.get(9) == Some(&b'o')
         && name.get(10) == Some(&b'n'))
         || (name.len() == 10
-            && name.get(0) == Some(&b'l')
+            && name.first() == Some(&b'l')
             && name.get(1) == Some(&b'a')
             && name.get(2) == Some(&b's')
             && name.get(3) == Some(&b't')

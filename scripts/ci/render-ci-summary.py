@@ -37,7 +37,10 @@ jobs = [
 ("platform-compatibility","Linux platform and updater target contracts","rust","cargo-lock rust-lint"),
 ("multi-distro-contracts","Multi-distro portability contracts","rust","cargo-lock rust-lint"),
 ("release-contracts","Server, Desktop and migration release contracts","workflows","cargo-lock"),
-("formal-verification","Rust source assurance and Kani formal verification","rust","cargo-lock rust-lint"),
+("rust-source-inventory","Rust source inventory","rust","cargo-lock rust-lint"),
+("kani-formal-verification","Kani production proofs","rust","rust-source-inventory"),
+("verus-formal-verification","Verus production proofs","rust","rust-source-inventory"),
+("formal-verification","Dual-verifier source assurance gate","rust","rust-source-inventory kani-formal-verification verus-formal-verification"),
 ("miri","Miri interpreter and pure updater regression","rust","cargo-lock rust-lint"),
 ("tauri","Tauri GUI","tauri","cargo-lock rust-lint frontend"),
 ("tauri-arm64","Tauri GUI native ARM64 build","tauri","cargo-lock rust-lint frontend"),
@@ -85,7 +88,7 @@ def make_report():
     ("Desktop GNU DEB/RPM/Arch × x86_64/ARM64","release-dashboard-package-certification"),
     ("Desktop musl build × x86_64/ARM64","release-dashboard-musl-build-certification"),
     ("Desktop musl APK/XBPS","release-dashboard-musl-package-certification"),
-    ("Rust per-file inventory + Kani","formal-verification"),("Targeted interpreter run","miri")]
+    ("Rust per-file inventory + Kani + Verus","formal-verification"),("Targeted interpreter run","miri")]
     for label,jid in surfaces: lines.append("| "+label+" | "+jid+" | "+states.get(jid,"na").upper()+" |")
     lines += ["","Commit: "+os.environ.get("HEAD_SHA","")[:8]+" · ref: "+os.environ.get("REF_NAME","")+" · event: "+os.environ.get("EVENT","")+" · run #"+os.environ.get("ATTEMPT","")+" ("+os.environ.get("RUN_URL","")+")","",
     str(counts["success"])+" passed · "+str(counts["failure"])+" failed · "+str(counts["blocked"])+" blocked · "+str(counts["na"])+" not applicable · "+str(counts["cancelled"])+" cancelled","",chr(96)*3+"mermaid","flowchart LR"]

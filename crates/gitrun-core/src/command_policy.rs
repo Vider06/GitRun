@@ -112,9 +112,9 @@ impl ViolationAction {
     )]
     pub fn from_config_bytes(value: &[u8]) -> Self {
         // Exact-length prefix checks avoid slice equality and indexing in Verus.
-        if value.len() == 8 && value.starts_with(b"log_only") {
+        if value == b"log_only" {
             Self::LogOnly
-        } else if value.len() == 12 && value.starts_with(b"kill_and_ban") {
+        } else if value == b"kill_and_ban" {
             Self::KillAndBan
         } else {
             Self::Kill

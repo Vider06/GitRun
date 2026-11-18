@@ -110,10 +110,11 @@ impl ViolationAction {
                 }
         )
     )]
+    #[allow(clippy::get_first)]
     pub fn from_config_bytes(value: &[u8]) -> Self {
-        // Exact-length prefix checks avoid slice equality and indexing in Verus.
+        // Exact-length byte checks use Verus-supported slice access.
         if value.len() == 8
-            && value.first() == Some(&b'l')
+            && value.get(0) == Some(&b'l')
             && value.get(1) == Some(&b'o')
             && value.get(2) == Some(&b'g')
             && value.get(3) == Some(&b'_')
@@ -124,7 +125,7 @@ impl ViolationAction {
         {
             Self::LogOnly
         } else if value.len() == 12
-            && value.first() == Some(&b'k')
+            && value.get(0) == Some(&b'k')
             && value.get(1) == Some(&b'i')
             && value.get(2) == Some(&b'l')
             && value.get(3) == Some(&b'l')

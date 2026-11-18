@@ -6,7 +6,7 @@ name: GitRun CI
 #                            └─► detect ─► cargo-lock ─┬─ static checks · audits · Docker · systemd
 #                                                       └─ rust-lint
 #    rust-lint ─► rust-test ─► rust-build ─► platform-target-check ─► Server packages
-#        ├─ formal-verification (per-file Rust inventory + Kani) · Miri
+#        ├─ Rust source inventory ─┬─ Kani proofs\n        │                         ├─ Verus proofs\n        │                         └─ formal-verification (dual-result audit) · Miri
 #        ├─ release-inputs ─► all package matrices ─► exact Release asset assembly
 #        ├─ security-hardening · gsr-watchdog · runtime-contracts · platform-compatibility
 #        └─ + frontend ─► Tauri GNU/musl builds ─► Desktop package matrices
@@ -2940,12 +2940,12 @@ jobs:
           retention-days: 7
       - *report
       - *logs
-  formal-verification:
-    name: Rust source assurance and formal verification
+  rust-source-inventory:
+    name: Rust source inventory
     needs: [cargo-lock, rust-lint]
     if: ${{ needs.cargo-lock.result == 'success' && needs.cargo-lock.outputs.rust == 'true' && needs.rust-lint.result == 'success' }}
     runs-on: *runner
-    timeout-minutes: 180
+    timeout-minutes: 60
     outputs: *job_outputs
     steps:
       - *checkout
@@ -2964,8 +2964,30 @@ jobs:
         with:
           name: rust-source-inventory
           path: ${{ runner.temp }}/gitrun-rust-source-inventory.tsv
-          if-no-files-found: ignore
+          if-no-files-found: error
           retention-days: 7
+      - *report
+      - *logs
+
+  kani-formal-verification:
+    name: Kani production proofs
+    needs: [rust-source-inventory]
+    if: ${{ needs.rust-source-inventory.result == 'success' }}
+    runs-on: *runner
+    timeout-minutes: 180
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Download Rust source inventory
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: rust-source-inventory
+          path: ${{ runner.temp }}
       - name: Install pinned Kani verifier
         shell: bash
         run: |
@@ -2975,34 +2997,86 @@ jobs:
       - name: Prove required Rust invariants
         shell: bash
         run: bash scripts/ci/verify-rust-formal.sh
-      - name: Install pinned Verus verifier
-        if: always()
-        shell: bash
-        run: bash scripts/ci/install-verus.sh
-      - name: Verify Verus smoke and production proofs
-        if: always()
-        shell: bash
-        run: bash scripts/ci/verify-verus-formal.sh
-      - name: Audit dual-verifier proof scope
-        if: always()
-        shell: bash
-        run: python3 scripts/ci/verify-rust-dual-coverage.py
       - name: Upload Kani per-file coverage status
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: kani-source-coverage
-          path: ${{ runner.temp }}/gitrun-kani-source-coverage.tsv
+          name: kani-formal-results
+          path: |
+            ${{ runner.temp }}/gitrun-kani-proof-results.tsv
+            ${{ runner.temp }}/gitrun-kani-source-coverage.tsv
           if-no-files-found: ignore
           retention-days: 7
+      - *report
+      - *logs
+
+  verus-formal-verification:
+    name: Verus production proofs
+    needs: [rust-source-inventory]
+    if: ${{ needs.rust-source-inventory.result == 'success' }}
+    runs-on: *runner
+    timeout-minutes: 180
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Install pinned Verus verifier
+        shell: bash
+        run: bash scripts/ci/install-verus.sh
+      - name: Verify Verus smoke and production proofs
+        shell: bash
+        run: bash scripts/ci/verify-verus-formal.sh
       - name: Upload Verus per-source proof results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: verus-source-proof-results
+          name: verus-formal-results
           path: ${{ runner.temp }}/gitrun-verus-proof-results.tsv
           if-no-files-found: ignore
           retention-days: 7
+      - *report
+      - *logs
+
+  formal-verification:
+    name: Dual-verifier source assurance gate
+    needs:
+      - rust-source-inventory
+      - kani-formal-verification
+      - verus-formal-verification
+    if: ${{ always() && needs.rust-source-inventory.result == 'success' }}
+    runs-on: *runner
+    timeout-minutes: 60
+    outputs: *job_outputs
+    steps:
+      - *checkout
+      - *boot
+      - name: Download Rust source inventory
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: rust-source-inventory
+          path: ${{ runner.temp }}
+      - name: Download Kani proof results
+        if: always()
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: kani-formal-results
+          path: ${{ runner.temp }}
+      - name: Download Verus proof results
+        if: always()
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: verus-formal-results
+          path: ${{ runner.temp }}
+      - name: Audit dual-verifier proof scope and final gate
+        if: always()
+        env:
+          KANI_JOB_RESULT: ${{ needs.kani-formal-verification.result }}
+          VERUS_JOB_RESULT: ${{ needs.verus-formal-verification.result }}
+        run: python3 scripts/ci/verify-rust-dual-coverage.py
       - name: Upload dual-verifier source coverage
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

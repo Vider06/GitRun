@@ -1053,13 +1053,13 @@ mod verus_verification {
             let log_only_extra: &[u8] = b"log_only_extra";
             let kill_and_ban_extra: &[u8] = b"kill_and_ban_extra";
 
-            assert(ViolationAction::from_config_bytes(log_only) == ViolationAction::LogOnly);
-            assert(ViolationAction::from_config_bytes(kill) == ViolationAction::Kill);
-            assert(ViolationAction::from_config_bytes(kill_and_ban) == ViolationAction::KillAndBan);
-            assert(ViolationAction::from_config_bytes(unknown) == ViolationAction::Kill);
-            assert(ViolationAction::from_config_bytes(empty) == ViolationAction::Kill);
-            assert(ViolationAction::from_config_bytes(log_only_extra) == ViolationAction::Kill);
-            assert(ViolationAction::from_config_bytes(kill_and_ban_extra) == ViolationAction::Kill);
+            assert(ViolationAction::from_config_bytes(log_only) == ViolationAction::LogOnly) by (compute);
+            assert(ViolationAction::from_config_bytes(kill) == ViolationAction::Kill) by (compute);
+            assert(ViolationAction::from_config_bytes(kill_and_ban) == ViolationAction::KillAndBan) by (compute);
+            assert(ViolationAction::from_config_bytes(unknown) == ViolationAction::Kill) by (compute);
+            assert(ViolationAction::from_config_bytes(empty) == ViolationAction::Kill) by (compute);
+            assert(ViolationAction::from_config_bytes(log_only_extra) == ViolationAction::Kill) by (compute);
+            assert(ViolationAction::from_config_bytes(kill_and_ban_extra) == ViolationAction::Kill) by (compute);
             assert(ViolationAction::LogOnly.as_config_str() == "log_only");
             assert(ViolationAction::Kill.as_config_str() == "kill");
             assert(ViolationAction::KillAndBan.as_config_str() == "kill_and_ban");

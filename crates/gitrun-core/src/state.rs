@@ -257,13 +257,13 @@ mod verus_verification {
             let nested_path: &[u8] = b"sub/health.json";
             let suffixed: &[u8] = b"health.json.tmp";
 
-            assert(state_file_leaf_is_allowed_bytes(health));
-            assert(state_file_leaf_is_allowed_bytes(crash));
-            assert(!state_file_leaf_is_allowed_bytes(empty));
-            assert(!state_file_leaf_is_allowed_bytes(other));
-            assert(!state_file_leaf_is_allowed_bytes(parent_path));
-            assert(!state_file_leaf_is_allowed_bytes(nested_path));
-            assert(!state_file_leaf_is_allowed_bytes(suffixed));
+            assert(state_file_leaf_is_allowed_bytes(health)) by (compute);
+            assert(state_file_leaf_is_allowed_bytes(crash)) by (compute);
+            assert(!state_file_leaf_is_allowed_bytes(empty)) by (compute);
+            assert(!state_file_leaf_is_allowed_bytes(other)) by (compute);
+            assert(!state_file_leaf_is_allowed_bytes(parent_path)) by (compute);
+            assert(!state_file_leaf_is_allowed_bytes(nested_path)) by (compute);
+            assert(!state_file_leaf_is_allowed_bytes(suffixed)) by (compute);
         }
     }
 }

@@ -40,6 +40,9 @@ def parse_time(value):
 def cache_family(key):
     key = re.sub(r"-run[0-9]+-attempt[0-9]+$", "", str(key))
     if "-target-img" in key:
+        # Normalize both legacy per-run keys and the stable shared target key
+        # into one family so GC can retire superseded run-scoped entries.
+        key = re.sub(r"-shared$", "", key)
         return re.sub(r"-man[^-]+-[^-]+-prof", "-prof", key)
     return re.sub(r"-[^-]+$", "", key)
 

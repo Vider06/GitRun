@@ -1045,13 +1045,21 @@ mod verus_verification {
 
         /// Verifies canonical names and fail-safe handling of unknown values.
         proof fn violation_action_config_mapping_is_total() {
-            assert(ViolationAction::from_config_bytes(b"log_only") == ViolationAction::LogOnly);
-            assert(ViolationAction::from_config_bytes(b"kill") == ViolationAction::Kill);
-            assert(ViolationAction::from_config_bytes(b"kill_and_ban") == ViolationAction::KillAndBan);
-            assert(ViolationAction::from_config_bytes(b"unknown") == ViolationAction::Kill);
-            assert(ViolationAction::from_config_bytes(b"") == ViolationAction::Kill);
-            assert(ViolationAction::from_config_bytes(b"log_only_extra") == ViolationAction::Kill);
-            assert(ViolationAction::from_config_bytes(b"kill_and_ban_extra") == ViolationAction::Kill);
+            let log_only: &[u8] = b"log_only";
+            let kill: &[u8] = b"kill";
+            let kill_and_ban: &[u8] = b"kill_and_ban";
+            let unknown: &[u8] = b"unknown";
+            let empty: &[u8] = b"";
+            let log_only_extra: &[u8] = b"log_only_extra";
+            let kill_and_ban_extra: &[u8] = b"kill_and_ban_extra";
+
+            assert(ViolationAction::from_config_bytes(log_only) == ViolationAction::LogOnly);
+            assert(ViolationAction::from_config_bytes(kill) == ViolationAction::Kill);
+            assert(ViolationAction::from_config_bytes(kill_and_ban) == ViolationAction::KillAndBan);
+            assert(ViolationAction::from_config_bytes(unknown) == ViolationAction::Kill);
+            assert(ViolationAction::from_config_bytes(empty) == ViolationAction::Kill);
+            assert(ViolationAction::from_config_bytes(log_only_extra) == ViolationAction::Kill);
+            assert(ViolationAction::from_config_bytes(kill_and_ban_extra) == ViolationAction::Kill);
             assert(ViolationAction::LogOnly.as_config_str() == "log_only");
             assert(ViolationAction::Kill.as_config_str() == "kill");
             assert(ViolationAction::KillAndBan.as_config_str() == "kill_and_ban");

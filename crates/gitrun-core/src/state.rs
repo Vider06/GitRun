@@ -50,31 +50,31 @@ pub struct StateStore {
     )
 )]
 pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
-    // Keep this byte-level allowlist independent of slice PartialEq so the
-    // production predicate remains executable in Verus verification mode.
+    // Use Option-returning slice accessors: direct indexing triggers a Verus
+    // internal error in this dual-spec function.
     (name.len() == 11
-        && name[0] == b'h'
-        && name[1] == b'e'
-        && name[2] == b'a'
-        && name[3] == b'l'
-        && name[4] == b't'
-        && name[5] == b'h'
-        && name[6] == b'.'
-        && name[7] == b'j'
-        && name[8] == b's'
-        && name[9] == b'o'
-        && name[10] == b'n')
+        && name.get(0) == Some(&b'h')
+        && name.get(1) == Some(&b'e')
+        && name.get(2) == Some(&b'a')
+        && name.get(3) == Some(&b'l')
+        && name.get(4) == Some(&b't')
+        && name.get(5) == Some(&b'h')
+        && name.get(6) == Some(&b'.')
+        && name.get(7) == Some(&b'j')
+        && name.get(8) == Some(&b's')
+        && name.get(9) == Some(&b'o')
+        && name.get(10) == Some(&b'n'))
         || (name.len() == 10
-            && name[0] == b'l'
-            && name[1] == b'a'
-            && name[2] == b's'
-            && name[3] == b't'
-            && name[4] == b'-'
-            && name[5] == b'c'
-            && name[6] == b'r'
-            && name[7] == b'a'
-            && name[8] == b's'
-            && name[9] == b'h')
+            && name.get(0) == Some(&b'l')
+            && name.get(1) == Some(&b'a')
+            && name.get(2) == Some(&b's')
+            && name.get(3) == Some(&b't')
+            && name.get(4) == Some(&b'-')
+            && name.get(5) == Some(&b'c')
+            && name.get(6) == Some(&b'r')
+            && name.get(7) == Some(&b'a')
+            && name.get(8) == Some(&b's')
+            && name.get(9) == Some(&b'h'))
 }
 
 #[cfg(not(verus))]

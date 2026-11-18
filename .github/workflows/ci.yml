@@ -6,9 +6,9 @@ name: GitRun CI
 #                            └─► detect ─► cargo-lock ─┬─ static checks · audits · Docker · systemd
 #                                                       └─ rust-lint
 #    rust-lint ─► rust-test ─► rust-build ─► platform-target-check ─► Server packages
-#        ├─ Rust source inventory ─┬─ Kani proofs
-#        │                         ├─ Verus proofs
-#        │                         └─ formal-verification (dual-result audit) · Miri
+#        ├─ Rust source inventory ─┬─ Kani proofs ─┐
+#        │                         └─ Verus proofs ─┴─► formal-verification (dual-verifier audit)
+#        ├─ Miri (parallel; needs cargo-lock + rust-lint)
 #        ├─ release-inputs ─► all package matrices ─► exact Release asset assembly
 #        ├─ security-hardening · gsr-watchdog · runtime-contracts · platform-compatibility
 #        └─ + frontend ─► Tauri GNU/musl builds ─► Desktop package matrices

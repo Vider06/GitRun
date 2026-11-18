@@ -266,20 +266,15 @@ ci_apt() {
     if sudo -n true 2>/dev/null; then sudo="sudo -n"; else return 1; fi
   fi
 
-  # Prefer the canonical Ubuntu archive instead of the Azure mirror that
-  # has intermittently stalled on GitHub-hosted runners. Preserve Ubuntu's
-  # suite/component configuration and leave security.ubuntu.com untouched.
-  # This runs before update in every job that installs APT dependencies.
+  # Use the same fail-closed canonical mirror override as workflow-level
+  # apt setup. This also replaces regional EC2 archive mirrors, not only Azure.
   if [ ! -f "$CI_DIR/apt-mirror-forced" ]; then
-    if [ -f /etc/apt/apt-mirrors.txt ]; then
-      $sudo sed -i -E 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' /etc/apt/apt-mirrors.txt
-      echo "APT mirror list after override:"
-      $sudo cat /etc/apt/apt-mirrors.txt
+    local mirror_script="${GITHUB_WORKSPACE:-$PWD}/scripts/ci/force-ubuntu-archive-mirror.sh"
+    if [ ! -f "$mirror_script" ]; then
+      ci_err "canonical Ubuntu APT mirror helper is missing: $mirror_script"
+      return 1
     fi
-    for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-      [ -f "$source" ] || continue
-      $sudo sed -i -E 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' "$source"
-    done
+    $sudo bash "$mirror_script"
     : > "$CI_DIR/apt-mirror-forced"
   fi
 

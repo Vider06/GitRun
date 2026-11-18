@@ -1053,9 +1053,9 @@ mod verus_verification {
             let log_only_extra: &[u8] = b"log_only_extra";
             let kill_and_ban_extra: &[u8] = b"kill_and_ban_extra";
 
-            assert(ViolationAction::from_config_bytes(log_only) == ViolationAction::LogOnly);
+            assert(log_only@ == b"log_only"@);\n            assert(ViolationAction::from_config_bytes(log_only) == ViolationAction::LogOnly);
             assert(ViolationAction::from_config_bytes(kill) == ViolationAction::Kill);
-            assert(ViolationAction::from_config_bytes(kill_and_ban) == ViolationAction::KillAndBan);
+            assert(kill_and_ban@ == b"kill_and_ban"@);\n            assert(ViolationAction::from_config_bytes(kill_and_ban) == ViolationAction::KillAndBan);
             assert(ViolationAction::from_config_bytes(unknown) == ViolationAction::Kill);
             assert(ViolationAction::from_config_bytes(empty) == ViolationAction::Kill);
             assert(ViolationAction::from_config_bytes(log_only_extra) == ViolationAction::Kill);

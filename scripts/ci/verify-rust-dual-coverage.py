@@ -174,6 +174,8 @@ def write_summary(
         handle.write("### Dual-verifier source proof results\n\n")
         handle.write("| Metric | Result |\n|---|---:|\n")
         handle.write(f"| Tracked Rust source files | {total} |\n")
+        handle.write(f"| Kani job result | {kani_job_result} |\n")
+        handle.write(f"| Verus job result | {verus_job_result} |\n")
         handle.write(f"| Proof scopes declared IMPLEMENTED | {counts['IMPLEMENTED']} |\n")
         handle.write(f"| Kani successful source proofs | {counts['KANI_PROVEN']} |\n")
         handle.write(f"| Verus successful source proofs | {counts['VERUS_PROVEN']} |\n")

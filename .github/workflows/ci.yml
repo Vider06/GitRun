@@ -9,7 +9,6 @@ name: GitRun CI
 #        ├─ Rust source inventory ─┬─ Kani proofs
 #        │                         ├─ Verus proofs
 #        │                         └─ formal-verification (dual-result audit) · Miri
-#        ├─ Rust source inventory ─┬─ Kani proofs\n        │                         ├─ Verus proofs\n        │                         └─ formal-verification (dual-result audit) · Miri
 #        ├─ release-inputs ─► all package matrices ─► exact Release asset assembly
 #        ├─ security-hardening · gsr-watchdog · runtime-contracts · platform-compatibility
 #        └─ + frontend ─► Tauri GNU/musl builds ─► Desktop package matrices

@@ -111,33 +111,10 @@ impl ViolationAction {
         )
     )]
     pub fn from_config_bytes(value: &[u8]) -> Self {
-        // Read individual bytes through Option-returning slice accessors:
-        // direct indexing is rejected by Verus in this dual-spec function.
-        if value.len() == 8
-            && value.first() == Some(&b'l')
-            && value.get(1) == Some(&b'o')
-            && value.get(2) == Some(&b'g')
-            && value.get(3) == Some(&b'_')
-            && value.get(4) == Some(&b'o')
-            && value.get(5) == Some(&b'n')
-            && value.get(6) == Some(&b'l')
-            && value.get(7) == Some(&b'y')
-        {
+        // Exact-length prefix checks avoid slice equality and indexing in Verus.
+        if value.len() == 8 && value.starts_with(b"log_only") {
             Self::LogOnly
-        } else if value.len() == 12
-            && value.first() == Some(&b'k')
-            && value.get(1) == Some(&b'i')
-            && value.get(2) == Some(&b'l')
-            && value.get(3) == Some(&b'l')
-            && value.get(4) == Some(&b'_')
-            && value.get(5) == Some(&b'a')
-            && value.get(6) == Some(&b'n')
-            && value.get(7) == Some(&b'd')
-            && value.get(8) == Some(&b'_')
-            && value.get(9) == Some(&b'b')
-            && value.get(10) == Some(&b'a')
-            && value.get(11) == Some(&b'n')
-        {
+        } else if value.len() == 12 && value.starts_with(b"kill_and_ban") {
             Self::KillAndBan
         } else {
             Self::Kill

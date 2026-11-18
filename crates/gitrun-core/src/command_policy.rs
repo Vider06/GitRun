@@ -112,32 +112,11 @@ impl ViolationAction {
     )]
     #[allow(clippy::get_first)]
     pub fn from_config_bytes(value: &[u8]) -> Self {
-        // Exact-length byte checks use Verus-supported slice access.
-        if value.len() == 8
-            && value.get(0) == Some(&b'l')
-            && value.get(1) == Some(&b'o')
-            && value.get(2) == Some(&b'g')
-            && value.get(3) == Some(&b'_')
-            && value.get(4) == Some(&b'o')
-            && value.get(5) == Some(&b'n')
-            && value.get(6) == Some(&b'l')
-            && value.get(7) == Some(&b'y')
-        {
+        // Compare the complete byte slices directly. Verus can reason about
+        // slice equality, whereas core::slice::get is an exec-only call.
+        if value == b"log_only" {
             Self::LogOnly
-        } else if value.len() == 12
-            && value.get(0) == Some(&b'k')
-            && value.get(1) == Some(&b'i')
-            && value.get(2) == Some(&b'l')
-            && value.get(3) == Some(&b'l')
-            && value.get(4) == Some(&b'_')
-            && value.get(5) == Some(&b'a')
-            && value.get(6) == Some(&b'n')
-            && value.get(7) == Some(&b'd')
-            && value.get(8) == Some(&b'_')
-            && value.get(9) == Some(&b'b')
-            && value.get(10) == Some(&b'a')
-            && value.get(11) == Some(&b'n')
-        {
+        } else if value == b"kill_and_ban" {
             Self::KillAndBan
         } else {
             Self::Kill

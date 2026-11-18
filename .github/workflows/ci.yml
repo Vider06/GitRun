@@ -3548,9 +3548,21 @@ jobs:
             echo "manager=$manager"
             echo "runner=$runner"
           } >> "$GITHUB_OUTPUT"
-      - name: Cache Docker BuildKit cache mounts
-        id: c_dmounts
+      - name: Cache Docker BuildKit mounts (write-enabled)
+        id: c_dmounts_write
+        if: env.CI_CACHE_WRITE_ALLOWED == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            .gitrun-ci/docker-cache/manager
+            .gitrun-ci/docker-cache/runner
+          key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-mounts-v11-${{ steps.docker_hashes.outputs.mounts }}
+          restore-keys: |
+            gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-docker-mounts-v11-
+      - name: Restore Docker BuildKit mounts (read-only)
+        id: c_dmounts_readonly
+        if: env.CI_CACHE_WRITE_ALLOWED != 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
             .gitrun-ci/docker-cache/manager
@@ -3564,14 +3576,14 @@ jobs:
           builder: gitrun-ci
           cache-dir: .gitrun-ci/docker-cache/manager
           dockerfile: docker/manager-rs/Dockerfile
-          skip-extraction: ${{ steps.c_dmounts.outputs.cache-hit == 'true' }}
+          skip-extraction: ${{ steps.c_dmounts_write.outputs.cache-hit == 'true' || steps.c_dmounts_readonly.outputs.cache-hit == 'true' }}
       - name: Inject runner BuildKit cache mounts
         uses: ./.github/actions/buildkit-cache-dance # v3.4.0
         with:
           builder: gitrun-ci
           cache-dir: .gitrun-ci/docker-cache/runner
           dockerfile: docker/runner/Dockerfile
-          skip-extraction: ${{ steps.c_dmounts.outputs.cache-hit == 'true' }}
+          skip-extraction: ${{ steps.c_dmounts_write.outputs.cache-hit == 'true' || steps.c_dmounts_readonly.outputs.cache-hit == 'true' }}
       - name: Verify installer-pinned Premade runner Dockerfile
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"

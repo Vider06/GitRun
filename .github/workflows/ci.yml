@@ -38,6 +38,8 @@ env:
   # Persistent CI configuration comes from Repository Variables.
   CACHE_EPOCH: ${{ vars.GITRUN_CI_FRESH_CACHE == 'true' && format('e2x{0}', github.run_id) || 'e2' }}
   CACHE_BASE_EPOCH: e2
+  # Cache writes are allowed on pushes and same-repository PRs, never fork PRs.
+  CI_CACHE_WRITE_ALLOWED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'true' || 'false' }}
   # Pull requests restore shared caches but never write; only trusted pushes may update cache entries.
   TARGET_CACHE_MAX_MB: "4096"
   NPM_CACHE_MAX_MB: "600"
@@ -758,7 +760,7 @@ jobs:
           ci_ensure_pwsh
           pwsh --version
       - name: Save PowerShell cache
-        if: success() && steps.c_pwsh.outputs.cache-matched-key != steps.c_pwsh.outputs.cache-primary-key && github.event_name != 'pull_request'
+        if: success() && steps.c_pwsh.outputs.cache-matched-key != steps.c_pwsh.outputs.cache-primary-key && env.CI_CACHE_WRITE_ALLOWED == 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -907,7 +909,7 @@ jobs:
       - &s_npm
         id: save_npm
         name: Save npm cache
-        if: success() && steps.npm_prune.outputs.save == 'true' && steps.c_npm.outputs.cache-matched-key != steps.c_npm.outputs.cache-primary-key && github.event_name != 'pull_request'
+        if: success() && steps.npm_prune.outputs.save == 'true' && steps.c_npm.outputs.cache-matched-key != steps.c_npm.outputs.cache-primary-key && env.CI_CACHE_WRITE_ALLOWED == 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -917,7 +919,7 @@ jobs:
         name: Report npm cache save activity
         if: always()
         env:
-          CACHE_EVENT: ${{ github.event_name }}
+          CACHE_WRITE_ALLOWED: ${{ env.CI_CACHE_WRITE_ALLOWED }}
           NPM_OUTCOME: ${{ steps.save_npm.outcome || 'skipped' }}
           NPM_MATCH: ${{ steps.c_npm.outputs.cache-matched-key }}
           NPM_PRIMARY: ${{ steps.c_npm.outputs.cache-primary-key }}
@@ -928,7 +930,7 @@ jobs:
             success) result="saved" ;;
             failure) result="save failed (continue-on-error)" ;;
             *)
-              if [ "$CACHE_EVENT" = pull_request ]; then
+              if [ "$CACHE_WRITE_ALLOWED" != true ]; then
                 result="not saved (pull-request cache-write policy)"
               elif [ -n "$NPM_MATCH" ] && [ "$NPM_MATCH" = "$NPM_PRIMARY" ]; then
                 result="not saved (exact cache already restored)"
@@ -1033,10 +1035,10 @@ jobs:
           lock="${lock_hash:-nolock}"
           profile="$(printf 'dev=%s;test=%s' "${CARGO_PROFILE_DEV_DEBUG:-default}" "${CARGO_PROFILE_TEST_DEBUG:-default}" | sha256sum | cut -c1-8)"
           target_prefix="$ns-target-img${fp}-rustc${RUST_VERSION}-cfg${cfg_hash:0:8}-man${manifest_hash:0:8}-${lock}-prof${profile}-${GITHUB_JOB}-"
-          target="${target_prefix}run${GITHUB_RUN_ID}-attempt${GITHUB_RUN_ATTEMPT}"
-          # Target artifacts are isolated by job, toolchain, configuration,
-          # manifest and lockfile. Restore only the same job's matching inputs;
-          # the run/attempt suffix makes concurrent writers use distinct keys.
+          target="${target_prefix}shared"
+          # Target artifacts are isolated by job, toolchain, configuration, manifest
+          # and lockfile. A stable per-input key reuses the same target cache;
+          # concurrent writers may race, and the later save safely tolerates 409.
           {
             echo "toolchain=$ns-rustup-${RUST_VERSION}-${comps}"
             echo "toolchain_prefix=$ns-rustup-${RUST_VERSION}-"
@@ -1153,7 +1155,7 @@ jobs:
       - &s_tc
         id: save_tc
         name: Save toolchain cache
-        if: success() && steps.c_tc.outputs.cache-matched-key != steps.c_tc.outputs.cache-primary-key && github.event_name != 'pull_request'
+        if: success() && steps.c_tc.outputs.cache-matched-key != steps.c_tc.outputs.cache-primary-key && env.CI_CACHE_WRITE_ALLOWED == 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1164,7 +1166,7 @@ jobs:
       - &s_reg
         id: save_reg
         name: Save cargo registry cache
-        if: success() && steps.c_reg.outputs.cache-matched-key != steps.c_reg.outputs.cache-primary-key && github.event_name != 'pull_request'
+        if: success() && steps.c_reg.outputs.cache-matched-key != steps.c_reg.outputs.cache-primary-key && env.CI_CACHE_WRITE_ALLOWED == 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1176,7 +1178,7 @@ jobs:
       - &s_tgt
         id: save_tgt
         name: Save target cache
-        if: success() && steps.prune.outputs.save == 'true' && steps.c_tgt.outputs.cache-matched-key != steps.c_tgt.outputs.cache-primary-key && github.event_name != 'pull_request'
+        if: success() && steps.prune.outputs.save == 'true' && steps.c_tgt.outputs.cache-matched-key != steps.c_tgt.outputs.cache-primary-key && env.CI_CACHE_WRITE_ALLOWED == 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1186,7 +1188,7 @@ jobs:
         name: Report cache save activity
         if: always()
         env:
-          CACHE_EVENT: ${{ github.event_name }}
+          CACHE_WRITE_ALLOWED: ${{ env.CI_CACHE_WRITE_ALLOWED }}
           TC_OUTCOME: ${{ steps.save_tc.outcome || 'skipped' }}
           REG_OUTCOME: ${{ steps.save_reg.outcome || 'skipped' }}
           TGT_OUTCOME: ${{ steps.save_tgt.outcome || 'skipped' }}
@@ -1205,7 +1207,7 @@ jobs:
               success) echo "saved" ;;
               failure) echo "save failed (continue-on-error)" ;;
               *)
-                if [ "$CACHE_EVENT" = pull_request ]; then
+                if [ "$CACHE_WRITE_ALLOWED" != true ]; then
                   echo "not saved (pull-request cache-write policy)"
                 elif [ -n "$matched" ] && [ "$matched" = "$primary" ]; then
                   echo "not saved (exact cache already restored)"
@@ -1610,7 +1612,7 @@ jobs:
           retention-days: 1
       - name: Save target-specific Cargo cache
         id: target-cache-save
-        if: success() && steps.target-cache.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
+        if: success() && steps.target-cache.outputs.cache-hit != 'true' && env.CI_CACHE_WRITE_ALLOWED == 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -2400,7 +2402,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - name: Save musl Dashboard Cargo and npm caches
-        if: matrix.kind == 'musl' && success() && steps.dashboard-cache-musl.outputs.cache-hit != 'true'
+        if: matrix.kind == 'musl' && success() && steps.dashboard-cache-musl.outputs.cache-hit != 'true' && env.CI_CACHE_WRITE_ALLOWED == 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -3191,7 +3193,7 @@ jobs:
       - name: Report Rust audit cache saves
         if: always()
         env:
-          CACHE_EVENT: ${{ github.event_name }}
+          CACHE_WRITE_ALLOWED: ${{ env.CI_CACHE_WRITE_ALLOWED }}
           TC_OUTCOME: ${{ steps.save_tc.outcome || 'skipped' }}
           REG_OUTCOME: ${{ steps.save_reg.outcome || 'skipped' }}
           TC_MATCH: ${{ steps.c_tc.outputs.cache-matched-key }}
@@ -3206,7 +3208,7 @@ jobs:
               success) echo "saved" ;;
               failure) echo "save failed (continue-on-error)" ;;
               *)
-                if [ "$CACHE_EVENT" = pull_request ]; then echo "not saved (pull-request cache-write policy)"
+                if [ "$CACHE_WRITE_ALLOWED" != true ]; then echo "not saved (pull-request cache-write policy)"
                 elif [ -n "$matched" ] && [ "$matched" = "$primary" ]; then echo "not saved (exact cache already restored)"
                 else echo "skipped (job did not reach cache save)"; fi
                 ;;
@@ -3392,7 +3394,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Save ARM64 Dashboard Cargo and npm caches
-        if: success() && steps.dashboard-cache.outputs.cache-hit != 'true'
+        if: success() && steps.dashboard-cache.outputs.cache-hit != 'true' && env.CI_CACHE_WRITE_ALLOWED == 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -3517,7 +3519,7 @@ jobs:
           docker buildx version
           hadolint --version
       - name: Save Docker tools cache
-        if: success() && steps.c_dtools.outputs.cache-matched-key != steps.c_dtools.outputs.cache-primary-key && github.event_name != 'pull_request'
+        if: success() && steps.c_dtools.outputs.cache-matched-key != steps.c_dtools.outputs.cache-primary-key && env.CI_CACHE_WRITE_ALLOWED == 'true'
         continue-on-error: true
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -3670,21 +3672,27 @@ jobs:
           docker info > /dev/null
           docker buildx inspect gitrun-ci >/dev/null
           manager() {
+            local cache_args=(--cache-from "type=gha,scope=${MANAGER_CACHE_SCOPE},version=2,timeout=20m")
+            if [ "$CI_CACHE_WRITE_ALLOWED" = true ]; then
+              cache_args+=(--cache-to "type=gha,scope=${MANAGER_CACHE_SCOPE},mode=min,version=2,timeout=20m,ignore-error=true")
+            fi
             docker buildx build \
               --progress=plain \
               --network=host \
-              --cache-from "type=gha,scope=${MANAGER_CACHE_SCOPE},version=2,timeout=20m" \
-              --cache-to "type=gha,scope=${MANAGER_CACHE_SCOPE},mode=max,version=2,timeout=20m,ignore-error=true" \
+              "${cache_args[@]}" \
               -f docker/manager-rs/Dockerfile \
               -t gitrun-manager-rs:ci .
           }
           runner_img() {
             test -f "$RUNNER_TEMP/premade-runner-context/Dockerfile"
+            local cache_args=(--cache-from "type=gha,scope=${RUNNER_CACHE_SCOPE},version=2,timeout=20m")
+            if [ "$CI_CACHE_WRITE_ALLOWED" = true ]; then
+              cache_args+=(--cache-to "type=gha,scope=${RUNNER_CACHE_SCOPE},mode=min,version=2,timeout=20m,ignore-error=true")
+            fi
             docker buildx build \
               --progress=plain \
               --network=host \
-              --cache-from "type=gha,scope=${RUNNER_CACHE_SCOPE},version=2,timeout=20m" \
-              --cache-to "type=gha,scope=${RUNNER_CACHE_SCOPE},mode=max,version=2,timeout=20m,ignore-error=true" \
+              "${cache_args[@]}" \
               -f "$RUNNER_TEMP/premade-runner-context/Dockerfile" \
               -t gitrun-runner:ci "$RUNNER_TEMP/premade-runner-context"
           }
@@ -3788,7 +3796,7 @@ jobs:
   cache-gc:
     name: Cache garbage collection
     needs: summary
-    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (!cancelled() && github.event_name != 'pull_request') }}
+    if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (!cancelled() && env.CI_CACHE_WRITE_ALLOWED == 'true') }}
     runs-on: *runner
     timeout-minutes: 60
     permissions:

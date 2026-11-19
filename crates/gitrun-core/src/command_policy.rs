@@ -96,32 +96,10 @@ pub enum ViolationAction {
 #[cfg(verus)]
 verus! {
     exec_spec_verified! {
-        pub open spec fn violation_action_tag(value: Seq<u8>) -> u8 {
-            if value.len() == 8
-                && value[0] == 108u8
-                && value[1] == 111u8
-                && value[2] == 103u8
-                && value[3] == 95u8
-                && value[4] == 111u8
-                && value[5] == 110u8
-                && value[6] == 108u8
-                && value[7] == 121u8
-            {
+        pub open spec fn violation_action_tag(value: SpecString) -> u8 {
+            if value == "log_only" {
                 0
-            } else if value.len() == 12
-                && value[0] == 107u8
-                && value[1] == 105u8
-                && value[2] == 108u8
-                && value[3] == 108u8
-                && value[4] == 95u8
-                && value[5] == 97u8
-                && value[6] == 110u8
-                && value[7] == 100u8
-                && value[8] == 95u8
-                && value[9] == 98u8
-                && value[10] == 97u8
-                && value[11] == 110u8
-            {
+            } else if value == "kill_and_ban" {
                 2
             } else {
                 1

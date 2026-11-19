@@ -96,7 +96,7 @@ pub enum ViolationAction {
 #[cfg(verus)]
 verus! {
     exec_spec_verified! {
-        pub spec fn violation_action_tag(value: Seq<u8>) -> u8 {
+        pub open spec fn violation_action_tag(value: Seq<u8>) -> u8 {
             if value.len() == 8
                 && value[0 as int] == b'l'
                 && value[1 as int] == b'o'

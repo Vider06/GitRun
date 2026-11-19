@@ -96,7 +96,7 @@ pub enum ViolationAction {
 #[cfg(verus)]
 verus! {
     exec_spec_verified! {
-        spec fn violation_action_tag(value: Seq<u8>) -> u8 {
+        pub spec fn violation_action_tag(value: Seq<u8>) -> u8 {
             if value.len() == 8
                 && value[0 as int] == b'l'
                 && value[1 as int] == b'o'
@@ -1055,14 +1055,14 @@ mod verus_verification {
             let log_only_extra: &[u8] = b"log_only_extra";
             let kill_and_ban_extra: &[u8] = b"kill_and_ban_extra";
             assert(log_only@ == b"log_only"@);
-            assert(ViolationAction::from_config_bytes(log_only) == ViolationAction::LogOnly);
-            assert(ViolationAction::from_config_bytes(kill) == ViolationAction::Kill);
+            assert(violation_action_tag(log_only@) == 0);
+            assert(violation_action_tag(kill@) == 1);
             assert(kill_and_ban@ == b"kill_and_ban"@);
-            assert(ViolationAction::from_config_bytes(kill_and_ban) == ViolationAction::KillAndBan);
-            assert(ViolationAction::from_config_bytes(unknown) == ViolationAction::Kill);
-            assert(ViolationAction::from_config_bytes(empty) == ViolationAction::Kill);
-            assert(ViolationAction::from_config_bytes(log_only_extra) == ViolationAction::Kill);
-            assert(ViolationAction::from_config_bytes(kill_and_ban_extra) == ViolationAction::Kill);
+            assert(violation_action_tag(kill_and_ban@) == 2);
+            assert(violation_action_tag(unknown@) == 1);
+            assert(violation_action_tag(empty@) == 1);
+            assert(violation_action_tag(log_only_extra@) == 1);
+            assert(violation_action_tag(kill_and_ban_extra@) == 1);
             assert(ViolationAction::LogOnly.as_config_str() == "log_only");
             assert(ViolationAction::Kill.as_config_str() == "kill");
             assert(ViolationAction::KillAndBan.as_config_str() == "kill_and_ban");

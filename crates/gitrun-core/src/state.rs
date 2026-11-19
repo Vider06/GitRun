@@ -51,7 +51,7 @@ pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
 #[cfg(verus)]
 verus! {
     exec_spec_verified! {
-        pub spec fn state_file_leaf_is_allowed_bytes_spec(name: Seq<u8>) -> bool {
+        pub open spec fn state_file_leaf_is_allowed_bytes_spec(name: Seq<u8>) -> bool {
             (name.len() == 11
                 && name[0 as int] == b'h'
                 && name[1 as int] == b'e'

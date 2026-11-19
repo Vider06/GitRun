@@ -33,6 +33,8 @@
 
 #[cfg(verus)]
 use vstd::prelude::*;
+#[cfg(verus)]
+use vstd::contrib::exec_spec::*;
 
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
@@ -91,58 +93,74 @@ pub enum ViolationAction {
     KillAndBan,
 }
 
+#[cfg(verus)]
+verus! {
+    exec_spec_verified! {
+        spec fn violation_action_tag(value: Seq<u8>) -> u8 {
+            if value.len() == 8
+                && value[0 as int] == b'l'
+                && value[1 as int] == b'o'
+                && value[2 as int] == b'g'
+                && value[3 as int] == b'_'
+                && value[4 as int] == b'o'
+                && value[5 as int] == b'n'
+                && value[6 as int] == b'l'
+                && value[7 as int] == b'y'
+            {
+                0
+            } else if value.len() == 12
+                && value[0 as int] == b'k'
+                && value[1 as int] == b'i'
+                && value[2 as int] == b'l'
+                && value[3 as int] == b'l'
+                && value[4 as int] == b'_'
+                && value[5 as int] == b'a'
+                && value[6 as int] == b'n'
+                && value[7 as int] == b'd'
+                && value[8 as int] == b'_'
+                && value[9 as int] == b'b'
+                && value[10 as int] == b'a'
+                && value[11 as int] == b'n'
+            {
+                2
+            } else {
+                1
+            }
+        }
+    }
+}
+
 impl ViolationAction {
-    /// Shared byte-oriented implementation. Runtime converts UTF-8 once;
-    /// Verus proves the exact byte-level decision without string APIs.
-    #[cfg_attr(verus, verus_verify(dual_spec, open))]
-    #[cfg_attr(
-        verus,
-        verus_spec(
-            returns
-                if value@ == b"log_only"@
-                {
-                    Self::LogOnly
-                } else if value@ == b"kill_and_ban"@
-                {
-                    Self::KillAndBan
-                } else {
-                    Self::Kill
-                }
-        )
-    )]
-    #[allow(clippy::get_first)]
+    /// Shared byte-oriented implementation. Runtime and Verus use the
+    /// same byte-level decision; the Verus executable is generated from a
+    /// sequence specification with a proved correspondence.
+    #[cfg(not(verus))]
     pub fn from_config_bytes(value: &[u8]) -> Self {
-        // Length guards make every indexed byte access in-bounds.
-        // Compare primitive u8 values rather than invoking slice accessors
-        // or slice PartialEq, which Verus treats as exec-only trait calls.
-        if value.len() == 8
-            && value[0] == b'l'
-            && value[1] == b'o'
-            && value[2] == b'g'
-            && value[3] == b'_'
-            && value[4] == b'o'
-            && value[5] == b'n'
-            && value[6] == b'l'
-            && value[7] == b'y'
-        {
+        if value == b"log_only" {
             Self::LogOnly
-        } else if value.len() == 12
-            && value[0] == b'k'
-            && value[1] == b'i'
-            && value[2] == b'l'
-            && value[3] == b'l'
-            && value[4] == b'_'
-            && value[5] == b'a'
-            && value[6] == b'n'
-            && value[7] == b'd'
-            && value[8] == b'_'
-            && value[9] == b'b'
-            && value[10] == b'a'
-            && value[11] == b'n'
-        {
+        } else if value == b"kill_and_ban" {
             Self::KillAndBan
         } else {
             Self::Kill
+        }
+    }
+
+    #[cfg(verus)]
+    #[verus_spec(
+        returns
+            if violation_action_tag(value@) == 0 {
+                Self::LogOnly
+            } else if violation_action_tag(value@) == 2 {
+                Self::KillAndBan
+            } else {
+                Self::Kill
+            }
+    )]
+    pub fn from_config_bytes(value: &[u8]) -> Self {
+        match exec_violation_action_tag(value) {
+            0 => Self::LogOnly,
+            2 => Self::KillAndBan,
+            _ => Self::Kill,
         }
     }
 

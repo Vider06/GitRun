@@ -633,7 +633,7 @@ mod tests {
         let third = GtuuLock::acquire(&dir);
         assert!(
             third.is_ok(),
-            "lock should be reacquirable after drop: {third:?}"
+            "lock should be reacquirable after drop"
         );
         let _ = fs::remove_dir_all(&dir);
     }

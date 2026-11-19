@@ -97,9 +97,9 @@ pub enum ViolationAction {
 verus! {
     exec_spec_verified! {
         pub open spec fn violation_action_tag(value: SpecString) -> u8 {
-            if value == "log_only" {
+            if value == "log_only"@ {
                 0
-            } else if value == "kill_and_ban" {
+            } else if value == "kill_and_ban"@ {
                 2
             } else {
                 1

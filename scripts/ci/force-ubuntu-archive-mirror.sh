@@ -36,10 +36,21 @@ for source in "${sources[@]}"; do
     "$source"
 done
 
-# Fail closed: no Ubuntu archive host may bypass the selected mirror.
+# Fail closed only on endpoints outside the selected mirror. Canonical's
+# archive and security hosts are valid when Canonical is selected; GARR must
+# not leave any Canonical archive source active.
+case "$mirror" in
+  https://ubuntu.mirror.garr.it/ubuntu-archive/)
+    forbidden='https?://(([[:alnum:]-]+[.])*archive[.]ubuntu[.]com|security[.]ubuntu[.]com)/ubuntu'
+    ;;
+  *)
+    forbidden='https?://(azure|[[:alnum:]-]+[.]ec2)[.]archive[.]ubuntu[.]com/ubuntu'
+    ;;
+esac
+
 for source in "${sources[@]}"; do
   [ -f "$source" ] || continue
-  if grep -Eqi 'https?://(([[:alnum:]-]+[.])*archive[.]ubuntu[.]com|security[.]ubuntu[.]com)/ubuntu' "$source"; then
+  if grep -Eqi "$forbidden" "$source"; then
     echo "Ubuntu archive endpoint bypasses selected mirror in $source" >&2
     exit 1
   fi

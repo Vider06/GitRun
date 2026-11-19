@@ -3312,6 +3312,9 @@ jobs:
     env:
       RUST_COMPONENTS: ""
       NPM_CONFIG_CACHE: ${{ github.workspace }}/.gitrun-ci/npm-cache
+      # Canary only: exercise GARR on the x64 Tauri job before considering a
+      # repository-wide mirror change. ARM64 and all other jobs stay on Canonical.
+      GITRUN_APT_MIRROR: https://ubuntu.mirror.garr.it/ubuntu-archive/
     outputs: *job_outputs
     steps:
       - *checkout

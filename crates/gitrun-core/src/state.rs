@@ -51,7 +51,7 @@ pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
 #[cfg(verus)]
 verus! {
     exec_spec_verified! {
-        spec fn state_file_leaf_is_allowed_bytes_spec(name: Seq<u8>) -> bool {
+        pub spec fn state_file_leaf_is_allowed_bytes_spec(name: Seq<u8>) -> bool {
             (name.len() == 11
                 && name[0 as int] == b'h'
                 && name[1 as int] == b'e'
@@ -245,14 +245,14 @@ mod verus_verification {
             let nested_path: &[u8] = b"sub/health.json";
             let suffixed: &[u8] = b"health.json.tmp";
             assert(health@ == b"health.json"@);
-            assert(state_file_leaf_is_allowed_bytes(health));
+            assert(state_file_leaf_is_allowed_bytes_spec(health@));
             assert(crash@ == b"last-crash"@);
-            assert(state_file_leaf_is_allowed_bytes(crash));
-            assert(!state_file_leaf_is_allowed_bytes(empty));
-            assert(!state_file_leaf_is_allowed_bytes(other));
-            assert(!state_file_leaf_is_allowed_bytes(parent_path));
-            assert(!state_file_leaf_is_allowed_bytes(nested_path));
-            assert(!state_file_leaf_is_allowed_bytes(suffixed));
+            assert(state_file_leaf_is_allowed_bytes_spec(crash@));
+            assert(!state_file_leaf_is_allowed_bytes_spec(empty@));
+            assert(!state_file_leaf_is_allowed_bytes_spec(other@));
+            assert(!state_file_leaf_is_allowed_bytes_spec(parent_path@));
+            assert(!state_file_leaf_is_allowed_bytes_spec(nested_path@));
+            assert(!state_file_leaf_is_allowed_bytes_spec(suffixed@));
         }
     }
 }

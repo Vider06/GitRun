@@ -97,31 +97,9 @@ pub enum ViolationAction {
 verus! {
     exec_spec_verified! {
         pub open spec fn violation_action_tag(value: Seq<u8>) -> u8 {
-            if value.len() == 8
-                && value[0 as int] == b'l'
-                && value[1 as int] == b'o'
-                && value[2 as int] == b'g'
-                && value[3 as int] == b'_'
-                && value[4 as int] == b'o'
-                && value[5 as int] == b'n'
-                && value[6 as int] == b'l'
-                && value[7 as int] == b'y'
-            {
+            if value == b"log_only"@ {
                 0
-            } else if value.len() == 12
-                && value[0 as int] == b'k'
-                && value[1 as int] == b'i'
-                && value[2 as int] == b'l'
-                && value[3 as int] == b'l'
-                && value[4 as int] == b'_'
-                && value[5 as int] == b'a'
-                && value[6 as int] == b'n'
-                && value[7 as int] == b'd'
-                && value[8 as int] == b'_'
-                && value[9 as int] == b'b'
-                && value[10 as int] == b'a'
-                && value[11 as int] == b'n'
-            {
+            } else if value == b"kill_and_ban"@ {
                 2
             } else {
                 1

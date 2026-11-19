@@ -33,7 +33,7 @@ PROBES = (
     ),
     (
         "openSUSE (glibc)",
-        "opensuse/leap:latest",
+        "opensuse/tumbleweed:latest",
         "zypper --non-interactive refresh && zypper --non-interactive install --no-recommends "
         "pkg-config gcc gcc-c++ make curl wget file libopenssl-devel "
         "libappindicator3-1 librsvg-devel webkit2gtk3-devel",

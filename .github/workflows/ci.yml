@@ -3319,6 +3319,39 @@ jobs:
     steps:
       - *checkout
       - *boot
+      - name: Probe GARR Ubuntu archive and refresh APT indexes
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/ci-lib.sh"
+          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          codename="$(. /etc/os-release && printf '%s' "${VERSION_CODENAME:-noble}")"
+          echo "Probing GARR InRelease for Ubuntu $codename"
+          curl --fail --silent --show-error --location \
+            --connect-timeout 15 --max-time 60 \
+            --output /dev/null \
+            --write-out 'GARR InRelease: HTTP %{http_code}, %{size_download} bytes, %{time_total}s total\n' \
+            "https://ubuntu.mirror.garr.it/ubuntu-archive/dists/$codename/InRelease"
+          started="$(date +%s)"
+          sudo apt-get \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            -o Acquire::Retries=2 \
+            update 2>&1 | tee "$CI_LOGS/apt-update-garr.log"
+          elapsed="$(( $(date +%s) - started ))"
+          : > "$CI_DIR/apt-mirror-forced"
+          : > "$CI_DIR/apt-updated"
+          {
+            echo "### GARR APT mirror canary"
+            echo
+            echo "| Measurement | Result |"
+            echo "|---|---|"
+            echo "| Mirror | `https://ubuntu.mirror.garr.it/ubuntu-archive/` |"
+            echo "| Ubuntu suite | $codename |"
+            echo "| APT index refresh | success |"
+            echo "| APT index refresh duration | ${elapsed}s |"
+            echo "| InRelease probe | success |"
+            echo
+          } | ci_sum
       - name: Verify Tauri system dependencies
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"

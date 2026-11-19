@@ -52,29 +52,7 @@ pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
 verus! {
     exec_spec_verified! {
         pub open spec fn state_file_leaf_is_allowed_bytes_spec(name: Seq<u8>) -> bool {
-            (name.len() == 11
-                && name[0 as int] == b'h'
-                && name[1 as int] == b'e'
-                && name[2 as int] == b'a'
-                && name[3 as int] == b'l'
-                && name[4 as int] == b't'
-                && name[5 as int] == b'h'
-                && name[6 as int] == b'.'
-                && name[7 as int] == b'j'
-                && name[8 as int] == b's'
-                && name[9 as int] == b'o'
-                && name[10 as int] == b'n')
-                || (name.len() == 10
-                    && name[0 as int] == b'l'
-                    && name[1 as int] == b'a'
-                    && name[2 as int] == b's'
-                    && name[3 as int] == b't'
-                    && name[4 as int] == b'-'
-                    && name[5 as int] == b'c'
-                    && name[6 as int] == b'r'
-                    && name[7 as int] == b'a'
-                    && name[8 as int] == b's'
-                    && name[9 as int] == b'h')
+            name == b"health.json"@ || name == b"last-crash"@
         }
     }
 }

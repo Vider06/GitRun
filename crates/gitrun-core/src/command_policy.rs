@@ -96,7 +96,7 @@ pub enum ViolationAction {
 #[cfg(verus)]
 verus! {
     exec_spec_verified! {
-        pub open spec fn violation_action_tag(value: SpecString) -> u8 {
+        pub open spec fn violation_action_tag(value: Seq<u8>) -> u8 {
             if value == "log_only"@ {
                 0
             } else if value == "kill_and_ban"@ {

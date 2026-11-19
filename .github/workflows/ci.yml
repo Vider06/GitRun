@@ -3345,7 +3345,7 @@ jobs:
             echo
             echo "| Measurement | Result |"
             echo "|---|---|"
-            echo "| Mirror | `https://ubuntu.mirror.garr.it/ubuntu-archive/` |"
+            printf '%s\\n' '| Mirror | https://ubuntu.mirror.garr.it/ubuntu-archive/ |'
             echo "| Ubuntu suite | $codename |"
             echo "| APT index refresh | success |"
             echo "| APT index refresh duration | ${elapsed}s |"

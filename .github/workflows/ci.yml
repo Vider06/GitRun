@@ -3323,7 +3323,7 @@ jobs:
         run: |
           set -euo pipefail
           source "$RUNNER_TEMP/ci-lib.sh"
-          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
+          sudo env GITRUN_APT_MIRROR="$GITRUN_APT_MIRROR" bash scripts/ci/force-ubuntu-archive-mirror.sh
           codename="$(. /etc/os-release && printf '%s' "${VERSION_CODENAME:-noble}")"
           echo "Probing GARR InRelease for Ubuntu $codename"
           curl --fail --silent --show-error --location \

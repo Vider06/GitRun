@@ -97,9 +97,9 @@ pub enum ViolationAction {
 verus! {
     exec_spec_verified! {
         pub open spec fn violation_action_tag(value: Seq<u8>) -> u8 {
-            if value == b"log_only"@ {
+            if value == seq![b'l', b'o', b'g', b'_', b'o', b'n', b'l', b'y'] {
                 0
-            } else if value == b"kill_and_ban"@ {
+            } else if value == seq![b'k', b'i', b'l', b'l', b'_', b'a', b'n', b'd', b'_', b'b', b'a', b'n'] {
                 2
             } else {
                 1

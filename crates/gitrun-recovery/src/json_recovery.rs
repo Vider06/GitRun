@@ -1,12 +1,18 @@
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
 };
+#[cfg(verus)]
+use vstd::prelude::*;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(verus, verus_verify)]
+#[cfg_attr(all(not(kani), not(verus)), derive(Serialize, Deserialize))]
+#[cfg_attr(all(not(kani), not(verus)), serde(rename_all = "kebab-case"))]
 pub enum JsonRecoveryAction {
     Repair,
     RestoreBackups,
@@ -14,6 +20,7 @@ pub enum JsonRecoveryAction {
 }
 
 impl JsonRecoveryAction {
+    #[cfg(not(any(kani, verus)))]
     pub fn parse(value: &str) -> Result<Self, String> {
         match value {
             "repair" => Ok(Self::Repair),
@@ -23,6 +30,8 @@ impl JsonRecoveryAction {
         }
     }
 
+    #[cfg_attr(verus, verus_verify(dual_spec, open))]
+    #[cfg_attr(verus, verus_spec(returns self.as_str()))]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Repair => "repair",
@@ -32,6 +41,7 @@ impl JsonRecoveryAction {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct JsonRecoveryReport {
     pub action: String,
@@ -44,6 +54,7 @@ pub struct JsonRecoveryReport {
 
 /// Route privileged changes through the installed GitRun helper; the UI never
 /// supplies an arbitrary path or shell command.
+#[cfg(not(any(kani, verus)))]
 pub fn run_json_recovery_action(action: JsonRecoveryAction) -> Result<JsonRecoveryReport, String> {
     if super::is_root() {
         // The Control Manager runs inside a hardened systemd mount namespace.
@@ -90,11 +101,13 @@ pub fn run_json_recovery_action(action: JsonRecoveryAction) -> Result<JsonRecove
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 enum MainLibraryRestoreMode {
     SystemdTransientUnit,
     DirectRoot,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn main_library_restore_mode(
     manager: Option<gitrun_platform::ServiceManager>,
 ) -> Result<MainLibraryRestoreMode, String> {
@@ -110,6 +123,7 @@ fn main_library_restore_mode(
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn restore_main_library_via_transient_unit() -> Result<JsonRecoveryReport, String> {
     let executable = super::find_trusted_installed_gitrun_binary()
         .ok_or("trusted installed GitRun executable was not found for Main Library restore")?;
@@ -151,6 +165,7 @@ fn restore_main_library_via_transient_unit() -> Result<JsonRecoveryReport, Strin
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn main_library_restore_unit_properties() -> [&'static str; 6] {
     [
         "--property=Type=oneshot",
@@ -163,6 +178,7 @@ fn main_library_restore_unit_properties() -> [&'static str; 6] {
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn transient_unit_journal(unit_name: &str) -> Option<String> {
     let journalctl = Path::new("/usr/bin/journalctl");
     if !super::is_trusted_root_executable(journalctl) {
@@ -189,11 +205,13 @@ fn transient_unit_journal(unit_name: &str) -> Option<String> {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[cfg(not(any(kani, verus)))]
 fn restore_main_library_via_transient_unit() -> Result<JsonRecoveryReport, String> {
     Err("Main Library restore through the system service is supported only on Linux".into())
 }
 
 /// Root-only target for a fixed-purpose CLI entry point.
+#[cfg(not(any(kani, verus)))]
 pub fn run_json_recovery_root_action(action: &str) -> Result<JsonRecoveryReport, String> {
     if !super::is_root() {
         return Err("JSON recovery requires administrator privileges".into());
@@ -237,6 +255,7 @@ pub fn run_json_recovery_root_action(action: &str) -> Result<JsonRecoveryReport,
     Ok(report)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn json_recovery_roots() -> Vec<PathBuf> {
     let system_config = Path::new("/etc/gitrun/gitrun.env");
     let mut roots = Vec::new();
@@ -268,6 +287,7 @@ fn json_recovery_roots() -> Vec<PathBuf> {
     roots
 }
 
+#[cfg(not(any(kani, verus)))]
 fn recovery_json_candidate(path: &Path, root: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
@@ -295,6 +315,7 @@ fn recovery_json_candidate(path: &Path, root: &Path) -> bool {
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 fn collect_recovery_json_targets(
     roots: &[PathBuf],
     include_missing_backed_up_files: bool,
@@ -384,6 +405,7 @@ fn collect_recovery_json_targets(
     targets
 }
 
+#[cfg(not(any(kani, verus)))]
 fn active_path_for_backup(path: &Path) -> Option<PathBuf> {
     let name = path.file_name()?.to_str()?;
     let active_name = name
@@ -395,12 +417,14 @@ fn active_path_for_backup(path: &Path) -> Option<PathBuf> {
     Some(path.with_file_name(active_name))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn append_backup_suffix(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_os_string();
     name.push(".Back");
     PathBuf::from(name)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_valid_json(path: &Path) -> Result<(Vec<u8>, serde_json::Value), String> {
     let metadata =
         fs::symlink_metadata(path).map_err(|error| format!("{}: {error}", path.display()))?;
@@ -440,6 +464,7 @@ fn read_valid_json(path: &Path) -> Result<(Vec<u8>, serde_json::Value), String> 
     Ok((bytes, value))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn repaired_json_value(content: &str, path: &Path) -> Result<serde_json::Value, String> {
     let without_bom = content.strip_prefix('\u{feff}').unwrap_or(content);
     // Missing closing braces/brackets at end-of-file can be repaired
@@ -465,6 +490,7 @@ fn repaired_json_value(content: &str, path: &Path) -> Result<serde_json::Value, 
     Ok(value)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn close_unfinished_containers(input: &str) -> Result<String, &'static str> {
     let mut output = String::with_capacity(input.len().saturating_add(8));
     let mut stack = Vec::new();
@@ -523,6 +549,7 @@ fn close_unfinished_containers(input: &str) -> Result<String, &'static str> {
     Ok(output)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn remove_trailing_json_commas(input: &str) -> String {
     let chars: Vec<char> = input.chars().collect();
     let mut output = String::with_capacity(input.len());
@@ -565,10 +592,12 @@ fn remove_trailing_json_commas(input: &str) -> String {
     output
 }
 
+#[cfg(not(any(kani, verus)))]
 fn same_json_root_shape(left: &serde_json::Value, right: &serde_json::Value) -> bool {
     (left.is_object() && right.is_object()) || (left.is_array() && right.is_array())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn mode_for_existing_json(path: &Path) -> u32 {
     #[cfg(unix)]
     {
@@ -584,12 +613,14 @@ fn mode_for_existing_json(path: &Path) -> u32 {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn write_recovered_json(path: &Path, content: &[u8]) -> Result<(), String> {
     let mode = mode_for_existing_json(path);
     gitrun_updater::atomic_write_installed_file(path, content, mode)
         .map_err(|error| format!("atomic write failed for {}: {error}", path.display()))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn repair_json_targets(targets: &[PathBuf], report: &mut JsonRecoveryReport) {
     for path in targets {
         let raw = match fs::read_to_string(path) {
@@ -692,6 +723,7 @@ fn repair_json_targets(targets: &[PathBuf], report: &mut JsonRecoveryReport) {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn restore_json_targets(targets: &[PathBuf], report: &mut JsonRecoveryReport) {
     for path in targets {
         let backup = append_backup_suffix(path);
@@ -741,6 +773,7 @@ fn restore_json_targets(targets: &[PathBuf], report: &mut JsonRecoveryReport) {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn push_recovery_error(report: &mut JsonRecoveryReport, detail: String) {
     if report.errors.len() < 100 {
         report.errors.push(detail);
@@ -751,6 +784,7 @@ fn push_recovery_error(report: &mut JsonRecoveryReport, detail: String) {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn push_recovery_detail(report: &mut JsonRecoveryReport, detail: String) {
     if report.details.len() < 100 {
         report.details.push(detail);
@@ -761,7 +795,7 @@ fn push_recovery_detail(report: &mut JsonRecoveryReport, detail: String) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(any(kani, verus))))]
 mod tests {
     use super::{
         active_path_for_backup, append_backup_suffix, main_library_restore_mode,
@@ -885,3 +919,37 @@ mod tests {
         assert!(!same_json_root_shape(&object, &array));
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::JsonRecoveryAction;
+
+    /// Proves every supported recovery action has its documented command name.
+    #[kani::proof]
+    fn recovery_action_names_are_total_and_exact() {
+        assert!(JsonRecoveryAction::Repair.as_str() == "repair");
+        assert!(JsonRecoveryAction::RestoreBackups.as_str() == "restore-backups");
+        assert!(JsonRecoveryAction::RestoreMainLibrary.as_str() == "restore-main-library");
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::JsonRecoveryAction;
+    use vstd::prelude::*;
+
+    verus! {
+        /// Verifies the exact external command spelling for every recovery action.
+        proof fn recovery_action_names_are_total_and_exact() {
+            assert(JsonRecoveryAction::Repair.as_str() == "repair");
+            assert(JsonRecoveryAction::RestoreBackups.as_str() == "restore-backups");
+            assert(JsonRecoveryAction::RestoreMainLibrary.as_str() == "restore-main-library");
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

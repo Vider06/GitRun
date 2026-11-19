@@ -16,11 +16,17 @@
 //! for the shell layer, while the kernel layer guarantees that directly
 //! invoking those paths does not bypass the policy.
 
+#[cfg(not(any(kani, verus)))]
 use crate::events::{self, SecurityEvent, Severity};
+#[cfg(not(any(kani, verus)))]
 use gitrun_core::command_policy::{CommandPolicy, Decision};
+#[cfg(not(any(kani, verus)))]
 use std::env;
+#[cfg(not(any(kani, verus)))]
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 use std::os::unix::process::CommandExt;
+#[cfg(not(any(kani, verus)))]
 use std::process::Command;
 
 const REAL_SHELL_FALLBACK: &str = "/bin/sh.gitrun-real";
@@ -42,6 +48,7 @@ fn real_shell_for_invocation(invocation: &str) -> &'static str {
 /// supervisor. A disabled master switch intentionally becomes an empty
 /// policy rather than a special execution path, so the two layers keep the
 /// same semantics.
+#[cfg(not(any(kani, verus)))]
 fn policy_for_config(config: &gitrun_core::Config) -> Result<CommandPolicy, String> {
     if let Some(policy) = config.command_policy() {
         return Ok(policy);
@@ -65,6 +72,7 @@ fn policy_for_config(config: &gitrun_core::Config) -> Result<CommandPolicy, Stri
 /// script-style argv when present. For direct script-file invocations it
 /// falls back to joining argv so a policy still has something concrete to
 /// inspect.
+#[cfg(not(any(kani, verus)))]
 pub fn extract_command_line(args: &[String]) -> String {
     if let Some(dash_c_pos) = args.iter().position(|a| a == "-c") {
         if let Some(script) = args.get(dash_c_pos + 1) {
@@ -75,6 +83,7 @@ pub fn extract_command_line(args: &[String]) -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub enum AgentDecision {
     Delegate { real_shell: String },
     Refuse { reason: String },
@@ -83,6 +92,7 @@ pub enum AgentDecision {
 /// Pure decision logic for one shell invocation. It does not read mutable
 /// policy state from the process environment, which keeps the decision easy
 /// to test and prevents a job from changing policy after startup.
+#[cfg(not(any(kani, verus)))]
 pub fn decide(policy: &CommandPolicy, args: &[String], invocation: &str) -> AgentDecision {
     let command_line = extract_command_line(args);
     match policy.evaluate(&command_line) {
@@ -100,6 +110,7 @@ pub fn decide(policy: &CommandPolicy, args: &[String], invocation: &str) -> Agen
 /// Executes the shell-wrapper layer directly. The kernel supervisor uses the
 /// same policy builder but does not call this function; it supervises the
 /// whole Actions runner process tree instead.
+#[cfg(not(any(kani, verus)))]
 pub fn run(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
     let args: Vec<String> = env::args().skip(1).collect();
     let policy = match policy_for_config(config) {
@@ -155,6 +166,7 @@ pub fn run(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
 /// closed if ptrace/seccomp setup or executable inspection is unavailable:
 /// falling back to the weaker shell layer would recreate the bypass this
 /// supervisor is specifically meant to close.
+#[cfg(not(any(kani, verus)))]
 pub fn supervise_runner(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
     let policy = match policy_for_config(config) {
         Ok(policy) => policy,
@@ -187,6 +199,7 @@ pub fn supervise_runner(events_path: &std::path::Path, config: &gitrun_core::Con
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn severity_for(_config: &gitrun_core::Config) -> Severity {
     Severity::Warning
 }
@@ -284,3 +297,55 @@ mod tests {
         );
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{
+        is_bash_invocation, real_shell_for_invocation, REAL_BASH_FALLBACK, REAL_SHELL_FALLBACK,
+    };
+
+    #[kani::proof]
+    fn shell_dispatch_never_crosses_shell_families() {
+        assert!(is_bash_invocation("bash"));
+        assert!(is_bash_invocation("/bin/bash"));
+        assert!(is_bash_invocation("/usr/bin/bash"));
+        assert!(!is_bash_invocation("sh"));
+        assert!(!is_bash_invocation("/bin/sh"));
+        assert!(!is_bash_invocation("/bin/bash.gitrun-real"));
+
+        assert!(real_shell_for_invocation("bash") == REAL_BASH_FALLBACK);
+        assert!(real_shell_for_invocation("/bin/bash") == REAL_BASH_FALLBACK);
+        assert!(real_shell_for_invocation("sh") == REAL_SHELL_FALLBACK);
+        assert!(real_shell_for_invocation("/bin/sh") == REAL_SHELL_FALLBACK);
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{
+        is_bash_invocation, real_shell_for_invocation, REAL_BASH_FALLBACK, REAL_SHELL_FALLBACK,
+    };
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn shell_dispatch_never_crosses_shell_families() {
+            assert(is_bash_invocation("bash"));
+            assert(is_bash_invocation("/bin/bash"));
+            assert(is_bash_invocation("/usr/bin/bash"));
+            assert(!is_bash_invocation("sh"));
+            assert(!is_bash_invocation("/bin/sh"));
+            assert(!is_bash_invocation("/bin/bash.gitrun-real"));
+
+            assert(real_shell_for_invocation("bash") == REAL_BASH_FALLBACK);
+            assert(real_shell_for_invocation("/bin/bash") == REAL_BASH_FALLBACK);
+            assert(real_shell_for_invocation("sh") == REAL_SHELL_FALLBACK);
+            assert(real_shell_for_invocation("/bin/sh") == REAL_SHELL_FALLBACK);
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

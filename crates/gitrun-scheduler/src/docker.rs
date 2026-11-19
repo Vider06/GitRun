@@ -8,16 +8,25 @@
 //! a `DockerRunner`-shaped snapshot as plain data instead of calling this module
 //! directly, so it stays testable without Docker installed.
 
+#[cfg(not(any(kani, verus)))]
 use serde_json::Value;
+#[cfg(not(any(kani, verus)))]
 use std::collections::{HashMap, HashSet};
+#[cfg(not(any(kani, verus)))]
 use std::io::Read;
+#[cfg(not(any(kani, verus)))]
 use std::path::{Component, Path, PathBuf};
+#[cfg(not(any(kani, verus)))]
 use std::process::{Child, Command, Output, Stdio};
+#[cfg(not(any(kani, verus)))]
 use std::thread;
+#[cfg(not(any(kani, verus)))]
 use std::time::{Duration, Instant};
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum DockerError {
     #[error("failed to invoke docker: {0}")]
     Spawn(#[from] std::io::Error),
@@ -27,11 +36,16 @@ pub enum DockerError {
     Decode(#[from] serde_json::Error),
 }
 
+#[cfg(not(any(kani, verus)))]
 pub type Result<T> = std::result::Result<T, DockerError>;
 
+#[cfg(not(any(kani, verus)))]
 const SHARED_CACHE_VOLUME_DEFAULT: &str = "gitrun-runner-shared";
+#[cfg(not(any(kani, verus)))]
 const DOCKER_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+#[cfg(not(any(kani, verus)))]
 const MAX_DOCKER_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+#[cfg(not(any(kani, verus)))]
 const DOCKER_OUTPUT_TRUNCATION_MARKER: &[u8] = b"\n[Docker output truncated at 8 MiB]";
 
 // Docker export archive members are normally root-relative (for example
@@ -42,6 +56,7 @@ const DOCKER_OUTPUT_TRUNCATION_MARKER: &[u8] = b"\n[Docker output truncated at 8
 // Writable Docker mount destinations must be covered by these archived-path
 // exclusions before MELT is allowed to extract a source image into the target.
 // Otherwise tar could write through a mount into a host bind or persistent volume.
+#[cfg(not(any(kani, verus)))]
 const MELT_TAR_EXCLUDE_ROOTS: &[&str] = &[
     "proc",
     "sys",
@@ -57,6 +72,7 @@ const MELT_TAR_EXCLUDE_ROOTS: &[&str] = &[
     "home/runner/actions-runner",
 ];
 
+#[cfg(not(any(kani, verus)))]
 const MELT_TAR_EXCLUDE_ARGS: &[&str] = &[
     "--exclude=./proc",
     "--exclude=./proc/*",
@@ -101,6 +117,7 @@ const MELT_TAR_EXCLUDE_ARGS: &[&str] = &[
     "--exclude=home/runner/actions-runner",
     "--exclude=home/runner/actions-runner/*",
 ];
+#[cfg(not(any(kani, verus)))]
 const GITRUN_API_SOCKET_GID: &str = "10000";
 
 /// Where a Docker command actually runs. `Local` is the existing behavior
@@ -110,6 +127,7 @@ const GITRUN_API_SOCKET_GID: &str = "10000";
 /// `docker run`/`docker ps`/etc. commands, just pointed at a different
 /// daemon via `DOCKER_HOST`, rather than a different code path per OS.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg(not(any(kani, verus)))]
 pub enum DockerHost {
     #[default]
     Local,
@@ -123,6 +141,7 @@ pub enum DockerHost {
     RemoteTls { endpoint: String, cert_dir: String },
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_bounded_output(mut reader: impl Read) -> std::io::Result<Vec<u8>> {
     let mut retained = Vec::with_capacity(MAX_DOCKER_OUTPUT_BYTES.min(64 * 1024));
     let mut chunk = [0u8; 16 * 1024];
@@ -145,16 +164,19 @@ fn read_bounded_output(mut reader: impl Read) -> std::io::Result<Vec<u8>> {
     Ok(retained)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn output_was_truncated(output: &[u8]) -> bool {
     output.ends_with(DOCKER_OUTPUT_TRUNCATION_MARKER)
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 unsafe extern "C" {
     fn kill(pid: i32, signal: i32) -> i32;
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn kill_command_group(pid: u32) {
     // run_on places each CLI in its own process group, so kill descendants
     // that inherited stdout/stderr as well as the direct child.
@@ -162,18 +184,22 @@ fn kill_command_group(pid: u32) {
 }
 
 #[cfg(not(unix))]
+#[cfg(not(any(kani, verus)))]
 fn kill_command_group(_pid: u32) {}
 
+#[cfg(not(any(kani, verus)))]
 fn terminate_child(child: &mut Child) {
     kill_command_group(child.id());
     let _ = child.kill();
     let _ = child.wait();
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run_on(host: &DockerHost, args: &[&str]) -> Result<Output> {
     run_on_with_env(host, args, &[])
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run_on_with_env(
     host: &DockerHost,
     args: &[&str],
@@ -291,10 +317,12 @@ fn run_on_with_env(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run_checked_on(host: &DockerHost, args: &[&str]) -> Result<String> {
     run_checked_on_with_env(host, args, &[])
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run_checked_on_with_env(
     host: &DockerHost,
     args: &[&str],
@@ -313,6 +341,7 @@ fn run_checked_on_with_env(
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run_checked(args: &[&str]) -> Result<String> {
     run_checked_on(&DockerHost::Local, args)
 }
@@ -320,6 +349,7 @@ fn run_checked(args: &[&str]) -> Result<String> {
 /// Sanitizes a string for use as part of a Docker container/volume name or
 /// label value: keeps alphanumerics, `_`, `.`, `-`, replaces everything else
 /// with the given placeholder character.
+#[cfg(not(any(kani, verus)))]
 pub fn sanitize(value: &str, replacement: char) -> String {
     value
         .chars()
@@ -336,20 +366,27 @@ pub fn sanitize(value: &str, replacement: char) -> String {
 /// Collision-resistant, URL-safe repository prefix for runner container names.
 /// The short readable prefix is cosmetic; the full unpadded Base64URL encoding
 /// makes distinct repository identifiers map to distinct prefixes.
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(returns matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+)]
+pub(crate) fn valid_workload_routing_byte(byte: u8) -> bool {
+    matches!(byte, b'0'..=b'9' | b'a'..=b'f')
+}
+
 fn valid_workload_routing_id(code: &str) -> bool {
     let Some(digest) = code.strip_prefix("wk-") else {
         return false;
     };
-    digest.len() == 16
-        && digest
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    digest.len() == 16 && digest.bytes().all(valid_workload_routing_byte)
 }
 
 fn valid_prewarm_workload_id(code: &str) -> bool {
     valid_workload_routing_id(code)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_workload_routing_contract(
     labels: &str,
     workload_routing_id: Option<&str>,
@@ -435,6 +472,7 @@ fn validate_workload_routing_contract(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn runner_name_prefix(repo: &str) -> String {
     // GitHub Actions runner names have a 64-character limit. Keep the prefix
     // short enough for the unique per-container suffix (up to 36 characters),
@@ -450,17 +488,20 @@ pub fn runner_name_prefix(repo: &str) -> String {
 /// Current usage snapshot for a managed runner container. CPU is expressed in
 /// cores consumed (100% is one core), memory in bytes.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct ContainerResourceUsage {
     pub cpu_cores: f64,
     pub memory_bytes: u64,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn parse_docker_percent(raw: &str) -> Option<f64> {
     let value = raw.trim().strip_suffix('%')?.trim().parse::<f64>().ok()?;
     let cores = value / 100.0;
     (cores.is_finite() && (0.0..=256.0).contains(&cores)).then_some(cores)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn parse_docker_bytes(raw: &str) -> Option<u64> {
     let raw = raw.trim();
     let split = raw.find(|c: char| !(c.is_ascii_digit() || c == '.'))?;
@@ -481,6 +522,7 @@ pub fn parse_docker_bytes(raw: &str) -> Option<u64> {
     (bytes.is_finite() && bytes >= 0.0 && bytes <= u64::MAX as f64).then_some(bytes.ceil() as u64)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn cgroup_v2_relative_path(raw: &str) -> Result<PathBuf> {
     let relative = raw.trim().trim_start_matches('/');
     if relative.is_empty() {
@@ -502,6 +544,7 @@ fn cgroup_v2_relative_path(raw: &str) -> Result<PathBuf> {
 
 /// Verify that a PID's cgroup still identifies the immutable Docker container
 /// whose resource limits were inspected, before attributing memory to it.
+#[cfg(not(any(kani, verus)))]
 fn ensure_cgroup_matches_container_id(
     cgroup_path: &str,
     expected_container_id: &str,
@@ -529,6 +572,7 @@ fn ensure_cgroup_matches_container_id(
 /// Read total memory charged to the cgroup for the exact immutable Docker ID,
 /// including page cache. A PID can exit or be reused between Docker inspection
 /// and this read, so the cgroup identity must match before memory is attributed.
+#[cfg(not(any(kani, verus)))]
 fn container_cgroup_memory_usage_bytes_from_pid(
     pid: u32,
     expected_container_id: &str,
@@ -574,6 +618,7 @@ fn container_cgroup_memory_usage_bytes_from_pid(
 /// with many runner containers. Memory comes from cgroup-v2 memory.current, which
 /// includes page cache unlike Docker CLI displayed MemUsage on Linux. If host
 /// PID/cgroup visibility is missing, sampling fails instead of guessing.
+#[cfg(not(any(kani, verus)))]
 pub fn container_resource_usages(
     container_ids: &[String],
 ) -> Result<HashMap<String, ContainerResourceUsage>> {
@@ -708,6 +753,7 @@ pub fn container_resource_usages(
 }
 
 /// Query usage by immutable full Docker ID, never by a mutable name or prefix.
+#[cfg(not(any(kani, verus)))]
 pub fn container_resource_usage(container_id: &str) -> Result<ContainerResourceUsage> {
     let mut usages = container_resource_usages(&[container_id.to_owned()])?;
     usages.remove(container_id).ok_or_else(|| {
@@ -721,6 +767,7 @@ pub fn container_resource_usage(container_id: &str) -> Result<ContainerResourceU
 /// Docker's Linux CLI stats subtract page cache from displayed memory, so RAM
 /// is measured from the container's cgroup-v2 memory.current counter.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct ManagedContainerResourceReservation {
     pub name: String,
     pub cpu_headroom_cores: f64,
@@ -730,6 +777,7 @@ pub struct ManagedContainerResourceReservation {
 /// Return uncommitted CPU/RAM headroom for running GitRun-managed runners.
 /// Missing limits, ambiguous identities, or failed measurements are errors so
 /// Adaptive Resource Management defers creation instead of guessing capacity.
+#[cfg(not(any(kani, verus)))]
 pub fn running_managed_container_resource_reservations(
 ) -> Result<Vec<ManagedContainerResourceReservation>> {
     const MAX_CONTAINERS: usize = 512;
@@ -923,6 +971,7 @@ pub fn running_managed_container_resource_reservations(
 }
 
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 pub struct ManagedContainer {
     pub name: String,
     /// Full immutable Docker identity captured with the inventory snapshot.
@@ -943,6 +992,7 @@ pub struct ManagedContainer {
     pub prewarm_hold_until_epoch: Option<u64>,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn cache_volume_name(base: &str, scope: &str, repo: &str, runner: &str) -> String {
     match scope {
         "global" => base.to_owned(),
@@ -952,6 +1002,7 @@ fn cache_volume_name(base: &str, scope: &str, repo: &str, runner: &str) -> Strin
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn shared_cache_volume(configured: Option<&str>) -> String {
     configured
         .map(str::trim)
@@ -960,6 +1011,7 @@ pub fn shared_cache_volume(configured: Option<&str>) -> String {
         .to_owned()
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn ensure_shared_cache_volume(name: &str) -> Result<()> {
     // Docker treats create of an existing volume on the same driver as a
     // successful reuse, so this single operation avoids an inspect/create
@@ -982,6 +1034,7 @@ pub fn ensure_shared_cache_volume(name: &str) -> Result<()> {
 /// Returns an empty list (not an error) if the container has already
 /// exited or been removed between the caller listing it and this call -
 /// a normal race in a poll loop, not a failure worth surfacing.
+#[cfg(not(any(kani, verus)))]
 pub fn container_command_lines_on(host: &DockerHost, container_name: &str) -> Result<Vec<String>> {
     match run_checked_on(host, &["top", container_name, "-eo", "args"]) {
         Ok(output) => Ok(parse_top_output(&output)),
@@ -996,6 +1049,7 @@ pub fn container_command_lines_on(host: &DockerHost, container_name: &str) -> Re
 /// testable without a real Docker daemon: `docker top ... -eo args`
 /// prints a `COMMAND` header line followed by one full command line per
 /// process.
+#[cfg(not(any(kani, verus)))]
 fn parse_top_output(output: &str) -> Vec<String> {
     let mut lines = output.lines();
     let first = lines.next();
@@ -1014,6 +1068,7 @@ fn parse_top_output(output: &str) -> Vec<String> {
 /// `gsr_poll`'s loop needs (it watches all runners at once, not one repo
 /// at a time). Same `gitrun.runner=true` label filter as
 /// `managed_containers_on`, just without the additional per-repo filter.
+#[cfg(not(any(kani, verus)))]
 pub fn all_managed_container_names_on(host: &DockerHost) -> Result<Vec<String>> {
     let output = run_checked_on(
         host,
@@ -1035,10 +1090,12 @@ pub fn all_managed_container_names_on(host: &DockerHost) -> Result<Vec<String>> 
 
 /// Lists containers managed by GitRun for a given repo, with their raw
 /// docker `Status` string and whether they carry the "permanent" label.
+#[cfg(not(any(kani, verus)))]
 pub fn managed_containers(repo: &str) -> Result<Vec<ManagedContainer>> {
     managed_containers_on(&DockerHost::Local, repo)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<ManagedContainer>> {
     let output = run_checked_on(
         host,
@@ -1181,6 +1238,7 @@ pub fn managed_containers_on(host: &DockerHost, repo: &str) -> Result<Vec<Manage
 /// Used by `gsr_poll` to know which repo to (optionally) ban after a
 /// policy violation, without needing to separately track container->repo
 /// associations outside of what Docker itself already records.
+#[cfg(not(any(kani, verus)))]
 pub fn container_repo_label_on(host: &DockerHost, container_name: &str) -> Result<Option<String>> {
     let output = run_on(
         host,
@@ -1206,11 +1264,13 @@ pub fn container_repo_label_on(host: &DockerHost, container_name: &str) -> Resul
     Ok(if label.is_empty() { None } else { Some(label) })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn container_label_format(label: &str) -> String {
     // format! requires doubled braces to emit Docker's double-brace Go template.
     format!("{{{{index .Config.Labels \"{label}\"}}}}")
 }
 
+#[cfg(not(any(kani, verus)))]
 fn container_label_on(host: &DockerHost, name: &str, label: &str) -> Result<Option<String>> {
     let format = container_label_format(label);
     let output = run_on(host, &["inspect", "-f", &format, name])?;
@@ -1228,6 +1288,7 @@ fn container_label_on(host: &DockerHost, name: &str, label: &str) -> Result<Opti
     let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     Ok((!value.is_empty()).then_some(value))
 }
+#[cfg(not(any(kani, verus)))]
 fn container_status_string(host: &DockerHost, name: &str) -> Result<Option<String>> {
     let output = run_on(host, &["inspect", "-f", "{{json .State}}", name])?;
     if !output.status.success() {
@@ -1252,16 +1313,19 @@ fn container_status_string(host: &DockerHost, name: &str) -> Result<Option<Strin
     Ok(Some(status.to_owned()))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_missing_container_error(message: &str) -> bool {
     let normalized = message.to_ascii_lowercase();
     normalized.contains("no such container")
         || normalized.contains("no such object")
         || normalized.contains("is not running")
 }
+#[cfg(not(any(kani, verus)))]
 pub fn container_is_permanent(name: &str) -> Result<bool> {
     container_is_permanent_on(&DockerHost::Local, name)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn container_is_permanent_on(host: &DockerHost, name: &str) -> Result<bool> {
     let output = run_on(
         host,
@@ -1281,10 +1345,12 @@ pub fn container_is_permanent_on(host: &DockerHost, name: &str) -> Result<bool> 
     Ok(dynamic != "true")
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn restart_container(name: &str) -> Result<()> {
     restart_container_on(&DockerHost::Local, name)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn restart_container_on(host: &DockerHost, name: &str) -> Result<()> {
     run_checked_on(host, &["restart", name])?;
     Ok(())
@@ -1293,6 +1359,7 @@ pub fn restart_container_on(host: &DockerHost, name: &str) -> Result<()> {
 /// Produces a collision-free path component from a repository name.
 /// Hex-encoding the original bytes is injective, unlike `sanitize`, which
 /// intentionally replaces different punctuation with the same character.
+#[cfg(not(any(kani, verus)))]
 fn cache_path_key(repo: &str) -> String {
     let mut key = String::with_capacity(repo.len() * 2);
     for byte in repo.bytes() {
@@ -1305,16 +1372,19 @@ fn cache_path_key(repo: &str) -> String {
 /// so `remove_container_on` can clean it up without having to remember it
 /// separately (the scheduler doesn't persist per-container metadata beyond
 /// what Docker labels already carry).
+#[cfg(not(any(kani, verus)))]
 fn home_volume_name(container_name: &str) -> String {
     format!("{container_name}-home")
 }
 
 /// Persistent, root-only lifecycle metadata. Unlike the runner-home volume,
 /// workflow code must not be able to forge or remove the dock-only marker.
+#[cfg(not(any(kani, verus)))]
 fn control_volume_name(container_name: &str) -> String {
     format!("{container_name}-control")
 }
 
+#[cfg(not(any(kani, verus)))]
 fn control_volume_mount_argument(container_name: &str) -> String {
     format!(
         "type=volume,source={},target=/var/lib/gitrun/control,readonly",
@@ -1327,6 +1397,7 @@ fn control_volume_mount_argument(container_name: &str) -> String {
 /// runner entrypoint, so relying on Docker's implicit volume creation causes
 /// the container to fail closed and enter a restart loop.
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn prepare_control_volume(host: &DockerHost, container_name: &str) -> Result<()> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
@@ -1395,6 +1466,7 @@ fn prepare_control_volume(host: &DockerHost, container_name: &str) -> Result<()>
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn secure_control_volume_directory(control_dir: &Path, expected_uid: u32) -> Result<()> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
@@ -1460,6 +1532,7 @@ fn secure_control_volume_directory(control_dir: &Path, expected_uid: u32) -> Res
 /// created by an explicitly enabled install API must not be able to forge
 /// lifecycle state. Only the privileged scheduler writes the volume contents.
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 pub fn set_dock_only_marker(container: &str, enabled: bool) -> Result<()> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
@@ -1532,6 +1605,7 @@ pub fn set_dock_only_marker(container: &str, enabled: bool) -> Result<()> {
     set_dock_only_marker_in_volume(&mountpoint, enabled, 0)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_control_volume_attachment(
     expected_volume: &str,
     mount_inventory: &str,
@@ -1556,6 +1630,7 @@ fn validate_control_volume_attachment(
 }
 
 #[cfg(not(target_os = "linux"))]
+#[cfg(not(any(kani, verus)))]
 pub fn set_dock_only_marker(_container: &str, _enabled: bool) -> Result<()> {
     Err(DockerError::Command(
         "host-managed dock-only markers are supported only for local Linux Docker containers"
@@ -1564,6 +1639,7 @@ pub fn set_dock_only_marker(_container: &str, _enabled: bool) -> Result<()> {
 }
 
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 fn set_dock_only_marker_in_volume(
     control_dir: &Path,
     enabled: bool,
@@ -1633,14 +1709,17 @@ fn set_dock_only_marker_in_volume(
     result
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn remove_container(name: &str) -> Result<()> {
     remove_container_on(&DockerHost::Local, name)
 }
+#[cfg(not(any(kani, verus)))]
 pub fn pull_image(image: &str) -> Result<()> {
     run_checked(&["pull", image])?;
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn image_id(image_or_container: &str) -> Result<String> {
     let output = run_checked(&["inspect", "-f", "{{.Id}}", image_or_container])?;
     let id = output.trim();
@@ -1655,6 +1734,7 @@ pub fn image_id(image_or_container: &str) -> Result<String> {
 /// Returns the image ID for an existing container. A container that
 /// disappeared during reconciliation is reported as `None`; real Docker
 /// failures still propagate.
+#[cfg(not(any(kani, verus)))]
 pub fn container_image_id(name: &str) -> Result<Option<String>> {
     let output = run_on(&DockerHost::Local, &["inspect", "-f", "{{.Image}}", name])?;
     if !output.status.success() {
@@ -1677,11 +1757,13 @@ pub fn container_image_id(name: &str) -> Result<Option<String>> {
     Ok(Some(id))
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn rename_container(from: &str, to: &str) -> Result<()> {
     run_checked(&["rename", from, to])?;
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
     // Resolve deterministic home/control volume names before removing the container.
     // Callers may pass an immutable container ID, so deriving volume names
@@ -1798,6 +1880,7 @@ pub fn remove_container_on(host: &DockerHost, name_or_id: &str) -> Result<()> {
 /// Parameters needed to create a runner container. Kept as a plain struct
 /// (rather than a long argument list) so `reconcile.rs` can describe "create
 /// this runner" as data without depending on this module's function signature.
+#[cfg(not(any(kani, verus)))]
 pub struct RunnerSpec<'a> {
     pub name: &'a str,
     pub repo: &'a str,
@@ -1896,11 +1979,13 @@ pub struct RunnerSpec<'a> {
 /// Where a runner container's home directory is backed. See
 /// `RunnerSpec::home_backend`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub enum RunnerHomeBackend {
     Tmpfs,
     Volume,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl RunnerHomeBackend {
     /// Parses `Config::runner_home_backend`. Falls back to `Tmpfs` (the
     /// pre-existing behavior) for anything unrecognized rather than
@@ -1915,6 +2000,7 @@ impl RunnerHomeBackend {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn create_runner(spec: &RunnerSpec) -> Result<()> {
     create_runner_on(&DockerHost::Local, spec)
 }
@@ -1922,6 +2008,7 @@ pub fn create_runner(spec: &RunnerSpec) -> Result<()> {
 /// Insert only environment variable names into Docker argv and keep values
 /// for the spawned CLI's private environment. This avoids putting runner
 /// registration tokens or GitVault plaintext in /proc/<pid>/cmdline.
+#[cfg(not(any(kani, verus)))]
 fn append_env_passthrough_args(
     args: &mut Vec<String>,
     env_values: &[(String, String)],
@@ -1936,6 +2023,7 @@ fn append_env_passthrough_args(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_secret_env(secret_env: &[(String, String)]) -> Result<()> {
     const RESERVED_EXACT: &[&str] = &[
         "HOME",
@@ -2011,6 +2099,7 @@ fn validate_secret_env(secret_env: &[(String, String)]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_runner_network_metadata(
     network: &str,
     metadata: &str,
@@ -2034,6 +2123,7 @@ fn validate_runner_network_metadata(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn missing_network_error(detail: &str, network: &str) -> bool {
     let detail = detail.to_ascii_lowercase();
     let network = network.to_ascii_lowercase();
@@ -2041,6 +2131,7 @@ fn missing_network_error(detail: &str, network: &str) -> bool {
         || detail.contains(&format!("network {network} does not exist"))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn missing_network_inspect_error(detail: &str, network: &str) -> bool {
     let detail = detail.to_ascii_lowercase();
     detail.contains("no such network")
@@ -2048,6 +2139,7 @@ fn missing_network_inspect_error(detail: &str, network: &str) -> bool {
         || missing_network_error(&detail, network)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn ensure_runner_network(
     host: &DockerHost,
     network: &str,
@@ -2127,6 +2219,7 @@ fn ensure_runner_network(
     }))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn remote_linux_runner_api_unsupported(host: &DockerHost, is_windows: bool) -> bool {
     !is_windows && !matches!(host, DockerHost::Local)
 }
@@ -2134,6 +2227,7 @@ fn remote_linux_runner_api_unsupported(host: &DockerHost, is_windows: bool) -> b
 /// Append a custom seccomp profile only when one is explicitly selected.
 /// Docker's built-in default profile is already applied when the option is
 /// omitted; `seccomp=default` is interpreted as a path named `default`.
+#[cfg(not(any(kani, verus)))]
 fn append_seccomp_profile_args(args: &mut Vec<String>, profile: &str) {
     let profile = profile.trim();
     if profile.eq_ignore_ascii_case("default") {
@@ -2142,6 +2236,7 @@ fn append_seccomp_profile_args(args: &mut Vec<String>, profile: &str) {
     args.extend(["--security-opt".to_owned(), format!("seccomp={profile}")]);
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
     // A Docker bind mount is resolved by the daemon, not by this scheduler.
     // Linux runner containers require the host GitRun API socket; until the
@@ -2454,6 +2549,7 @@ pub fn create_runner_on(host: &DockerHost, spec: &RunnerSpec) -> Result<()> {
 
 /// Verifies that a Docker daemon is reachable and reports a minimal
 /// server-version/API attestation before a VM becomes routable.
+#[cfg(not(any(kani, verus)))]
 pub fn verify_docker_endpoint_health(host: &DockerHost) -> Result<String> {
     let output = run_checked_on(
         host,
@@ -2472,24 +2568,29 @@ pub fn verify_docker_endpoint_health(host: &DockerHost) -> Result<String> {
     Ok(value.to_owned())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn container_status(name: &str) -> Result<Option<String>> {
     container_status_string(&DockerHost::Local, name)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn start_container(name: &str) -> Result<()> {
     run_checked(&["start", name])?;
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn stop_container(name: &str) -> Result<()> {
     run_checked(&["stop", "--time", "10", name])?;
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn container_id(name: &str) -> Result<Option<String>> {
     container_id_on(&DockerHost::Local, name)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn container_id_on(host: &DockerHost, name: &str) -> Result<Option<String>> {
     let output = run_on(host, &["inspect", "-f", "{{.Id}}", name])?;
     if !output.status.success() {
@@ -2508,6 +2609,7 @@ pub fn container_id_on(host: &DockerHost, name: &str) -> Result<Option<String>> 
     Ok((!value.is_empty()).then_some(value))
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn copy_to_container(
     container: &str,
     local_file: &std::path::Path,
@@ -2518,6 +2620,7 @@ pub fn copy_to_container(
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn remove_file_in_container(container: &str, path: &str) -> Result<()> {
     let output = exec_container(container, &["rm", "-f", "--", path])?;
     if !output.status.success() {
@@ -2530,10 +2633,12 @@ pub fn remove_file_in_container(container: &str, path: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn container_logs(name: &str) -> Result<String> {
     run_checked(&["logs", "--timestamps", name])
 }
 
+#[cfg(not(any(kani, verus)))]
 fn melt_excludes_mount_destination(destination: &str) -> bool {
     let path = std::path::Path::new(destination);
     if !path.is_absolute()
@@ -2555,6 +2660,7 @@ fn melt_excludes_mount_destination(destination: &str) -> bool {
 /// Refuse MELT if Docker reports a writable target mount that the archive
 /// exclusion list does not cover. GitDockRun lease checks alone cannot detect
 /// ordinary Docker volumes/binds created outside the GitDockRun mount API.
+#[cfg(not(any(kani, verus)))]
 pub fn validate_melt_target_mounts_on(host: &DockerHost, target_id: &str) -> Result<()> {
     let output = run_on(
         host,
@@ -2573,6 +2679,7 @@ pub fn validate_melt_target_mounts_on(host: &DockerHost, target_id: &str) -> Res
     validate_melt_target_mount_inventory(target_id, &mounts)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_melt_target_mount_inventory(target_id: &str, mounts: &Value) -> Result<()> {
     let mounts = mounts.as_array().ok_or_else(|| {
         DockerError::Command(format!(
@@ -2603,6 +2710,7 @@ fn validate_melt_target_mount_inventory(target_id: &str, mounts: &Value) -> Resu
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
     // Docker does not provide a literal "merge two container namespaces"
     // primitive. GitDockRun melt merges an exported source filesystem into
@@ -2829,6 +2937,7 @@ pub fn melt_filesystem(source: &str, target: &str) -> Result<()> {
 /// The API service derives this identity from the peer process cgroup,
 /// rather than a workflow-visible token.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct ApiRunnerIdentity {
     pub name: String,
     pub repository: String,
@@ -2846,6 +2955,7 @@ pub struct ApiRunnerIdentity {
 /// its cgroup identifies the Docker container without exposing a secret to
 /// the workflow environment.
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
     let cgroup = match std::fs::read_to_string(format!("/proc/{pid}/cgroup")) {
         Ok(value) => value,
@@ -2929,11 +3039,13 @@ pub fn runner_for_peer_pid(pid: i32) -> Result<Option<ApiRunnerIdentity>> {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[cfg(not(any(kani, verus)))]
 pub fn runner_for_peer_pid(_pid: i32) -> Result<Option<ApiRunnerIdentity>> {
     Ok(None)
 }
 
 /// Extracts a Docker-style 64-hex container ID from a cgroup path.
+#[cfg(not(any(kani, verus)))]
 fn container_id_from_cgroup(cgroup: &str) -> Option<String> {
     for component in cgroup.split('/') {
         if is_full_container_id(component) {
@@ -2954,12 +3066,14 @@ fn container_id_from_cgroup(cgroup: &str) -> Option<String> {
     None
 }
 
+#[cfg(not(any(kani, verus)))]
 fn is_full_container_id(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Executes a command in a managed container after the caller has already
 /// passed the relevant GSR authorization gate.
+#[cfg(not(any(kani, verus)))]
 fn exec_user_arguments(user: Option<&str>) -> Vec<&str> {
     match user {
         Some(user) => vec!["--user", user],
@@ -2967,6 +3081,7 @@ fn exec_user_arguments(user: Option<&str>) -> Vec<&str> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn exec_container(container: &str, args: &[&str]) -> Result<Output> {
     exec_container_as(container, None, args)
 }
@@ -2975,10 +3090,12 @@ pub fn exec_container(container: &str, args: &[&str]) -> Result<Output> {
 /// Do not rely on the image's configured USER: GitRun's entrypoint intentionally
 /// starts as root to initialize protected runtime files before dropping the
 /// long-lived runner process to its unprivileged account.
+#[cfg(not(any(kani, verus)))]
 pub fn exec_container_as_runner(container: &str, args: &[&str]) -> Result<Output> {
     exec_container_as(container, Some("runner"), args)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn exec_container_as(container: &str, user: Option<&str>, args: &[&str]) -> Result<Output> {
     // Reuse the bounded-output/timeout runner instead of Command::output(),
     // which would buffer arbitrary workflow-controlled output in scheduler RAM.
@@ -2991,6 +3108,7 @@ fn exec_container_as(container: &str, user: Option<&str>, args: &[&str]) -> Resu
 
 /// Executes a command in a managed container and writes a bounded payload to
 /// its stdin. Used by controlled GitWriteRun operations.
+#[cfg(not(any(kani, verus)))]
 pub fn exec_container_with_stdin(container: &str, args: &[&str], input: &[u8]) -> Result<Output> {
     exec_container_with_stdin_as(container, None, args, input)
 }
@@ -2998,6 +3116,7 @@ pub fn exec_container_with_stdin(container: &str, args: &[&str], input: &[u8]) -
 /// Writes a bounded payload into a container as the unprivileged Actions runner
 /// account. User-controlled paths must never gain container-root access simply
 /// because the host scheduler performs the Docker API call.
+#[cfg(not(any(kani, verus)))]
 pub fn exec_container_with_stdin_as_runner(
     container: &str,
     args: &[&str],
@@ -3006,6 +3125,7 @@ pub fn exec_container_with_stdin_as_runner(
     exec_container_with_stdin_as(container, Some("runner"), args, input)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn exec_container_with_stdin_as(
     container: &str,
     user: Option<&str>,
@@ -3136,6 +3256,7 @@ fn exec_container_with_stdin_as(
 /// output to the caller. Each stream retains at most `MAX_DOCKER_OUTPUT_BYTES`;
 /// output beyond that cap is drained but not retained. The Docker CLI is killed
 /// after the shared command timeout, including descendants holding its pipes.
+#[cfg(not(any(kani, verus)))]
 pub fn exec_container_stream<F>(container: &str, args: &[&str], on_output: F) -> Result<i32>
 where
     F: FnMut(bool, &[u8]),
@@ -3146,6 +3267,7 @@ where
 /// Streams a workflow-controlled command as the unprivileged Actions runner
 /// account. This is separate from the long-lived ptrace-supervised runner tree:
 /// Docker exec starts a daemon-created process, so explicitly drop its UID.
+#[cfg(not(any(kani, verus)))]
 pub fn exec_container_stream_as_runner<F>(
     container: &str,
     args: &[&str],
@@ -3157,6 +3279,7 @@ where
     exec_container_stream_as(container, Some("runner"), args, on_output)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn exec_container_stream_as<F>(
     container: &str,
     user: Option<&str>,
@@ -3274,6 +3397,7 @@ where
 /// Dangerous capabilities stay removed: `SYS_ADMIN`, `NET_RAW`,
 /// `SYS_MODULE`, and every capability other than the small bootstrap set
 /// plus `SYS_PTRACE` are absent. `no-new-privileges` remains enabled.
+#[cfg(not(any(kani, verus)))]
 fn docker_socket_hardening_args() -> Vec<String> {
     [
         "--cap-drop",
@@ -3296,6 +3420,7 @@ fn docker_socket_hardening_args() -> Vec<String> {
     .collect()
 }
 
+#[cfg(not(any(kani, verus)))]
 fn gsr_supervisor_capability_args() -> Vec<String> {
     ["--cap-add", "SYS_PTRACE"]
         .into_iter()
@@ -3304,6 +3429,7 @@ fn gsr_supervisor_capability_args() -> Vec<String> {
 }
 
 /// Appends `extra` to a comma-separated label list if not already present.
+#[cfg(not(any(kani, verus)))]
 fn ensure_label(labels: &str, extra: &str) -> String {
     if labels.split(',').map(str::trim).any(|part| part == extra) {
         labels.to_owned()
@@ -4205,3 +4331,61 @@ mod tests {
         );
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{
+        valid_prewarm_workload_id, valid_workload_routing_byte, valid_workload_routing_id,
+    };
+
+    #[kani::proof]
+    fn workload_routing_byte_alphabet_is_exact() {
+        let byte: u8 = kani::any();
+        assert_eq!(
+            valid_workload_routing_byte(byte),
+            matches!(byte, b'0'..=b'9' | b'a'..=b'f')
+        );
+    }
+
+    #[kani::proof]
+    fn workload_routing_id_requires_canonical_prefix_length_and_hex_case() {
+        assert!(valid_workload_routing_id("wk-0123456789abcdef"));
+        assert!(valid_prewarm_workload_id("wk-0123456789abcdef"));
+        assert!(!valid_workload_routing_id("wk-0123456789abcde"));
+        assert!(!valid_workload_routing_id("wk-0123456789abcdef0"));
+        assert!(!valid_workload_routing_id("wk-0123456789abcdeG"));
+        assert!(!valid_workload_routing_id("WK-0123456789abcdef"));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{
+        valid_prewarm_workload_id, valid_workload_routing_byte, valid_workload_routing_id,
+    };
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn workload_routing_byte_alphabet_is_exact(byte: u8)
+            ensures
+                valid_workload_routing_byte(byte)
+                    == matches!(byte, b'0'..=b'9' | b'a'..=b'f'),
+        {
+        }
+
+        proof fn workload_routing_id_requires_canonical_prefix_length_and_hex_case() {
+            assert(valid_workload_routing_id("wk-0123456789abcdef"));
+            assert(valid_prewarm_workload_id("wk-0123456789abcdef"));
+            assert(!valid_workload_routing_id("wk-0123456789abcde"));
+            assert(!valid_workload_routing_id("wk-0123456789abcdef0"));
+            assert(!valid_workload_routing_id("wk-0123456789abcdeG"));
+            assert(!valid_workload_routing_id("WK-0123456789abcdef"));
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

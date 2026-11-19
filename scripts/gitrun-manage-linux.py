@@ -235,7 +235,7 @@ def handle_client(client: socket.socket, token: str, saved_paths: list[Path]) ->
             if result == "SAVED" and path is not None:
                 saved_paths.append(path)
             write_line(client, result)
-        except (OSError, ValueError, ConnectionError) as error:
+        except (OSError, ValueError, ConnectionError):
             try:
                 write_line(client, "ERROR local export failed")
             except OSError:

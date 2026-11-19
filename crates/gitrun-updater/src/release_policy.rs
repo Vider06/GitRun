@@ -1,34 +1,52 @@
+#[cfg(not(any(kani, verus)))]
 use super::{
     compare_versions, fetch_manifest, release_manifest_download_url, ReleaseManifest, UpdateError,
 };
+#[cfg(not(any(kani, verus)))]
 use reqwest::blocking::Client;
+#[cfg(not(any(kani, verus)))]
 use serde::Deserialize;
+#[cfg(not(any(kani, verus)))]
 use std::cmp::Ordering;
+#[cfg(not(any(kani, verus)))]
 use std::time::Duration;
 
+#[cfg(not(any(kani, verus)))]
 const RELEASE_TYPE_MARKER: &str = "<!-- GITRUN_RELEASE_TYPE:";
+#[cfg(not(any(kani, verus)))]
 const RELEASES_PER_PAGE: usize = 100;
+#[cfg(not(any(kani, verus)))]
 const MAX_RELEASE_PAGES: usize = 100;
 // Signed release classification begins with 1.9.1; older tags have no typed trust metadata.
+#[cfg(not(any(kani, verus)))]
 const MIN_CLASSIFIED_RELEASE_VERSION: &str = "1.9.1";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReleaseType {
-    Pre,
-    Full,
-    Security,
+#[cfg(not(any(kani, verus)))]
+pub use super::policy_logic::{ReleaseType, UpdatePolicy};
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns match value {
+            "pre" => Some(0u8),
+            "full" => Some(1u8),
+            "security" => Some(2u8),
+            _ => None,
+        }
+    )
+)]
+pub(crate) fn release_type_marker_code(value: &str) -> Option<u8> {
+    match value {
+        "pre" => Some(0),
+        "full" => Some(1),
+        "security" => Some(2),
+        _ => None,
+    }
 }
 
+#[cfg(not(any(kani, verus)))]
 impl ReleaseType {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Pre => "pre",
-            Self::Full => "full",
-            Self::Security => "security",
-        }
-    }
-
     pub fn from_release_body(body: &str) -> Result<Self, UpdateError> {
         let mut found = None;
         for line in body.lines().map(str::trim) {
@@ -44,10 +62,10 @@ impl ReleaseType {
                         "release description contains duplicate release type markers".into(),
                     ));
                 }
-                found = Some(match value {
-                    "pre" => Self::Pre,
-                    "full" => Self::Full,
-                    "security" => Self::Security,
+                found = Some(match release_type_marker_code(value) {
+                    Some(0) => Self::Pre,
+                    Some(1) => Self::Full,
+                    Some(2) => Self::Security,
                     _ => {
                         return Err(UpdateError::InvalidManifest(format!(
                             "unknown release type marker: {value}"
@@ -64,33 +82,8 @@ impl ReleaseType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum UpdatePolicy {
-    SecurityOnly,
-    SecurityFull,
-    SecurityFullPre,
-}
-
-impl UpdatePolicy {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::SecurityOnly => "security_only",
-            Self::SecurityFull => "security_full",
-            Self::SecurityFullPre => "security_full_pre",
-        }
-    }
-
-    pub fn accepts_release_type(self, release_type: ReleaseType) -> bool {
-        match self {
-            Self::SecurityOnly => release_type == ReleaseType::Security,
-            Self::SecurityFull => matches!(release_type, ReleaseType::Security | ReleaseType::Full),
-            Self::SecurityFullPre => true,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct GitHubRelease {
     tag_name: String,
     draft: bool,
@@ -99,6 +92,7 @@ struct GitHubRelease {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct SelectedRelease {
     pub version: String,
     pub release_type: ReleaseType,
@@ -106,6 +100,7 @@ pub struct SelectedRelease {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct PolicyUpdate {
     pub release: SelectedRelease,
     pub manifest: ReleaseManifest,
@@ -113,6 +108,7 @@ pub struct PolicyUpdate {
 
 /// Enumerate classified releases accepted by the selected policy, newest SemVer first.
 /// Releases before the signed classification boundary are never candidates.
+#[cfg(not(any(kani, verus)))]
 fn select_policy_releases(
     repository: &str,
     policy: UpdatePolicy,
@@ -181,6 +177,7 @@ fn select_policy_releases(
 /// Keep only candidates that move in the direction of the latest release in
 /// the selected line. If the newest line release is already installed, an
 /// older release must not be treated as a reason to downgrade.
+#[cfg(not(any(kani, verus)))]
 fn releases_for_line_transition(
     candidates: Vec<SelectedRelease>,
     installed_version: &str,
@@ -203,6 +200,7 @@ fn releases_for_line_transition(
 }
 
 /// Normal updates are strictly monotonic: only versions newer than installed qualify.
+#[cfg(not(any(kani, verus)))]
 pub fn select_releases(
     repository: &str,
     installed_version: &str,
@@ -219,6 +217,7 @@ pub fn select_releases(
 }
 
 /// Select candidates only for an explicit, operator-approved release-line transition.
+#[cfg(not(any(kani, verus)))]
 pub fn select_line_transition_releases(
     repository: &str,
     installed_version: &str,
@@ -230,6 +229,7 @@ pub fn select_line_transition_releases(
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn select_release(
     repository: &str,
     installed_version: &str,
@@ -243,6 +243,7 @@ pub fn select_release(
 /// Resolve and cryptographically validate the manifest belonging to the
 /// selected GitHub release. The manifest's own release type and version must
 /// agree with the release metadata before it can be used.
+#[cfg(not(any(kani, verus)))]
 pub fn resolve_policy_update(
     repository: &str,
     installed_version: &str,
@@ -269,6 +270,7 @@ pub fn resolve_policy_update(
 /// Resolve the newest allowed release that contains an artifact for this host.
 /// Signature and metadata errors fail closed; an unsupported target may fall back
 /// to an older eligible release that still supports the installed architecture.
+#[cfg(not(any(kani, verus)))]
 pub fn resolve_policy_update_for_target(
     repository: &str,
     installed_version: &str,
@@ -300,6 +302,7 @@ pub fn resolve_policy_update_for_target(
 /// Resolve a release-line transition after the operator explicitly accepts it.
 /// The latest release in the selected policy determines upgrade/downgrade direction;
 /// equal versions are a no-op and target fallback never crosses that direction.
+#[cfg(not(any(kani, verus)))]
 pub fn resolve_policy_update_for_line_transition_target(
     repository: &str,
     installed_version: &str,
@@ -424,3 +427,43 @@ mod tests {
         assert!(selected.is_empty());
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::release_type_marker_code;
+
+    #[kani::proof]
+    fn release_type_marker_is_a_closed_three_value_contract() {
+        assert_eq!(release_type_marker_code("pre"), Some(0));
+        assert_eq!(release_type_marker_code("full"), Some(1));
+        assert_eq!(release_type_marker_code("security"), Some(2));
+        assert_eq!(release_type_marker_code("beta"), None);
+        assert_eq!(release_type_marker_code(""), None);
+        assert_eq!(release_type_marker_code("PRE"), None);
+        assert_eq!(release_type_marker_code(" security "), None);
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::release_type_marker_code;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn release_type_marker_is_a_closed_three_value_contract() {
+            assert(release_type_marker_code("pre") == Some(0));
+            assert(release_type_marker_code("full") == Some(1));
+            assert(release_type_marker_code("security") == Some(2));
+            assert(release_type_marker_code("beta") == None);
+            assert(release_type_marker_code("") == None);
+            assert(release_type_marker_code("PRE") == None);
+            assert(release_type_marker_code(" security ") == None);
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

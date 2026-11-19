@@ -785,38 +785,21 @@ jobs:
           xbps_rindex="$xbps_root/usr/bin/xbps-rindex"
           xbps_query="$xbps_root/usr/bin/xbps-query"
           test -x "$xbps_create" && test -x "$xbps_rindex" && test -x "$xbps_query"
-          export XBPS_ARCH="$xbps_arch"
-          (cd "$out" && "$xbps_create" -A "$xbps_arch" -n "gitrun-server-${VERSION_NUMBER}_1" \
-            -D "$xbps_dep" -H https://github.com/Vider06/GitRun \
-            -l Apache-2.0 -m Vider06 -s "GitRun headless server" "$xbps_stage")
-          xbps_file="$(find "$out" -maxdepth 1 -type f -name 'gitrun-*.xbps' -print -quit)"
-          test -n "$xbps_file"
-          test -s "$xbps_file"
-          xbps_contents="$(tar -tf "$xbps_file")"
-          for required in \
-            ./usr/libexec/gitrun/gitrun-service \
-            ./etc/sv/gitrun/run ./etc/sv/gitrun/log/run \
-            ./etc/sv/gitrun-gsr/run ./etc/sv/gitrun-gsr/log/run; do
-            grep -Fqx "$required" <<< "$xbps_contents" || {
-              echo "XBPS package is missing runit resource: $required" >&2
-              exit 1
-            }
-          done
-          if grep -Eq '^\./(etc|usr/lib)/systemd/' <<< "$xbps_contents"; then
-            echo "XBPS package must contain runit resources, not systemd units" >&2
-            exit 1
-          fi
-          mv "$xbps_file" "$out/GitRun-Server-$VERSION-linux-$cpu-xbps.xbps"
-          # Indexing the local repository parses the XBPS archive and validates its metadata.
-          "$xbps_rindex" -a "$out"/*.xbps
-          server_deps="$("$xbps_query" -R --repository="$out" -x "gitrun-server-${VERSION_NUMBER}_1")"
-          grep -Fq "$xbps_dep" <<< "$server_deps"
-          install_script="$("$xbps_query" -R --repository="$out" -p install-script -S "gitrun-server-${VERSION_NUMBER}_1")"
-          remove_script="$("$xbps_query" -R --repository="$out" -p remove-script -S "gitrun-server-${VERSION_NUMBER}_1")"
-          grep -Fq "sv restart" <<< "$install_script"
-          grep -Fq "sv down" <<< "$remove_script"
-          test "$(find "$out" -maxdepth 1 -type f -name '*.xbps' | wc -l)" -eq 1
-          test "$(find "$out" -maxdepth 1 -type f | wc -l)" -ge 3
+          python3 scripts/ci/build-xbps-server-package.py \
+            --output "$out" \
+            --stage "$xbps_stage" \
+            --repository "$RUNNER_TEMP/xbps-repository" \
+            --create "$xbps_create" \
+            --rindex "$xbps_rindex" \
+            --query "$xbps_query" \
+            --architecture "$xbps_arch" \
+            --dependency "$xbps_dep" \
+            --package-id "gitrun-server-${VERSION_NUMBER}_1" \
+            --version "$VERSION" \
+            --cpu "$cpu" \
+            --install-hook packaging/xbps/INSTALL \
+            --remove-hook packaging/xbps/REMOVE
+
       - name: Upload immutable target packages
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
@@ -1170,10 +1153,10 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  validate:
-    name: Validate collected package matrix
+  formal-verification:
+    name: Formal verification and package certification
     needs: [prepare, collect, package-server, package-dashboard, migration-package]
-    if: always() && needs.prepare.result == 'success' && needs.collect.result == 'success' && needs.package-server.result == 'success' && needs.package-dashboard.result == 'success' && (needs.migration-package.result == 'success' || (needs.prepare.outputs.migration_release != 'true' && needs.migration-package.result == 'skipped'))
+    if: ${{ always() && needs.prepare.result == 'success' && needs.collect.result == 'success' && needs.package-server.result == 'success' && needs.package-dashboard.result == 'success' && (needs.migration-package.result == 'success' || (needs.prepare.outputs.migration_release != 'true' && needs.migration-package.result == 'skipped')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -1187,6 +1170,25 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt
+      - name: Check Rust workspace formatting
+        shell: bash
+        run: cargo fmt --all -- --check
+      - name: Verify every tracked Rust source file
+        shell: bash
+        run: bash scripts/ci/verify-rust-source-coverage.bash
+      - name: Upload Rust source inventory
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: release-rust-source-inventory
+          path: ${{ runner.temp }}/gitrun-rust-source-inventory.tsv
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Download collected canonical inputs
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
@@ -1240,7 +1242,7 @@ jobs:
           set -euo pipefail
           sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq zstd unzip zip rpm
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq zstd unzip zip rpm file
       - name: Verify required artifacts and create checksums
         shell: bash
         run: |
@@ -1419,17 +1421,106 @@ jobs:
           done
 
           (cd "$root" && sha256sum -- * > SHA256SUMS && sha256sum -c SHA256SUMS)
-      - name: Upload validated release payload
+      - name: Audit every release package individually
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/release-assets"
+          mapfile -d '' -t packages < <(find "$root" -maxdepth 1 -type f -name 'GitRun-*' -print0 | sort -z)
+          if (("${#packages[@]}" == 0)); then
+            echo "No release packages were available for individual verification." >&2
+            exit 1
+          fi
+          for package in "${packages[@]}"; do
+            test -s "$package"
+            name="${package##*/}"
+            case "$name" in
+              *.deb) dpkg-deb --info "$package" >/dev/null ;;
+              *.rpm) rpm -qp "$package" >/dev/null ;;
+              *.pkg.tar.zst) tar --zstd -tf "$package" >/dev/null ;;
+              *.apk) tar -tzf "$package" >/dev/null ;;
+              *.xbps) tar -tJf "$package" >/dev/null ;;
+              *-server.tar.gz) tar -tzf "$package" >/dev/null ;;
+              *-server.tar.zst) tar --zstd -tf "$package" >/dev/null ;;
+              *.AppImage|*.bin)
+                test -x "$package"
+                file "$package" >/dev/null
+                ;;
+              *)
+                echo "Unrecognized release package format: $name" >&2
+                exit 1
+                ;;
+            esac
+            digest="$(sha256sum "$package" | cut -d ' ' -f 1)"
+            printf 'VERIFIED %s (%s bytes, sha256=%s)\n' "$name" "$(stat -c '%s' "$package")" "$digest"
+          done
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Install pinned Kani and Verus verifiers
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install --locked kani-verifier --version 0.68.0
+          cargo kani setup
+          bash scripts/ci/install-verus.sh
+      - name: Prove required Rust invariants
+        shell: bash
+        run: |
+          bash scripts/ci/verify-rust-formal.sh
+      - name: Verify Verus toolchain and proof runner
+        shell: bash
+        run: |
+          "${RUNNER_TEMP}/verus/installed/verus" verification/verus/smoke.rs
+      - name: Enforce dual-verifier coverage for every tracked Rust file
+        shell: bash
+        run: |
+          python3 scripts/ci/verify-rust-dual-coverage.py
+      - name: Install pinned nightly Miri toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: nightly-2026-11-06
+          components: miri
+      - name: Prepare Miri sysroot
+        run: cargo +nightly-2026-11-06 miri setup
+      - name: Run targeted Miri regression test
+        run: bash scripts/ci/verify-rust-miri.sh
+      - name: Upload Miri source coverage
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: validated-release-assets
+          name: release-miri-source-coverage
+          path: ${{ runner.temp }}/gitrun-miri-source-coverage.tsv
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload Kani per-file coverage status
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: release-kani-source-coverage
+          path: ${{ runner.temp }}/gitrun-kani-source-coverage.tsv
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload dual-verifier source coverage
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: release-dual-verifier-source-coverage
+          path: ${{ runner.temp }}/gitrun-dual-verifier-coverage.tsv
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload formally verified release payload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: formally-verified-release-assets
           path: release-assets/*
           if-no-files-found: error
           retention-days: 3
 
   sign:
     name: Sign manifest and verify updater
-    needs: [prepare, validate]
+    needs: [prepare, formal-verification]
     if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -1447,7 +1538,7 @@ jobs:
       - name: Download validated release payload
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
-          name: validated-release-assets
+          name: formally-verified-release-assets
           path: release-assets
       - name: Install release manifest tools
         run: |
@@ -1578,25 +1669,36 @@ jobs:
         env:
           GITRUN_UPDATE_SIGNING_KEY_ID: ${{ vars.GITRUN_UPDATE_SIGNING_KEY_ID }}
           GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64 }}
+          ALLOW_EPHEMERAL_SIGNING_KEY: false
           ROOT: ${{ github.workspace }}/release-assets
         run: |
           set -euo pipefail
-          test -n "$GITRUN_UPDATE_SIGNING_KEY_ID"
-          test -n "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64"
           key="$RUNNER_TEMP/key.der"; public="$RUNNER_TEMP/public.der"; payload="$RUNNER_TEMP/payload.json"; sigfile="$RUNNER_TEMP/manifest.sig"
-          trap 'rm -f "$key" "$public" "$payload" "$sigfile"' EXIT
-          printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
+          trap 'rm -f "$key" "$public" "$payload" "$sigfile" "$RUNNER_TEMP/ci-signing-key.pem"' EXIT
+          signing_key_id="${GITRUN_UPDATE_SIGNING_KEY_ID:-}"
+          if [[ -n "${GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64:-}" && "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" != "ci-ephemeral" ]]; then
+            test -n "$signing_key_id"
+            printf '%s' "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
+          else
+            if [[ "$ALLOW_EPHEMERAL_SIGNING_KEY" != "true" ]]; then
+              echo "Release signing key is unavailable; refusing to certify a trusted release run without the production key." >&2
+              exit 1
+            fi
+            signing_key_id="ci-ephemeral"
+            openssl genpkey -algorithm ED25519 -out "$RUNNER_TEMP/ci-signing-key.pem"
+            openssl pkey -in "$RUNNER_TEMP/ci-signing-key.pem" -outform DER -out "$key"
+          fi
           chmod 600 "$key"
           openssl pkey -inform DER -in "$key" -pubout -outform DER -out "$public"
           public_hex="$(tail -c 32 "$public" | od -An -v -tx1 | tr -d '[:space:]')"
           echo "GITRUN_UPDATE_PUBLIC_KEY_HEX=$public_hex" >> "$GITHUB_ENV"
-          echo "GITRUN_UPDATE_PUBLIC_KEY_ID=$GITRUN_UPDATE_SIGNING_KEY_ID" >> "$GITHUB_ENV"
+          echo "GITRUN_UPDATE_PUBLIC_KEY_ID=$signing_key_id" >> "$GITHUB_ENV"
           jq -S -c '. | del(.signature, .signature_key_id)' "$ROOT/release-manifest.json" | tr -d '\n' > "$payload"
           openssl pkeyutl -sign -rawin -inkey "$key" -keyform DER -in "$payload" -out "$sigfile"
           openssl pkeyutl -verify -rawin -pubin -inkey "$public" -keyform DER -in "$payload" -sigfile "$sigfile"
           signature="$(od -An -v -tx1 "$sigfile" | tr -d '[:space:]')"
           test "${#signature}" -eq 128
-          jq --arg sig "$signature" --arg key_id "$GITRUN_UPDATE_SIGNING_KEY_ID" \
+          jq --arg sig "$signature" --arg key_id "$signing_key_id" \
             '. + {signature:$sig,signature_key_id:$key_id}' "$ROOT/release-manifest.json" > "$ROOT/manifest.tmp"
           mv "$ROOT/manifest.tmp" "$ROOT/release-manifest.json"
       - name: Run updater tests against the aggregated manifest
@@ -2293,6 +2395,7 @@ jobs:
           PY
           echo "NOTES_FILE=$notes" >> "$GITHUB_ENV"
       - name: Publish all release assets
+        if: ${{ github.event_name == 'push' || github.ref == 'refs/heads/main' }}
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}

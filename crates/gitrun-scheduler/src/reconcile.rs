@@ -17,11 +17,14 @@
 //! satisfies `desired` in the normal case). Here it's a single step in the
 //! plan, computed once from the post-recovery state.
 
+#[cfg(not(any(kani, verus)))]
 use std::time::Duration;
 
+#[cfg(not(any(kani, verus)))]
 type SpecializedJob = (Option<String>, Option<u64>, Option<u64>, Vec<String>);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub enum ContainerHealth {
     Running,
     Exited,
@@ -30,6 +33,7 @@ pub enum ContainerHealth {
 
 /// A managed Docker container as far as reconciliation cares.
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 pub struct ContainerView {
     pub name: String,
     pub health: ContainerHealth,
@@ -38,6 +42,7 @@ pub struct ContainerView {
 
 /// A GitHub Actions runner registration as far as reconciliation cares.
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 pub struct RunnerView {
     pub name: String,
     pub online: bool,
@@ -46,12 +51,14 @@ pub struct RunnerView {
 
 /// How long a container has been idle (not busy), if known.
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 pub struct IdleInfo {
     pub name: String,
     pub idle_for: Duration,
 }
 
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 pub struct ReconcileInput {
     pub min_runners: u32,
     pub max_runners: u32,
@@ -104,6 +111,7 @@ pub struct ReconcileInput {
 /// A single action the caller should execute. Kept as data (not a closure or
 /// trait object) so tests can assert on the exact plan without mocking I/O.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub enum Action {
     /// Remove a container that Docker reports as exited, plus deregister it
     /// from GitHub if still registered there.
@@ -150,6 +158,7 @@ pub enum Action {
 /// labels already match and no Logic Containers rule is configured. Other
 /// jobs need dedicated capacity only when a Logic Containers rule routes
 /// them and the default runner labels do not cover the request.
+#[cfg(not(any(kani, verus)))]
 fn job_needs_dedicated_runner(input: &ReconcileInput, index: usize, labels: &[String]) -> bool {
     let is_dock_target = input
         .queued_job_names
@@ -169,14 +178,26 @@ fn job_needs_dedicated_runner(input: &ReconcileInput, index: usize, labels: &[St
 /// Computes the desired runner count: enough to cover currently busy runners
 /// plus what's queued, clamped to [min, max]. Same formula as the Python
 /// original (`min(max, max(min, busy + queued))`).
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+pub(crate) fn bounded_runner_target(busy: u32, queued: u32, minimum: u32, maximum: u32) -> u32 {
+    busy.saturating_add(queued)
+        .min(maximum)
+        .max(minimum.min(maximum))
+}
+
+#[cfg(not(any(kani, verus)))]
 pub fn desired_count(input: &ReconcileInput) -> u32 {
     // A runner reported busy must still count as occupied even if GitHub
     // simultaneously reports it offline. Recovery deliberately never
     // restarts a busy runner, so excluding it here would overprovision based
     // on the same inconsistent snapshot.
     let busy = input.runners.iter().filter(|r| r.busy).count() as u32;
-    busy.saturating_add(input.queued_jobs)
-        .clamp(input.min_runners, input.max_runners)
+    bounded_runner_target(
+        busy,
+        input.queued_jobs,
+        input.min_runners,
+        input.max_runners,
+    )
 }
 
 /// Produces the ordered list of actions to converge toward the desired state.
@@ -184,6 +205,7 @@ pub fn desired_count(input: &ReconcileInput) -> u32 {
 /// retried individually if one step fails, rather than aborting the whole
 /// reconcile pass (unlike the Python version, which lets one exception in
 /// `reconcile()` skip the entire rest of that repo's cycle).
+#[cfg(not(any(kani, verus)))]
 pub fn plan(input: &ReconcileInput) -> Vec<Action> {
     let mut actions = Vec::new();
     let mut live_containers: Vec<ContainerView> = Vec::new();
@@ -1436,3 +1458,54 @@ mod tests {
         assert!(dynamic[1].is_empty());
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::bounded_runner_target;
+
+    #[kani::proof]
+    fn bounded_runner_target_respects_limits_for_all_u32_inputs() {
+        let busy: u32 = kani::any();
+        let queued: u32 = kani::any();
+        let minimum: u32 = kani::any();
+        let maximum: u32 = kani::any();
+
+        let desired = bounded_runner_target(busy, queued, minimum, maximum);
+        assert!(desired <= maximum);
+        assert!(desired >= minimum.min(maximum));
+        assert_eq!(
+            desired,
+            busy.saturating_add(queued)
+                .min(maximum)
+                .max(minimum.min(maximum))
+        );
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::bounded_runner_target;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn bounded_runner_target_respects_limits(
+            busy: u32,
+            queued: u32,
+            minimum: u32,
+            maximum: u32,
+        )
+            ensures
+                bounded_runner_target(busy, queued, minimum, maximum) <= maximum,
+                bounded_runner_target(busy, queued, minimum, maximum) >= minimum.min(maximum),
+                bounded_runner_target(busy, queued, minimum, maximum)
+                    == busy.saturating_add(queued).min(maximum).max(minimum.min(maximum)),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

@@ -1,4 +1,11 @@
+#[cfg(verus)]
+use vstd::contrib::exec_spec::*;
+#[cfg(verus)]
+use vstd::prelude::*;
+
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::{
     fs,
     io::Write,
@@ -7,10 +14,13 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(not(any(kani, verus)))]
 static STATE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum StateError {
     #[error("state I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -19,6 +29,7 @@ pub enum StateError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct HealthReport {
     pub healthy: bool,
     pub checked_at: u64,
@@ -26,10 +37,38 @@ pub struct HealthReport {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 pub struct StateStore {
     root: PathBuf,
 }
 
+/// Byte-oriented allowlist shared by the runtime wrapper and formal proof.
+#[cfg(not(verus))]
+pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
+    name == b"health.json" || name == b"last-crash"
+}
+
+#[cfg(verus)]
+verus! {
+    exec_spec_verified! {
+        pub open spec fn state_file_leaf_is_allowed_bytes_spec(name: Seq<u8>) -> bool {
+            name == seq![b'h', b'e', b'a', b'l', b't', b'h', b'.', b'j', b's', b'o', b'n'] || name == seq![b'l', b'a', b's', b't', b'-', b'c', b'r', b'a', b's', b'h']
+        }
+    }
+}
+
+#[cfg(verus)]
+#[verus_spec(returns state_file_leaf_is_allowed_bytes_spec(name@))]
+pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
+    exec_state_file_leaf_is_allowed_bytes_spec(name)
+}
+
+#[cfg(not(verus))]
+pub(crate) fn state_file_leaf_is_allowed(name: &str) -> bool {
+    state_file_leaf_is_allowed_bytes(name.as_bytes())
+}
+
+#[cfg(not(any(kani, verus)))]
 impl StateStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
@@ -64,6 +103,13 @@ impl StateStore {
     }
 
     fn write_atomic(&self, name: &str, bytes: &[u8]) -> Result<(), StateError> {
+        if !state_file_leaf_is_allowed(name) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "unsupported state file name",
+            )
+            .into());
+        }
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -116,7 +162,7 @@ impl StateStore {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(any(kani, verus))))]
 mod tests {
     use super::*;
     use std::{
@@ -145,3 +191,53 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::state_file_leaf_is_allowed_bytes;
+
+    #[kani::proof]
+    fn state_store_accepts_only_its_two_fixed_leaf_names() {
+        assert!(state_file_leaf_is_allowed_bytes(b"health.json"));
+        assert!(state_file_leaf_is_allowed_bytes(b"last-crash"));
+        assert!(!state_file_leaf_is_allowed_bytes(b""));
+        assert!(!state_file_leaf_is_allowed_bytes(b"state.json"));
+        assert!(!state_file_leaf_is_allowed_bytes(b"../health.json"));
+        assert!(!state_file_leaf_is_allowed_bytes(b"sub/health.json"));
+        assert!(!state_file_leaf_is_allowed_bytes(b"health.json.tmp"));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{state_file_leaf_is_allowed_bytes, state_file_leaf_is_allowed_bytes_spec};
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn state_store_accepts_only_its_two_fixed_leaf_names() {
+            reveal(state_file_leaf_is_allowed_bytes_spec);
+            let health: &[u8] = b"health.json";
+            let crash: &[u8] = b"last-crash";
+            let empty: &[u8] = b"";
+            let other: &[u8] = b"state.json";
+            let parent_path: &[u8] = b"../health.json";
+            let nested_path: &[u8] = b"sub/health.json";
+            let suffixed: &[u8] = b"health.json.tmp";
+            assert(health@ == b"health.json"@);
+            assert(state_file_leaf_is_allowed_bytes_spec(health@));
+            assert(crash@ == b"last-crash"@);
+            assert(state_file_leaf_is_allowed_bytes_spec(crash@));
+            assert(!state_file_leaf_is_allowed_bytes_spec(empty@));
+            assert(!state_file_leaf_is_allowed_bytes_spec(other@));
+            assert(!state_file_leaf_is_allowed_bytes_spec(parent_path@));
+            assert(!state_file_leaf_is_allowed_bytes_spec(nested_path@));
+            assert(!state_file_leaf_is_allowed_bytes_spec(suffixed@));
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

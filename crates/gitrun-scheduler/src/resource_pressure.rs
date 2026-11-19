@@ -1,13 +1,17 @@
 //! Host-wide scheduler backpressure based on CPU utilization, available memory and critical filesystem usage.
+#[cfg(not(any(kani, verus)))]
 use gitrun_core::Config;
+#[cfg(not(any(kani, verus)))]
 use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
 };
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum ResourcePressureError {
     #[error("host resource probe failed: {0}")]
     Io(#[from] std::io::Error),
@@ -17,13 +21,27 @@ pub enum ResourcePressureError {
     Disk { path: String, detail: String },
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns total > 0 && available <= total))]
+pub(crate) fn memory_measurement_is_valid(total: u64, available: u64) -> bool {
+    total > 0 && available <= total
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns available.saturating_sub(reserve)))]
+pub(crate) fn memory_after_host_reserve(available: u64, reserve: u64) -> u64 {
+    available.saturating_sub(reserve)
+}
+
 /// Conservative capacity left for new runner limits after a host reserve.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct ResourceCapacity {
     pub cpu_cores: f64,
     pub memory_bytes: u64,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl ResourceCapacity {
     /// Reserve 20% of schedulable CPU (at least half a core) and 15% of RAM
     /// (at least 1 GiB) for the host, GitRun, Docker and unrelated processes.
@@ -40,8 +58,7 @@ impl ResourceCapacity {
             || total_cpu_cores <= 0.0
             || !cpu_utilization_percent.is_finite()
             || !(0.0..=100.0).contains(&cpu_utilization_percent)
-            || total_memory_bytes == 0
-            || available_memory_bytes > total_memory_bytes
+            || !memory_measurement_is_valid(total_memory_bytes, available_memory_bytes)
         {
             return None;
         }
@@ -49,7 +66,7 @@ impl ResourceCapacity {
         let usable_cpu =
             (total_cpu_cores * (1.0 - cpu_utilization_percent / 100.0) - cpu_reserve).max(0.0);
         let memory_reserve = ((total_memory_bytes as f64 * 0.15) as u64).max(GIB);
-        let usable_memory = available_memory_bytes.saturating_sub(memory_reserve);
+        let usable_memory = memory_after_host_reserve(available_memory_bytes, memory_reserve);
         Some(Self {
             cpu_cores: (usable_cpu * 1000.0).floor() / 1000.0,
             memory_bytes: usable_memory,
@@ -58,6 +75,7 @@ impl ResourceCapacity {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg(not(any(kani, verus)))]
 pub struct ResourceSnapshot {
     /// Actual host CPU utilization over a short sampling interval.
     pub cpu_percent: f32,
@@ -66,6 +84,7 @@ pub struct ResourceSnapshot {
     pub disk_percent: f32,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl ResourceSnapshot {
     pub fn is_pressured(&self, config: &Config) -> bool {
         self.cpu_percent >= config.resource_pressure_cpu_percent as f32
@@ -74,6 +93,7 @@ impl ResourceSnapshot {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn sample(config: &Config) -> Result<ResourceSnapshot, ResourcePressureError> {
     let cpu_percent = sample_cpu_percent()?;
 
@@ -114,6 +134,7 @@ pub fn sample(config: &Config) -> Result<ResourceSnapshot, ResourcePressureError
 /// the scheduler's optional scale-up pressure gate. Errors are propagated to
 /// the adaptive caller, which must defer a runner rather than guess capacity.
 #[derive(Debug, Default)]
+#[cfg(not(any(kani, verus)))]
 struct CgroupV2Limits {
     cpu_quota_cores: Option<f64>,
     cpu_utilization_percent: Option<f64>,
@@ -121,6 +142,7 @@ struct CgroupV2Limits {
     memory_available_bytes: Option<u64>,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn process_cgroup_v2_directory() -> Result<Option<PathBuf>, ResourcePressureError> {
     let contents = match fs::read_to_string("/proc/self/cgroup") {
         Ok(contents) => contents,
@@ -163,6 +185,7 @@ fn process_cgroup_v2_directory() -> Result<Option<PathBuf>, ResourcePressureErro
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_optional_cgroup_file(path: &Path) -> Result<Option<String>, ResourcePressureError> {
     match fs::read_to_string(path) {
         Ok(contents) => Ok(Some(contents)),
@@ -171,6 +194,7 @@ fn read_optional_cgroup_file(path: &Path) -> Result<Option<String>, ResourcePres
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn parse_cgroup_cpu_max(raw: &str) -> Result<Option<f64>, ResourcePressureError> {
     let fields: Vec<_> = raw.split_whitespace().collect();
     if fields.len() != 2 {
@@ -198,6 +222,7 @@ fn parse_cgroup_cpu_max(raw: &str) -> Result<Option<f64>, ResourcePressureError>
     Ok(Some(cores))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn parse_cgroup_memory_limit(raw: &str) -> Result<Option<u64>, ResourcePressureError> {
     let value = raw.trim();
     if value == "max" {
@@ -212,6 +237,7 @@ fn parse_cgroup_memory_limit(raw: &str) -> Result<Option<u64>, ResourcePressureE
     Ok(Some(bytes))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_cgroup_cpu_usage_usec(directory: &Path) -> Result<u64, ResourcePressureError> {
     let contents = fs::read_to_string(directory.join("cpu.stat"))?;
     contents
@@ -227,6 +253,7 @@ fn read_cgroup_cpu_usage_usec(directory: &Path) -> Result<u64, ResourcePressureE
         .ok_or(ResourcePressureError::Parse)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn sample_cgroup_cpu_percent(
     directory: &Path,
     quota_cores: f64,
@@ -244,6 +271,7 @@ fn sample_cgroup_cpu_percent(
     Ok(percent.clamp(0.0, 100.0))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_cgroup_v2_limits() -> Result<CgroupV2Limits, ResourcePressureError> {
     let Some(directory) = process_cgroup_v2_directory()? else {
         return Ok(CgroupV2Limits::default());
@@ -295,6 +323,7 @@ fn read_cgroup_v2_limits() -> Result<CgroupV2Limits, ResourcePressureError> {
 /// the scheduler's scale-up pressure gate. The caller defers runner creation
 /// if capacity cannot be measured without guessing. All visible cgroup-v2
 /// ancestor limits are applied as upper bounds on host capacity.
+#[cfg(not(any(kani, verus)))]
 pub fn available_capacity() -> Result<ResourceCapacity, ResourcePressureError> {
     let mut total_cpu_cores = std::thread::available_parallelism()
         .map(|cores| cores.get() as f64)
@@ -340,6 +369,7 @@ pub fn available_capacity() -> Result<ResourceCapacity, ResourcePressureError> {
         .ok_or(ResourcePressureError::Parse)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn sample_cpu_percent() -> Result<f32, ResourcePressureError> {
     fn read_total_idle() -> Result<(u64, u64), ResourcePressureError> {
         let stat = fs::read_to_string("/proc/stat")?;
@@ -387,6 +417,7 @@ fn sample_cpu_percent() -> Result<f32, ResourcePressureError> {
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 fn sample_disk_percent(config: &Config) -> Result<f32, ResourcePressureError> {
     let mut max_usage = 0.0_f32;
     let mut found = false;
@@ -558,3 +589,58 @@ mod tests {
         .is_pressured(&c));
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{memory_after_host_reserve, memory_measurement_is_valid};
+
+    #[kani::proof]
+    fn memory_measurements_reject_impossible_available_values() {
+        let total: u64 = kani::any();
+        let available: u64 = kani::any();
+        assert_eq!(
+            memory_measurement_is_valid(total, available),
+            total > 0 && available <= total
+        );
+    }
+
+    #[kani::proof]
+    fn host_memory_reserve_never_underflows() {
+        let available: u64 = kani::any();
+        let reserve: u64 = kani::any();
+        let remaining = memory_after_host_reserve(available, reserve);
+        assert!(remaining <= available);
+        if reserve >= available {
+            assert_eq!(remaining, 0);
+        } else {
+            assert_eq!(remaining, available - reserve);
+        }
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{memory_after_host_reserve, memory_measurement_is_valid};
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn memory_measurements_reject_impossible_available_values(total: u64, available: u64)
+            ensures memory_measurement_is_valid(total, available) == (total > 0 && available <= total),
+        {
+        }
+
+        proof fn host_memory_reserve_never_underflows(available: u64, reserve: u64)
+            ensures
+                memory_after_host_reserve(available, reserve) <= available,
+                reserve >= available ==> memory_after_host_reserve(available, reserve) == 0,
+                reserve < available ==> memory_after_host_reserve(available, reserve) == available - reserve,
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

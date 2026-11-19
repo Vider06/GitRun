@@ -9,31 +9,46 @@
 //! Management operations use GitRun runtime crates and real host state; this
 //! crate contains no dashboard frontend or window lifecycle ownership.
 
+#[cfg(not(any(kani, verus)))]
 use gitrun_core::{Config, GitRunApi, GitRunSettings};
+#[cfg(not(any(kani, verus)))]
 use gitrun_scheduler::gsr_bridge::VaultToGsrBridge;
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 use gitrun_setup::BootstrapAuth;
+#[cfg(not(any(kani, verus)))]
 use gitrun_smart_scheduler::{KittyDashboardStatus, KittyRuntime, KittySettings};
+#[cfg(not(any(kani, verus)))]
 use gitrun_vault::{Scope, Vault};
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 use std::io::BufRead;
+#[cfg(not(any(kani, verus)))]
 use std::path::{Path, PathBuf};
+#[cfg(not(any(kani, verus)))]
 use std::process::Stdio;
 #[cfg(any(feature = "desktop", test))]
+#[cfg(not(any(kani, verus)))]
 use std::sync::mpsc;
+#[cfg(not(any(kani, verus)))]
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 use tauri::{AppHandle, Emitter, Manager};
 
 #[path = "control_manager.rs"]
 mod control_manager;
 #[path = "updater.rs"]
+#[cfg(not(any(kani, verus)))]
 mod updater;
+#[cfg(not(any(kani, verus)))]
 pub use control_manager::{
     enabled as control_manager_enabled, request as control_manager_request,
     serve as run_control_manager,
 };
+#[cfg(not(any(kani, verus)))]
 pub use updater::{
     UpdateCheckInfo, UpdateLockStatus, UpdateOperation, UpdatePolicyChoice, UpdateServiceStatus,
     UpdaterInfo, UpdaterSettings,
@@ -42,9 +57,11 @@ pub use updater::{
 /// Serializes management-side writes to the shared config/settings files.
 /// The snapshot check alone is vulnerable to two Tauri commands checking the
 /// same old state before either one writes it.
+#[cfg(not(any(kani, verus)))]
 static MANAGEMENT_SETTINGS_WRITE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
     std::sync::OnceLock::new();
 
+#[cfg(not(any(kani, verus)))]
 fn management_settings_write_guard() -> Result<std::sync::MutexGuard<'static, ()>, String> {
     MANAGEMENT_SETTINGS_WRITE_LOCK
         .get_or_init(|| std::sync::Mutex::new(()))
@@ -52,6 +69,7 @@ fn management_settings_write_guard() -> Result<std::sync::MutexGuard<'static, ()
         .map_err(|_| "dashboard settings write lock is poisoned; refusing to save".to_owned())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn resolve_config_path(explicit: Option<&std::ffi::OsStr>) -> Result<Option<PathBuf>, String> {
     if let Some(path) = explicit {
         let path = PathBuf::from(path);
@@ -72,6 +90,7 @@ fn resolve_config_path(explicit: Option<&std::ffi::OsStr>) -> Result<Option<Path
     .find(|path| path.is_file()))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn load_config() -> Result<Config, String> {
     // System configuration contains credentials and stays root-owned 0600.
     // Desktop processes read it only through the persistent, allowlisted IPC
@@ -90,12 +109,14 @@ fn load_config() -> Result<Config, String> {
     .map_err(|e| e.to_string())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn configured_config_path() -> Option<PathBuf> {
     resolve_config_path(std::env::var_os("GITRUN_CONFIG_FILE").as_deref())
         .ok()
         .flatten()
 }
 
+#[cfg(not(any(kani, verus)))]
 fn config_path_for_write() -> Result<PathBuf, String> {
     let explicit = std::env::var_os("GITRUN_CONFIG_FILE");
     resolve_config_path(explicit.as_deref())?
@@ -115,6 +136,7 @@ fn config_path_for_write() -> Result<PathBuf, String> {
         })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn trusted_system_cli_path() -> Option<PathBuf> {
     [
         PathBuf::from("/usr/bin/gitrun"),
@@ -125,6 +147,7 @@ fn trusted_system_cli_path() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn authorized_cli_command(cli: &Path) -> Result<std::process::Command, String> {
     let mut command = if current_process_is_root() {
         std::process::Command::new(cli)
@@ -141,6 +164,7 @@ fn authorized_cli_command(cli: &Path) -> Result<std::process::Command, String> {
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn persist_config_as_root(config: &Config) -> Result<(), String> {
     if control_manager_enabled() && !current_process_is_root() {
         control_manager_request(
@@ -209,11 +233,13 @@ fn persist_config_as_root(config: &Config) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[cfg(not(any(kani, verus)))]
 fn persist_config_as_root(_config: &Config) -> Result<(), String> {
     Err("administrator-authorized system settings persistence is Linux-only".into())
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn persist_gitrun_settings_as_root(
     settings: &GitRunSettings,
     confirm_socket_opt_out: bool,
@@ -291,6 +317,7 @@ fn persist_gitrun_settings_as_root(
 }
 
 #[cfg(not(target_os = "linux"))]
+#[cfg(not(any(kani, verus)))]
 fn persist_gitrun_settings_as_root(
     _settings: &GitRunSettings,
     _confirm_socket_opt_out: bool,
@@ -299,6 +326,7 @@ fn persist_gitrun_settings_as_root(
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn persist_logic_rules_as_root(
     rules: &[gitrun_scheduler::logic_containers::LogicRule],
 ) -> Result<(), String> {
@@ -368,6 +396,7 @@ fn persist_logic_rules_as_root(
 }
 
 #[cfg(not(target_os = "linux"))]
+#[cfg(not(any(kani, verus)))]
 fn persist_logic_rules_as_root(
     _rules: &[gitrun_scheduler::logic_containers::LogicRule],
 ) -> Result<(), String> {
@@ -375,6 +404,7 @@ fn persist_logic_rules_as_root(
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn persist_vm_configs_as_root(configs: &[gitrun_scheduler::vm::VmConfig]) -> Result<(), String> {
     if control_manager_enabled() && !current_process_is_root() {
         control_manager_request(
@@ -437,11 +467,13 @@ fn persist_vm_configs_as_root(configs: &[gitrun_scheduler::vm::VmConfig]) -> Res
 }
 
 #[cfg(not(target_os = "linux"))]
+#[cfg(not(any(kani, verus)))]
 fn persist_vm_configs_as_root(_configs: &[gitrun_scheduler::vm::VmConfig]) -> Result<(), String> {
     Err("administrator-authorized VM configuration persistence is Linux-only".into())
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn respond_hypervisor_decision_as_root(
     vm_name: &str,
     choice: gitrun_core::hypervisor_decision::DecisionChoice,
@@ -466,6 +498,7 @@ fn respond_hypervisor_decision_as_root(
 }
 
 #[cfg(not(target_os = "linux"))]
+#[cfg(not(any(kani, verus)))]
 fn respond_hypervisor_decision_as_root(
     _vm_name: &str,
     _choice: gitrun_core::hypervisor_decision::DecisionChoice,
@@ -474,6 +507,7 @@ fn respond_hypervisor_decision_as_root(
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn persist_kitty_settings_as_root(settings: &KittySettings) -> Result<(), String> {
     if control_manager_enabled() && !current_process_is_root() {
         control_manager_request(
@@ -542,6 +576,7 @@ fn persist_kitty_settings_as_root(settings: &KittySettings) -> Result<(), String
 }
 
 #[cfg(not(target_os = "linux"))]
+#[cfg(not(any(kani, verus)))]
 fn persist_kitty_settings_as_root(_settings: &KittySettings) -> Result<(), String> {
     Err("administrator-authorized Kitty settings persistence is Linux-only".into())
 }
@@ -549,6 +584,7 @@ fn persist_kitty_settings_as_root(_settings: &KittySettings) -> Result<(), Strin
 /// Persist security policy through the privileged helper for system installs.
 /// The state directory is root-owned so user-level atomic rename is intentionally
 /// unavailable; developer installations retain their configurable local path.
+#[cfg(not(any(kani, verus)))]
 fn persist_gitrun_settings(
     settings: &GitRunSettings,
     path: &Path,
@@ -564,6 +600,7 @@ fn persist_gitrun_settings(
 /// Persists only known settings. On a system installation, the configuration is
 /// root-owned; a desktop-launched dashboard must request authorization rather
 /// than relying on the service's GITRUN_CONFIG_FILE environment.
+#[cfg(not(any(kani, verus)))]
 fn persist_dashboard_config_unlocked(config: &Config) -> Result<(), String> {
     config.validate().map_err(|error| error.to_string())?;
     let path = config_path_for_write()?;
@@ -592,12 +629,14 @@ fn persist_dashboard_config_unlocked(config: &Config) -> Result<(), String> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn persist_dashboard_config(config: &Config) -> Result<(), String> {
     let _write_guard = management_settings_write_guard()?;
     persist_dashboard_config_unlocked(config)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn is_first_run() -> bool {
     matches!(
         gitrun_setup::installation_state(),
@@ -605,6 +644,7 @@ fn is_first_run() -> bool {
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 fn trusted_privileged_binary(path: &std::path::Path) -> Option<PathBuf> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -642,6 +682,7 @@ fn trusted_privileged_binary(path: &std::path::Path) -> Option<PathBuf> {
 }
 
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 fn dashboard_cli_path(app: &AppHandle) -> Option<PathBuf> {
     let mut candidates = Vec::new();
 
@@ -681,6 +722,7 @@ fn dashboard_cli_path(app: &AppHandle) -> Option<PathBuf> {
         .find_map(|path| trusted_privileged_binary(&path))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn pkexec_path() -> Option<PathBuf> {
     #[cfg(target_os = "linux")]
     {
@@ -698,6 +740,7 @@ fn pkexec_path() -> Option<PathBuf> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn valid_setup_repository(value: &str) -> bool {
     let Some((owner, repository)) = value.split_once('/') else {
         return false;
@@ -712,6 +755,7 @@ fn valid_setup_repository(value: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn process_has_name(pid: u32, expected_name: &str) -> bool {
     #[cfg(target_os = "linux")]
     {
@@ -727,6 +771,7 @@ fn process_has_name(pid: u32, expected_name: &str) -> bool {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn process_is_scheduler(pid: u32) -> bool {
     #[cfg(target_os = "linux")]
     {
@@ -753,6 +798,7 @@ fn process_is_scheduler(pid: u32) -> bool {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn process_name_running(expected_name: &str) -> bool {
     #[cfg(target_os = "linux")]
     {
@@ -783,6 +829,7 @@ fn process_name_running(expected_name: &str) -> bool {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn recent_event_cutoff() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -791,6 +838,7 @@ fn recent_event_cutoff() -> u64 {
 }
 
 #[cfg(any(feature = "desktop", test))]
+#[cfg(not(any(kani, verus)))]
 fn validate_setup_value(value: &str, key: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty() {
@@ -803,6 +851,7 @@ fn validate_setup_value(value: &str, key: &str) -> Result<String, String> {
 }
 
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 fn validate_numeric_setup_id(value: &str, key: &str) -> Result<String, String> {
     let value = validate_setup_value(value, key)?;
     if !value.chars().all(|c| c.is_ascii_digit()) {
@@ -812,6 +861,7 @@ fn validate_numeric_setup_id(value: &str, key: &str) -> Result<String, String> {
 }
 
 #[cfg(any(feature = "desktop", test))]
+#[cfg(not(any(kani, verus)))]
 fn validate_private_key_path(value: &str) -> Result<String, String> {
     let path = validate_setup_value(value, "private key path")?;
     let path_buf = PathBuf::from(&path);
@@ -834,18 +884,22 @@ fn validate_private_key_path(value: &str) -> Result<String, String> {
 /// 0664: the operator already owns the file, and root can still read a 0600
 /// file when the setup is elevated through pkexec.
 #[cfg(any(feature = "desktop", test))]
+#[cfg(not(any(kani, verus)))]
 fn secure_private_key_file(path: &std::path::Path) -> Result<(), String> {
     gitrun_setup::secure_github_app_private_key(path)
         .map(|_| ())
         .map_err(|error| error.to_string())
 }
 
-fn trusted_executable_mode(mode: u32) -> bool {
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns mode & 0o022 == 0 && mode & 0o111 != 0))]
+pub(crate) fn trusted_executable_mode(mode: u32) -> bool {
     mode & 0o022 == 0 && mode & 0o111 != 0
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 fn secure_private_key(private_key_path: String) -> Result<String, String> {
     let path = validate_setup_value(&private_key_path, "private key path")?;
     let path_buf = PathBuf::from(&path);
@@ -854,6 +908,7 @@ fn secure_private_key(private_key_path: String) -> Result<String, String> {
 }
 
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 fn build_first_setup_auth(
     auth_mode: &str,
     token: &str,
@@ -900,6 +955,7 @@ fn build_first_setup_auth(
 }
 
 #[cfg(any(feature = "desktop", test))]
+#[cfg(not(any(kani, verus)))]
 fn write_setup_request(path: &std::path::Path, payload: &str) -> Result<(), String> {
     let mut created_file = false;
     let result = (|| -> Result<(), String> {
@@ -939,6 +995,7 @@ fn write_setup_request(path: &std::path::Path, payload: &str) -> Result<(), Stri
 
 #[derive(Debug, Clone, Serialize)]
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 struct FirstSetupEvent {
     phase: u8,
     total: u8,
@@ -949,11 +1006,14 @@ struct FirstSetupEvent {
 }
 
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 const FIRST_SETUP_EVENT: &str = "gitrun-setup-progress";
 #[cfg(any(feature = "desktop", test))]
+#[cfg(not(any(kani, verus)))]
 const FIRST_SETUP_TOTAL: u8 = 9;
 
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 fn emit_first_setup_event(
     app: &AppHandle,
     phase: u8,
@@ -978,6 +1038,7 @@ fn emit_first_setup_event(
 }
 
 #[cfg(any(feature = "desktop", test))]
+#[cfg(not(any(kani, verus)))]
 fn parse_setup_progress_line(line: &str) -> Option<(u8, String)> {
     let rest = line.strip_prefix("[GitRun setup] [")?;
     let (fraction, message) = rest.split_once("] ")?;
@@ -990,12 +1051,14 @@ fn parse_setup_progress_line(line: &str) -> Option<(u8, String)> {
 }
 
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 enum SetupChildOutput {
     Line { stream: &'static str, line: String },
     Done,
 }
 
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 fn spawn_setup_reader<R>(reader: R, stream: &'static str, sender: mpsc::Sender<SetupChildOutput>)
 where
     R: std::io::Read + Send + 'static,
@@ -1026,6 +1089,7 @@ where
 }
 
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 fn stream_privileged_command(
     app: &AppHandle,
     pkexec: &std::path::Path,
@@ -1120,6 +1184,7 @@ fn stream_privileged_command(
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux")
         || !(cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64"))
@@ -1179,6 +1244,7 @@ async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
 }
 
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 fn stream_unprivileged_command(
     app: &AppHandle,
     cli: &std::path::Path,
@@ -1255,6 +1321,7 @@ fn stream_unprivileged_command(
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux")
         || !(cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64"))
@@ -1319,6 +1386,7 @@ async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 struct FirstSetupRequest {
     auth_mode: String,
     token: String,
@@ -1332,6 +1400,7 @@ struct FirstSetupRequest {
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(), String> {
     let FirstSetupRequest {
         auth_mode,
@@ -1493,6 +1562,7 @@ async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn run_privileged_cli_helper(command_name: &str, arguments: &[String]) -> Result<String, String> {
     if control_manager_enabled() && !current_process_is_root() {
         let value = match command_name {
@@ -1564,6 +1634,7 @@ fn run_privileged_cli_helper(command_name: &str, arguments: &[String]) -> Result
         .map_err(|error| format!("GitRun state helper returned invalid UTF-8: {error}"))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn list_gsr_events_for_dashboard(
     config: &Config,
     limit: usize,
@@ -1582,6 +1653,7 @@ fn list_gsr_events_for_dashboard(
     gitrun_gsr::events::read_last(&path, limit.clamp(1, 500)).map_err(|error| error.to_string())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn count_critical_events_for_dashboard(config: &Config, cutoff: u64) -> Result<u32, String> {
     // Only unprivileged developer installs call this helper. System installs
     // intentionally leave this aggregate unavailable on Overview and prompt
@@ -1595,6 +1667,7 @@ fn count_critical_events_for_dashboard(config: &Config, cutoff: u64) -> Result<u
 // ---------------------------------------------------------------------
 
 #[derive(Debug, Serialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct OverviewData {
     pub repositories: Vec<String>,
     pub min_runners: u32,
@@ -1606,6 +1679,7 @@ pub struct OverviewData {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn get_overview() -> Result<OverviewData, String> {
     let config = load_config()?;
     let cutoff = recent_event_cutoff();
@@ -1649,6 +1723,7 @@ fn get_overview() -> Result<OverviewData, String> {
 // ---------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct DashboardRunnerRecord {
     repository: String,
     id: u64,
@@ -1661,6 +1736,7 @@ struct DashboardRunnerRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct DashboardWorkflowRunSummary {
     repository: String,
     total: u32,
@@ -1672,6 +1748,7 @@ struct DashboardWorkflowRunSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct DashboardActiveWorkflowRun {
     repository: String,
     id: u64,
@@ -1680,6 +1757,7 @@ struct DashboardActiveWorkflowRun {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct DashboardRunnerSnapshot {
     checked_at: u64,
     stale: bool,
@@ -1694,12 +1772,14 @@ struct DashboardRunnerSnapshot {
 }
 
 #[derive(Clone)]
+#[cfg(not(any(kani, verus)))]
 struct CachedDashboardRunnerSnapshot {
     fetched_at: Instant,
     config_key: u64,
     value: DashboardRunnerSnapshot,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn dashboard_config_cache_key() -> u64 {
     use std::hash::{Hash, Hasher};
 
@@ -1747,10 +1827,12 @@ fn dashboard_config_cache_key() -> u64 {
     hasher.finish()
 }
 
+#[cfg(not(any(kani, verus)))]
 static DASHBOARD_RUNNER_CACHE: std::sync::OnceLock<
     std::sync::Mutex<Option<CachedDashboardRunnerSnapshot>>,
 > = std::sync::OnceLock::new();
 
+#[cfg(not(any(kani, verus)))]
 fn dashboard_github_client(config: &Config) -> Result<gitrun_scheduler::GitHubClient, String> {
     let auth = match configured_config_path() {
         Some(path) => gitrun_core::GitHubAuth::from_config_file(config, &path),
@@ -1774,6 +1856,7 @@ fn dashboard_github_client(config: &Config) -> Result<gitrun_scheduler::GitHubCl
 /// Force-cancel a configured repository's workflow run using GitHub's run-level API.
 /// This intentionally affects every job in that workflow run, not one individual job.
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn fast_stop_workflow_run(repository: String, run_id: u64) -> Result<String, String> {
     if run_id == 0 {
         return Err("workflow run ID must be greater than zero".into());
@@ -1820,6 +1903,7 @@ fn fast_stop_workflow_run(repository: String, run_id: u64) -> Result<String, Str
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSnapshot, String> {
     if control_manager_enabled() && !current_process_is_root() {
         let value = control_manager_request(
@@ -2052,12 +2136,14 @@ fn get_runner_snapshot(force_refresh: Option<bool>) -> Result<DashboardRunnerSna
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg(not(any(kani, verus)))]
 struct DashboardCpuHistoryPoint {
     sampled_at: u64,
     cpu_percent: f32,
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg(not(any(kani, verus)))]
 struct DashboardHostResourceSnapshot {
     sampled_at: u64,
     stale: bool,
@@ -2069,18 +2155,22 @@ struct DashboardHostResourceSnapshot {
 }
 
 #[derive(Clone)]
+#[cfg(not(any(kani, verus)))]
 struct CachedDashboardHostResources {
     sampled_at: Instant,
     value: DashboardHostResourceSnapshot,
 }
 
+#[cfg(not(any(kani, verus)))]
 static DASHBOARD_HOST_RESOURCE_CACHE: std::sync::OnceLock<
     std::sync::Mutex<Option<CachedDashboardHostResources>>,
 > = std::sync::OnceLock::new();
 
+#[cfg(not(any(kani, verus)))]
 static DASHBOARD_CPU_HISTORY: std::sync::OnceLock<std::sync::Mutex<Vec<DashboardCpuHistoryPoint>>> =
     std::sync::OnceLock::new();
 
+#[cfg(not(any(kani, verus)))]
 fn append_dashboard_cpu_sample(
     history: &mut Vec<DashboardCpuHistoryPoint>,
     sampled_at: u64,
@@ -2108,6 +2198,7 @@ fn append_dashboard_cpu_sample(
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn get_host_resource_snapshot(
     force_refresh: Option<bool>,
 ) -> Result<DashboardHostResourceSnapshot, String> {
@@ -2183,6 +2274,7 @@ fn get_host_resource_snapshot(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct DashboardRepositoryActivity {
     repository: String,
     stars: u64,
@@ -2193,6 +2285,7 @@ struct DashboardRepositoryActivity {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct DashboardRepositoryActivitySnapshot {
     checked_at: u64,
     stale: bool,
@@ -2204,17 +2297,20 @@ struct DashboardRepositoryActivitySnapshot {
 }
 
 #[derive(Clone)]
+#[cfg(not(any(kani, verus)))]
 struct CachedDashboardRepositoryActivity {
     fetched_at: Instant,
     config_key: u64,
     value: DashboardRepositoryActivitySnapshot,
 }
 
+#[cfg(not(any(kani, verus)))]
 static DASHBOARD_REPOSITORY_ACTIVITY_CACHE: std::sync::OnceLock<
     std::sync::Mutex<Option<CachedDashboardRepositoryActivity>>,
 > = std::sync::OnceLock::new();
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn get_repository_activity(
     force_refresh: Option<bool>,
 ) -> Result<DashboardRepositoryActivitySnapshot, String> {
@@ -2336,6 +2432,7 @@ fn get_repository_activity(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn logic_rules_for_dashboard(
     config: &Config,
 ) -> Result<Vec<gitrun_scheduler::logic_containers::LogicRule>, String> {
@@ -2351,6 +2448,7 @@ fn logic_rules_for_dashboard(
 }
 
 #[derive(Debug, Serialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct RepoDetail {
     pub repo: String,
     pub vault_groups: Vec<String>,
@@ -2359,6 +2457,7 @@ pub struct RepoDetail {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn get_repo_detail(repo: String) -> Result<RepoDetail, String> {
     let config = load_config()?;
     if !config
@@ -2384,6 +2483,7 @@ fn get_repo_detail(repo: String) -> Result<RepoDetail, String> {
 // ---------------------------------------------------------------------
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct VaultSecretSummary {
     pub name: String,
     pub scope: ScopeDto,
@@ -2396,12 +2496,14 @@ pub struct VaultSecretSummary {
 /// representation happens to produce.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value")]
+#[cfg(not(any(kani, verus)))]
 pub enum ScopeDto {
     Global,
     Group(String),
     Repo(String),
 }
 
+#[cfg(not(any(kani, verus)))]
 impl From<Scope> for ScopeDto {
     fn from(scope: Scope) -> Self {
         match scope {
@@ -2412,6 +2514,7 @@ impl From<Scope> for ScopeDto {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 impl From<ScopeDto> for Scope {
     fn from(dto: ScopeDto) -> Self {
         match dto {
@@ -2422,6 +2525,7 @@ impl From<ScopeDto> for Scope {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn open_vault(config: &Config) -> Result<Vault, String> {
     if config.vault_dir.trim().is_empty() {
         return Err("GitVault is not configured (GITRUN_VAULT_DIR is empty)".into());
@@ -2431,6 +2535,7 @@ fn open_vault(config: &Config) -> Result<Vault, String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn list_vault_secrets() -> Result<Vec<VaultSecretSummary>, String> {
     if control_manager_enabled() && !current_process_is_root() {
         let value = control_manager_request("read", "vault_secrets", serde_json::json!({}))?;
@@ -2458,6 +2563,7 @@ fn list_vault_secrets() -> Result<Vec<VaultSecretSummary>, String> {
 /// who needs to verify a value should re-enter it (overwriting is always
 /// available) rather than the dashboard round-tripping it back to them.
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn set_vault_secret(name: String, value: String, scope: ScopeDto) -> Result<(), String> {
     const MAX_VAULT_SECRET_BYTES: usize = 1024 * 1024;
     if value.len() > MAX_VAULT_SECRET_BYTES {
@@ -2479,6 +2585,7 @@ fn set_vault_secret(name: String, value: String, scope: ScopeDto) -> Result<(), 
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn delete_vault_secret(name: String, scope: ScopeDto) -> Result<(), String> {
     if control_manager_enabled() && !current_process_is_root() {
         control_manager_request(
@@ -2500,12 +2607,14 @@ fn delete_vault_secret(name: String, scope: ScopeDto) -> Result<(), String> {
 // ---------------------------------------------------------------------
 
 #[derive(Debug, Serialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct GsrStatus {
     pub watching: bool,
     pub watched_pid: Option<u32>,
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn get_gsr_status() -> Result<GsrStatus, String> {
     let config = load_config()?;
     #[cfg(target_os = "linux")]
@@ -2535,6 +2644,7 @@ fn get_gsr_status() -> Result<GsrStatus, String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn list_gsr_events(limit: Option<usize>) -> Result<Vec<gitrun_gsr::SecurityEvent>, String> {
     let config = load_config()?;
     let limit = limit.unwrap_or(500).clamp(1, 500);
@@ -2543,6 +2653,7 @@ fn list_gsr_events(limit: Option<usize>) -> Result<Vec<gitrun_gsr::SecurityEvent
     Ok(events)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn journal_units(source: &str) -> Result<Vec<&'static str>, String> {
     match source {
         "gsr" => Ok(vec!["gitrun-gsr.service"]),
@@ -2552,6 +2663,7 @@ fn journal_units(source: &str) -> Result<Vec<&'static str>, String> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn run_service_log_command(
     program: &std::path::Path,
     args: &[String],
@@ -2571,6 +2683,7 @@ fn run_service_log_command(
         .map_err(|error| format!("unable to execute service log reader: {error}"))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_service_log_files(paths: &[PathBuf]) -> Result<Vec<String>, String> {
     let mut lines = Vec::new();
     let mut protected = Vec::new();
@@ -2637,6 +2750,7 @@ fn read_service_log_files(paths: &[PathBuf]) -> Result<Vec<String>, String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>, String> {
     if control_manager_enabled() && !current_process_is_root() {
         let value = control_manager_request(
@@ -2772,6 +2886,7 @@ fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 mod journal_log_tests {
     use super::journal_units;
 
@@ -2800,6 +2915,7 @@ mod journal_log_tests {
 /// already present, so the dashboard can render the right button state
 /// (Enable / already enabled / Learn more) without a second round trip.
 #[derive(Debug, Serialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct ZizmorDashboardInfo {
     #[serde(flatten)]
     pub info: gitrun_core::ZizmorInfo,
@@ -2809,6 +2925,7 @@ pub struct ZizmorDashboardInfo {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn get_zizmor_info() -> Result<ZizmorDashboardInfo, String> {
     let config = load_config()?;
     let already_installed = gitrun_core::zizmor_is_installed();
@@ -2831,6 +2948,7 @@ fn get_zizmor_info() -> Result<ZizmorDashboardInfo, String> {
 /// validation, then attempts the install so a failed download surfaces to
 /// the operator immediately rather than silently at the next job.
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn accept_zizmor_license_and_install() -> Result<gitrun_core::InstallOutcome, String> {
     if control_manager_enabled() && !current_process_is_root() {
         let value = control_manager_request("write", "zizmor_install", serde_json::json!({}))?;
@@ -2866,6 +2984,7 @@ fn accept_zizmor_license_and_install() -> Result<gitrun_core::InstallOutcome, St
     Ok(outcome)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn persist_zizmor_config(config: &Config) -> Result<(), String> {
     persist_dashboard_config(config)
 }
@@ -2877,6 +2996,7 @@ fn persist_zizmor_config(config: &Config) -> Result<(), String> {
 /// the binary either: leaving it on disk is harmless and re-enabling
 /// later should not require a second download.
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn disable_zizmor() -> Result<(), String> {
     if control_manager_enabled() && !current_process_is_root() {
         control_manager_request("write", "zizmor_disable", serde_json::json!({}))?;
@@ -2892,12 +3012,14 @@ fn disable_zizmor() -> Result<(), String> {
 // ---------------------------------------------------------------------
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn list_logic_rules() -> Result<Vec<gitrun_scheduler::logic_containers::LogicRule>, String> {
     let config = load_config()?;
     logic_rules_for_dashboard(&config)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn save_logic_rules(
     rules: Vec<gitrun_scheduler::logic_containers::LogicRule>,
 ) -> Result<(), String> {
@@ -2917,6 +3039,7 @@ fn save_logic_rules(
 // VM / hypervisor
 // ---------------------------------------------------------------------
 
+#[cfg(not(any(kani, verus)))]
 fn system_vm_configs(config: &Config) -> Result<Vec<gitrun_scheduler::vm::VmConfig>, String> {
     #[cfg(target_os = "linux")]
     if trusted_system_cli_path().is_some() && Path::new("/etc/gitrun/gitrun.env").is_file() {
@@ -2928,6 +3051,7 @@ fn system_vm_configs(config: &Config) -> Result<Vec<gitrun_scheduler::vm::VmConf
         .map_err(|error| error.to_string())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn persist_vm_configs_for_dashboard(
     config: &Config,
     configs: &[gitrun_scheduler::vm::VmConfig],
@@ -2941,12 +3065,14 @@ fn persist_vm_configs_for_dashboard(
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn list_vm_configs() -> Result<Vec<gitrun_scheduler::vm::VmConfig>, String> {
     let config = load_config()?;
     system_vm_configs(&config)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn save_vm_config(config_entry: gitrun_scheduler::vm::VmConfig) -> Result<(), String> {
     let config = load_config()?;
     let mut all = system_vm_configs(&config)?;
@@ -2956,6 +3082,7 @@ fn save_vm_config(config_entry: gitrun_scheduler::vm::VmConfig) -> Result<(), St
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn delete_vm_config(name: String) -> Result<(), String> {
     let config = load_config()?;
     let mut all = system_vm_configs(&config)?;
@@ -2977,6 +3104,7 @@ fn delete_vm_config(name: String) -> Result<(), String> {
 // ---------------------------------------------------------------------
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn list_pending_hypervisor_decisions(
 ) -> Result<Vec<gitrun_core::hypervisor_decision::PendingDecision>, String> {
     let config = load_config()?;
@@ -3000,6 +3128,7 @@ fn list_pending_hypervisor_decisions(
 /// abandoned; it'll be retried automatically next time it's needed" rather
 /// than a generic failure.
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn respond_hypervisor_decision(
     vm_name: String,
     choice: gitrun_core::hypervisor_decision::DecisionChoice,
@@ -3018,6 +3147,7 @@ fn respond_hypervisor_decision(
 // ---------------------------------------------------------------------
 
 #[derive(Debug, Serialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct ApiPolicySummary {
     pub api: String,
     pub enabled: bool,
@@ -3025,6 +3155,7 @@ pub struct ApiPolicySummary {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct DockRequirementSummary {
     pub file: String,
     pub line: usize,
@@ -3034,6 +3165,7 @@ pub struct DockRequirementSummary {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct KittyDashboardData {
     settings: KittySettings,
     status: KittyDashboardStatus,
@@ -3041,6 +3173,7 @@ struct KittyDashboardData {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn get_kitty_dashboard_data() -> Result<KittyDashboardData, String> {
     let config = load_config()?;
     let state_dir = Path::new(&config.state_dir);
@@ -3082,6 +3215,7 @@ fn get_kitty_dashboard_data() -> Result<KittyDashboardData, String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn save_kitty_settings(settings: KittySettings) -> Result<(), String> {
     let _write_guard = management_settings_write_guard()?;
     settings.validate().map_err(|error| error.to_string())?;
@@ -3101,6 +3235,7 @@ fn save_kitty_settings(settings: KittySettings) -> Result<(), String> {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn gitrun_settings_path(config: &Config) -> PathBuf {
     GitRunSettings::path_for_state_dir(&config.state_dir)
 }
@@ -3108,6 +3243,7 @@ fn gitrun_settings_path(config: &Config) -> PathBuf {
 /// Read security policy as the desktop user when its permissions allow it.
 /// System installs may keep the state directory root-only; only that explicit
 /// permission failure is retried through the trusted, fixed-purpose root helper.
+#[cfg(not(any(kani, verus)))]
 fn gitrun_settings_for_dashboard(config: &Config) -> Result<GitRunSettings, String> {
     let path = gitrun_settings_path(config);
     match GitRunSettings::load_or_default(&path) {
@@ -3133,12 +3269,14 @@ fn gitrun_settings_for_dashboard(config: &Config) -> Result<GitRunSettings, Stri
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn get_gitrun_settings() -> Result<GitRunSettings, String> {
     let config = load_config()?;
     gitrun_settings_for_dashboard(&config)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn save_gitrun_settings(
     settings: GitRunSettings,
     confirm_socket_opt_out: bool,
@@ -3182,6 +3320,7 @@ fn save_gitrun_settings(
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn get_repo_api_policies(repo: String) -> Result<Vec<ApiPolicySummary>, String> {
     let config = load_config()?;
     let settings = gitrun_settings_for_dashboard(&config)?;
@@ -3210,6 +3349,7 @@ fn get_repo_api_policies(repo: String) -> Result<Vec<ApiPolicySummary>, String> 
         .collect())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn load_dock_requirements_for_repo(
     config: &Config,
     repo: &str,
@@ -3248,6 +3388,7 @@ fn load_dock_requirements_for_repo(
         .collect())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_dock_requirements_local(
     config: &Config,
     repo: &str,
@@ -3267,12 +3408,14 @@ fn read_dock_requirements_local(
         .map_err(|error| format!("decode Dock requirements: {error}"))
 }
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn get_dock_requirements(repo: String) -> Result<Vec<DockRequirementSummary>, String> {
     let config = load_config()?;
     load_dock_requirements_for_repo(&config, &repo)
 }
 
 #[derive(Debug, Serialize)]
+#[cfg(not(any(kani, verus)))]
 struct RepoDashboardBootstrap {
     detail: RepoDetail,
     requirements: Vec<DockRequirementSummary>,
@@ -3284,6 +3427,7 @@ struct RepoDashboardBootstrap {
 /// snapshot. The frontend previously issued four IPC calls that independently
 /// reloaded config and settings before it could render the policy form.
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn get_repo_dashboard_bootstrap(repo: String) -> Result<RepoDashboardBootstrap, String> {
     let config = load_config()?;
     if !config
@@ -3318,6 +3462,7 @@ fn get_repo_dashboard_bootstrap(repo: String) -> Result<RepoDashboardBootstrap, 
 // ---------------------------------------------------------------------
 
 #[derive(Debug, Serialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct SecurityRuntimeSummary {
     pub resource_pressure_enabled: bool,
     pub resource_pressure_cpu_percent: u8,
@@ -3333,6 +3478,7 @@ pub struct SecurityRuntimeSummary {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn get_security_runtime_summary() -> Result<SecurityRuntimeSummary, String> {
     let config = load_config()?;
     let network = config.runner_network.trim().to_owned();
@@ -3362,10 +3508,12 @@ fn get_security_runtime_summary() -> Result<SecurityRuntimeSummary, String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn get_config() -> Result<Config, String> {
     load_config()
 }
 
+#[cfg(not(any(kani, verus)))]
 fn command_success_with_timeout(program: &str, args: &[&str], timeout: Duration) -> bool {
     let Ok(mut child) = std::process::Command::new(program)
         .args(args)
@@ -3390,6 +3538,7 @@ fn command_success_with_timeout(program: &str, args: &[&str], timeout: Duration)
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg(not(any(kani, verus)))]
 struct DashboardHealthCheck {
     name: String,
     ok: bool,
@@ -3397,6 +3546,7 @@ struct DashboardHealthCheck {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[cfg(not(any(kani, verus)))]
 struct DashboardHealth {
     version: String,
     config_ok: bool,
@@ -3411,24 +3561,28 @@ struct DashboardHealth {
 }
 
 #[derive(Clone)]
+#[cfg(not(any(kani, verus)))]
 struct CachedDashboardHealth {
     fetched_at: Instant,
     config_key: u64,
     value: DashboardHealth,
 }
 
+#[cfg(not(any(kani, verus)))]
 static DASHBOARD_HEALTH_CACHE: std::sync::OnceLock<
     std::sync::Mutex<Option<CachedDashboardHealth>>,
 > = std::sync::OnceLock::new();
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg(not(any(kani, verus)))]
 enum ServiceAction {
     Start,
     Stop,
     Restart,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn current_process_is_root() -> bool {
     std::fs::read_to_string("/proc/self/status")
         .ok()
@@ -3441,6 +3595,7 @@ fn current_process_is_root() -> bool {
         .is_some_and(|effective_uid| effective_uid == 0)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn service_action_name(action: ServiceAction) -> &'static str {
     match action {
         ServiceAction::Start => "start",
@@ -3449,6 +3604,7 @@ fn service_action_name(action: ServiceAction) -> &'static str {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn service_status(
     service: gitrun_platform::ManagedService,
 ) -> (bool, bool, Option<gitrun_platform::ServiceManager>) {
@@ -3473,6 +3629,7 @@ fn service_status(
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
     if !cfg!(target_os = "linux") {
         return Err("GitRun service controls are currently available only on Linux".into());
@@ -3566,6 +3723,7 @@ fn control_gitrun_service(action: ServiceAction) -> Result<String, String> {
     ))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn connect_repository_through_manager(repository: String) -> Result<serde_json::Value, String> {
     let repository = repository.trim().to_owned();
     if !valid_setup_repository(&repository) {
@@ -3708,6 +3866,7 @@ fn connect_repository_through_manager(repository: String) -> Result<serde_json::
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, String> {
     const CACHE_TTL: Duration = Duration::from_secs(10);
     let config_key = dashboard_config_cache_key();
@@ -3840,6 +3999,7 @@ fn get_dashboard_health(force_refresh: Option<bool>) -> Result<DashboardHealth, 
 }
 
 #[derive(Debug, Serialize)]
+#[cfg(not(any(kani, verus)))]
 struct UpdateCheckResult {
     checked: bool,
     available: bool,
@@ -3852,6 +4012,7 @@ struct UpdateCheckResult {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn check_gitrun_updates() -> UpdateCheckResult {
     let mut candidates = Vec::new();
     if let Ok(path) = std::env::var("GITRUN_BINARY_PATH") {
@@ -3962,6 +4123,7 @@ fn check_gitrun_updates() -> UpdateCheckResult {
 
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 async fn update_gitrun(app: AppHandle, line_transition: bool) -> Result<(), String> {
     if !cfg!(target_os = "linux")
         || !(cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64"))
@@ -4012,6 +4174,7 @@ async fn update_gitrun(app: AppHandle, line_transition: bool) -> Result<(), Stri
 }
 #[cfg_attr(feature = "desktop", tauri::command)]
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 async fn update_permanent_runners(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("privileged runner-image update currently targets Linux x86_64".into());
@@ -4057,6 +4220,7 @@ async fn update_permanent_runners(app: AppHandle) -> Result<(), String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn save_dashboard_settings(
     updated: Config,
     settings: GitRunSettings,
@@ -4159,6 +4323,7 @@ fn save_dashboard_settings(
 /// file, leaving unmanaged keys (including ones this Tauri build doesn't
 /// know about yet) untouched on disk.
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 fn save_config(updated: Config) -> Result<(), String> {
     persist_dashboard_config(&updated)
 }
@@ -4166,6 +4331,7 @@ fn save_config(updated: Config) -> Result<(), String> {
 /// Stable, Tauri-independent management entry points shared by the desktop UI and
 /// the terminal management console. The console deliberately calls the same
 /// validated handlers rather than reimplementing persistence or policy checks.
+#[cfg(not(any(kani, verus)))]
 fn management_arg<T: serde::de::DeserializeOwned>(
     args: &serde_json::Value,
     field: &str,
@@ -4178,12 +4344,14 @@ fn management_arg<T: serde::de::DeserializeOwned>(
         .map_err(|error| format!("invalid management argument {field}: {error}"))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn management_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value, String> {
     serde_json::to_value(value)
         .map_err(|error| format!("could not encode management response: {error}"))
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn run_updater_payload_as_root(command_name: &str, payload: &[u8]) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
@@ -4230,6 +4398,7 @@ fn run_updater_payload_as_root(command_name: &str, payload: &[u8]) -> Result<(),
 /// Protected non-systemd installations use the fixed-purpose CLI helper only
 /// as a privilege transport; policy parsing and persistence remain in updater.
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 pub fn get_updater_settings() -> Result<UpdaterSettings, String> {
     match updater::get_updater_settings() {
         Ok(settings) => Ok(settings),
@@ -4250,6 +4419,7 @@ pub fn get_updater_settings() -> Result<UpdaterSettings, String> {
 
 /// Persist the one updater policy consumed by CLI, TUI and GUI.
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 pub fn save_updater_settings(policy: String) -> Result<UpdaterSettings, String> {
     match updater::save_updater_settings(&policy) {
         Ok(settings) => Ok(settings),
@@ -4275,6 +4445,7 @@ pub fn save_updater_settings(policy: String) -> Result<UpdaterSettings, String> 
 /// Read updater diagnostics. The check flag is read-only and does not acquire
 /// the update lifecycle lock.
 #[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(not(any(kani, verus)))]
 pub fn get_updater_info(check: bool) -> Result<UpdaterInfo, String> {
     match updater::get_updater_info(check) {
         Ok(info) => Ok(info),
@@ -4299,6 +4470,7 @@ pub fn get_updater_info(check: bool) -> Result<UpdaterInfo, String> {
 }
 
 /// Persist the result of a CLI update transaction in the shared bounded history.
+#[cfg(not(any(kani, verus)))]
 pub fn record_cli_update_operation(
     from_version: &str,
     to_version: Option<&str>,
@@ -4326,6 +4498,7 @@ pub fn record_cli_update_operation(
 
 /// Read live dashboard data from its existing command handlers. Args use
 /// snake_case field names and JSON so callers do not need private response DTOs.
+#[cfg(not(any(kani, verus)))]
 pub fn management_read(action: &str, args: serde_json::Value) -> Result<serde_json::Value, String> {
     match action {
         "first_run" => Ok(serde_json::Value::Bool(is_first_run())),
@@ -4400,6 +4573,7 @@ pub fn management_read(action: &str, args: serde_json::Value) -> Result<serde_js
 
 /// Perform a dashboard operation with the exact same validation, privileged
 /// helper routing and danger gates used by the graphical dashboard.
+#[cfg(not(any(kani, verus)))]
 pub fn management_write(
     action: &str,
     args: serde_json::Value,
@@ -4533,6 +4707,7 @@ pub fn management_write(
 /// Keeping the command macro expansion in this module avoids leaking Tauri's
 /// generated command glue into the dashboard facade.
 #[cfg(feature = "desktop")]
+#[cfg(not(any(kani, verus)))]
 pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         is_first_run,
@@ -4585,6 +4760,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 mod tests {
     use super::*;
 
@@ -4766,6 +4942,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 mod dashboard_cpu_history_tests {
     use super::{append_dashboard_cpu_sample, DashboardCpuHistoryPoint};
 
@@ -4794,3 +4971,44 @@ mod dashboard_cpu_history_tests {
         assert_eq!(history[0].cpu_percent, 0.0);
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::trusted_executable_mode;
+
+    #[kani::proof]
+    fn trusted_executable_mode_rejects_group_or_other_writable_files() {
+        let mode: u32 = kani::any();
+        assert_eq!(
+            trusted_executable_mode(mode),
+            (mode & 0o022 == 0) && (mode & 0o111 != 0)
+        );
+        if mode & 0o022 != 0 {
+            assert!(!trusted_executable_mode(mode));
+        }
+        if mode & 0o111 == 0 {
+            assert!(!trusted_executable_mode(mode));
+        }
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::trusted_executable_mode;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn trusted_executable_mode_rejects_group_or_other_writable_files(mode: u32)
+            ensures
+                trusted_executable_mode(mode)
+                    == ((mode & 0o022 == 0) && (mode & 0o111 != 0)),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

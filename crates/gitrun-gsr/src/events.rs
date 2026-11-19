@@ -17,22 +17,35 @@
 //! plugs GitVault's tamper detection into GSR without gitrun-vault knowing
 //! GSR exists.
 
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::fs::{File, OpenOptions};
+#[cfg(not(any(kani, verus)))]
 use std::io::{BufRead, Read, Seek, SeekFrom, Write};
+#[cfg(not(any(kani, verus)))]
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+#[cfg(not(any(kani, verus)))]
 use std::path::{Path, PathBuf};
+#[cfg(not(any(kani, verus)))]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(any(kani, verus)))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Active JSONL stays bounded; archives provide a finite, ordered audit window.
+#[cfg(not(any(kani, verus)))]
 const MAX_QUEUE_BYTES: u64 = 16 * 1024 * 1024;
+#[cfg(not(any(kani, verus)))]
 const MAX_ARCHIVES: usize = 10;
+#[cfg(not(any(kani, verus)))]
 static ARCHIVE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum EventError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -42,12 +55,16 @@ pub enum EventError {
     RecordTooLarge { size: usize },
 }
 
+#[cfg(not(any(kani, verus)))]
 pub type Result<T> = std::result::Result<T, EventError>;
 
 /// Severity, used by GSR to decide how loudly to react (log only vs. also
 /// surface an error dialog/terminal message per the operator's "shows the
 /// error graphically, falls back to terminal + always logs" design).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(verus), derive(PartialOrd, Ord))]
+#[cfg_attr(not(any(kani, verus)), derive(Serialize, Deserialize))]
+#[cfg_attr(verus, verus_verify)]
 pub enum Severity {
     Info,
     Warning,
@@ -57,8 +74,16 @@ pub enum Severity {
     /// `VaultEventSink::on_decryption_failure` doc comment).
     Critical,
 }
+impl Severity {
+    /// True only for the critical event class used by GSR enforcement.
+    #[cfg_attr(verus, verus_verify)]
+    pub const fn is_critical(self) -> bool {
+        matches!(self, Self::Critical)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct SecurityEvent {
     pub timestamp: u64,
     pub source: String,
@@ -66,6 +91,7 @@ pub struct SecurityEvent {
     pub message: String,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl SecurityEvent {
     pub fn new(source: impl Into<String>, severity: Severity, message: impl Into<String>) -> Self {
         Self {
@@ -80,6 +106,7 @@ impl SecurityEvent {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_event_parent(parent: &Path) -> Result<()> {
     let metadata = std::fs::symlink_metadata(parent)?;
     if !metadata.is_dir() {
@@ -109,8 +136,10 @@ fn validate_event_parent(parent: &Path) -> Result<()> {
 /// Cross-process queue lock. Writers, rotation, and readers use the same
 /// sidecar lock so a reader cannot observe the queue between archive rename
 /// and the next append.
+#[cfg(not(any(kani, verus)))]
 struct QueueLock(File);
 
+#[cfg(not(any(kani, verus)))]
 impl QueueLock {
     fn acquire(path: &Path, exclusive: bool) -> Result<Self> {
         if let Some(parent) = path
@@ -163,6 +192,7 @@ impl QueueLock {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Drop for QueueLock {
     fn drop(&mut self) {
         #[cfg(unix)]
@@ -175,11 +205,13 @@ impl Drop for QueueLock {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn archive_prefix(path: &Path) -> Option<String> {
     Some(format!("{}.archive-", path.file_name()?.to_str()?))
 }
 
 /// Returns archive paths oldest-first, using modification time and a stable path tie-breaker.
+#[cfg(not(any(kani, verus)))]
 fn archive_paths(path: &Path) -> Result<Vec<PathBuf>> {
     let parent = path
         .parent()
@@ -219,6 +251,7 @@ fn archive_paths(path: &Path) -> Result<Vec<PathBuf>> {
     Ok(archives)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn prune_archives(path: &Path) -> Result<()> {
     let archives = archive_paths(path)?;
     let excess = archives.len().saturating_sub(MAX_ARCHIVES);
@@ -228,6 +261,7 @@ fn prune_archives(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn rotate_queue(path: &Path) -> Result<()> {
     let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -271,6 +305,7 @@ fn rotate_queue(path: &Path) -> Result<()> {
 /// Appends an event and rotates the active JSONL file before it exceeds 16 MiB.
 /// Up to ten archives are retained. The advisory lock coordinates current
 /// GitRun producers and readers across processes.
+#[cfg(not(any(kani, verus)))]
 pub fn emit(path: &Path, event: &SecurityEvent) -> Result<()> {
     let line = serde_json::to_string(event)?;
     // A single event must not be able to exceed the queue bound after a
@@ -302,6 +337,7 @@ pub fn emit(path: &Path, event: &SecurityEvent) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_event_file(file: &File) -> Result<()> {
     let metadata = file.metadata()?;
     if !metadata.is_file() {
@@ -322,6 +358,7 @@ fn validate_event_file(file: &File) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn open_event_file(path: &Path) -> Result<File> {
     let mut options = OpenOptions::new();
     options.read(true);
@@ -332,6 +369,7 @@ fn open_event_file(path: &Path) -> Result<File> {
     Ok(file)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_file_all(path: &Path) -> Result<Vec<SecurityEvent>> {
     let mut file = match open_event_file(path) {
         Ok(file) => file,
@@ -349,6 +387,7 @@ fn read_file_all(path: &Path) -> Result<Vec<SecurityEvent>> {
 }
 
 /// Reads retained archives followed by the active queue under a shared lock.
+#[cfg(not(any(kani, verus)))]
 pub fn read_all(path: &Path) -> Result<Vec<SecurityEvent>> {
     let _lock = QueueLock::acquire(path, false)?;
     let mut events = Vec::new();
@@ -360,6 +399,7 @@ pub fn read_all(path: &Path) -> Result<Vec<SecurityEvent>> {
 }
 
 /// Counts critical events across the retained audit window with bounded memory.
+#[cfg(not(any(kani, verus)))]
 pub fn count_critical_since(path: &Path, cutoff: u64) -> Result<u32> {
     let _lock = QueueLock::acquire(path, false)?;
     let mut count = 0_u32;
@@ -377,7 +417,7 @@ pub fn count_critical_since(path: &Path, cutoff: u64) -> Result<u32> {
                 continue;
             }
             let event: SecurityEvent = serde_json::from_str(&line)?;
-            if event.severity == Severity::Critical && event.timestamp >= cutoff {
+            if event.severity.is_critical() && event.timestamp >= cutoff {
                 count = count.saturating_add(1);
             }
         }
@@ -387,6 +427,7 @@ pub fn count_critical_since(path: &Path, cutoff: u64) -> Result<u32> {
 
 /// Reads the newest records across archives and the active file without
 /// loading the full retained history into memory.
+#[cfg(not(any(kani, verus)))]
 pub fn read_last(path: &Path, limit: usize) -> Result<Vec<SecurityEvent>> {
     if limit == 0 {
         return Ok(Vec::new());
@@ -407,6 +448,7 @@ pub fn read_last(path: &Path, limit: usize) -> Result<Vec<SecurityEvent>> {
     Ok(result)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_last_file(path: &Path, limit: usize) -> Result<Vec<SecurityEvent>> {
     let mut file = match open_event_file(path) {
         Ok(file) => file,
@@ -462,6 +504,7 @@ fn read_last_file(path: &Path, limit: usize) -> Result<Vec<SecurityEvent>> {
 
 /// Default path for the shared event queue, under a state directory (the
 /// same `state_dir` concept used elsewhere in GitRun's config).
+#[cfg(not(any(kani, verus)))]
 pub fn default_queue_path(state_dir: &str) -> PathBuf {
     PathBuf::from(state_dir).join("gsr-events.jsonl")
 }
@@ -470,6 +513,7 @@ pub fn default_queue_path(state_dir: &str) -> PathBuf {
 mod tests {
     use super::*;
 
+    #[cfg(not(any(kani, verus)))]
     fn temp_path(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "gitrun-gsr-events-test-{label}-{}.jsonl",
@@ -773,3 +817,35 @@ mod tests {
         assert!(Severity::Warning > Severity::Info);
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::Severity;
+
+    #[kani::proof]
+    fn severity_critical_classification_is_exact() {
+        assert!(!Severity::Info.is_critical());
+        assert!(!Severity::Warning.is_critical());
+        assert!(Severity::Critical.is_critical());
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::Severity;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn severity_critical_classification_is_exact() {
+            assert(!Severity::Info.is_critical());
+            assert(!Severity::Warning.is_critical());
+            assert(Severity::Critical.is_critical());
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

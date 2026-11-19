@@ -4,77 +4,87 @@
 //! typed operations already implemented by the dashboard backend; it does not
 //! provide a shell, arbitrary executable launch, or arbitrary file access.
 
+// Verus compiles this production module as a standalone verification crate and
+// supplies synthetic cfg values outside Cargo's normal check-cfg registry.
+#![allow(unexpected_cfgs)]
+
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use serde_json::Value;
+#[cfg(not(any(kani, verus)))]
 use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(not(any(kani, verus)))]
 use std::path::Path;
 
+#[cfg(not(any(kani, verus)))]
 const SOCKET_PATH: &str = "/run/gitrun-control/manager.sock";
+#[cfg(not(any(kani, verus)))]
 const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
 /// Fixed server-side action allowlist. The socket never becomes a generic
 /// dispatcher for arbitrary backend strings.
+#[cfg_attr(verus, verus_verify)]
 fn action_is_allowed(operation: &str, action: &str) -> bool {
-    match operation {
-        "read" => {
-            matches!(
-                action,
-                "first_run"
-                    | "overview"
-                    | "health"
-                    | "runners"
-                    | "host_resources"
-                    | "repository_activity"
-                    | "repo_detail"
-                    | "repo_bootstrap"
-                    | "config"
-                    | "gitrun_settings"
-                    | "security_summary"
-                    | "vault_secrets"
-                    | "gsr_status"
-                    | "gsr_events"
-                    | "service_logs"
-                    | "zizmor"
-                    | "logic_rules"
-                    | "vm_configs"
-                    | "hypervisor_decisions"
-                    | "kitty"
-                    | "repo_api_policies"
-                    | "dock_requirements"
-                    | "updates"
-                    | "updater_settings"
-                    | "updater_info"
-            ) || (cfg!(test) && action == "ipc_ping")
-        }
-        "write" => {
-            matches!(
-                action,
-                "connect_repository"
-                    | "vm_configs_replace"
-                    | "fast_stop"
-                    | "vault_set"
-                    | "vault_delete"
-                    | "zizmor_install"
-                    | "zizmor_disable"
-                    | "logic_rules_save"
-                    | "vm_save"
-                    | "vm_delete"
-                    | "hypervisor_respond"
-                    | "kitty_save"
-                    | "gitrun_settings_save"
-                    | "config_save"
-                    | "dashboard_settings_save"
-                    | "updater_settings_save"
-                    | "updater_operation_record"
-                    | "service_control"
-                    | "maintenance_task"
-                    | "json_recovery"
-            ) || (cfg!(test) && action == "ipc_test_write")
-        }
-        _ => false,
+    // Exact byte-slice equality avoids slice-pattern pointer checks in Kani
+    // while preserving a closed, case-sensitive protocol vocabulary.
+    let operation = operation.as_bytes();
+    let action = action.as_bytes();
+
+    if operation == b"read" {
+        action == b"first_run"
+            || action == b"overview"
+            || action == b"health"
+            || action == b"runners"
+            || action == b"host_resources"
+            || action == b"repository_activity"
+            || action == b"repo_detail"
+            || action == b"repo_bootstrap"
+            || action == b"config"
+            || action == b"gitrun_settings"
+            || action == b"security_summary"
+            || action == b"vault_secrets"
+            || action == b"gsr_status"
+            || action == b"gsr_events"
+            || action == b"service_logs"
+            || action == b"zizmor"
+            || action == b"logic_rules"
+            || action == b"vm_configs"
+            || action == b"hypervisor_decisions"
+            || action == b"kitty"
+            || action == b"repo_api_policies"
+            || action == b"dock_requirements"
+            || action == b"updates"
+            || action == b"updater_settings"
+            || action == b"updater_info"
+            || (cfg!(test) && action == b"ipc_ping")
+    } else if operation == b"write" {
+        action == b"connect_repository"
+            || action == b"vm_configs_replace"
+            || action == b"fast_stop"
+            || action == b"vault_set"
+            || action == b"vault_delete"
+            || action == b"zizmor_install"
+            || action == b"zizmor_disable"
+            || action == b"logic_rules_save"
+            || action == b"vm_save"
+            || action == b"vm_delete"
+            || action == b"hypervisor_respond"
+            || action == b"kitty_save"
+            || action == b"gitrun_settings_save"
+            || action == b"config_save"
+            || action == b"dashboard_settings_save"
+            || action == b"updater_settings_save"
+            || action == b"updater_operation_record"
+            || action == b"service_control"
+            || action == b"maintenance_task"
+            || action == b"json_recovery"
+            || (cfg!(test) && action == b"ipc_test_write")
+    } else {
+        false
     }
 }
-
+#[cfg(not(any(kani, verus)))]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
@@ -84,6 +94,7 @@ struct Request {
     args: Value,
 }
 
+#[cfg(not(any(kani, verus)))]
 #[derive(Debug, Serialize, Deserialize)]
 struct Reply {
     ok: bool,
@@ -93,6 +104,7 @@ struct Reply {
     error: Option<String>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Reply {
     fn success(result: Value) -> Self {
         Self {
@@ -113,6 +125,7 @@ impl Reply {
 
 /// Whether this installation is expected to route protected control operations
 /// through the persistent service instead of invoking pkexec from the UI.
+#[cfg(not(any(kani, verus)))]
 pub fn enabled() -> bool {
     cfg!(target_os = "linux")
         && gitrun_platform::detect_service_manager()
@@ -129,6 +142,7 @@ pub fn enabled() -> bool {
 }
 
 /// Send one bounded, structured request to the system control service.
+#[cfg(not(any(kani, verus)))]
 pub fn request(operation: &str, action: &str, args: Value) -> Result<Value, String> {
     request_at(Path::new(SOCKET_PATH), operation, action, args)
 }
@@ -137,12 +151,14 @@ pub fn request(operation: &str, action: &str, args: Value) -> Result<Value, Stri
 /// always use the fixed system socket through `request`.
 #[allow(dead_code)]
 #[derive(Debug, Default)]
+#[cfg(not(any(kani, verus)))]
 struct IpcTiming {
     connect: std::time::Duration,
     forward: std::time::Duration,
     backward: std::time::Duration,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn request_at(
     socket_path: &Path,
     operation: &str,
@@ -152,6 +168,7 @@ fn request_at(
     request_at_timed(socket_path, operation, action, args).map(|(reply, _)| reply)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn request_at_timed(
     socket_path: &Path,
     operation: &str,
@@ -243,6 +260,7 @@ fn request_at_timed(
 }
 
 /// Entry point for the internal control-manager command, normally launched by systemd.
+#[cfg(not(any(kani, verus)))]
 pub fn serve() -> i32 {
     #[cfg(target_os = "linux")]
     {
@@ -338,6 +356,7 @@ pub fn serve() -> i32 {
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn is_root() -> bool {
     std::fs::read_to_string("/proc/self/status")
         .ok()
@@ -351,6 +370,7 @@ fn is_root() -> bool {
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn serve_client(mut stream: std::os::unix::net::UnixStream) {
     use std::time::Duration;
 
@@ -456,6 +476,7 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
 /// service. This deliberately does not forward caller-provided arguments,
 /// paths, or environment variables to a root process.
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn schedule_maintenance_task(task: &str) -> Result<Value, String> {
     use std::process::Command;
 
@@ -530,11 +551,13 @@ fn schedule_maintenance_task(task: &str) -> Result<Value, String> {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[cfg(not(any(kani, verus)))]
 fn schedule_maintenance_task(_task: &str) -> Result<Value, String> {
     Err("GitRun Control Manager maintenance tasks are Linux-only".into())
 }
 
 #[cfg(target_os = "linux")]
+#[cfg(not(any(kani, verus)))]
 fn needs_confirmation(action: &str, args: &Value) -> bool {
     match action {
         "vault_delete" | "vm_delete" | "zizmor_install" | "zizmor_disable" => true,
@@ -763,3 +786,137 @@ mod tests {
         assert!(reply.is_boolean(), "first_run must return a boolean result");
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    #[kani::proof]
+    fn control_manager_action_allowlist_is_closed() {
+        assert!(super::action_is_allowed("read", "first_run"));
+        assert!(super::action_is_allowed("read", "overview"));
+        assert!(super::action_is_allowed("read", "health"));
+        assert!(super::action_is_allowed("read", "runners"));
+        assert!(super::action_is_allowed("read", "host_resources"));
+        assert!(super::action_is_allowed("read", "repository_activity"));
+        assert!(super::action_is_allowed("read", "repo_detail"));
+        assert!(super::action_is_allowed("read", "repo_bootstrap"));
+        assert!(super::action_is_allowed("read", "config"));
+        assert!(super::action_is_allowed("read", "gitrun_settings"));
+        assert!(super::action_is_allowed("read", "security_summary"));
+        assert!(super::action_is_allowed("read", "vault_secrets"));
+        assert!(super::action_is_allowed("read", "gsr_status"));
+        assert!(super::action_is_allowed("read", "gsr_events"));
+        assert!(super::action_is_allowed("read", "service_logs"));
+        assert!(super::action_is_allowed("read", "zizmor"));
+        assert!(super::action_is_allowed("read", "logic_rules"));
+        assert!(super::action_is_allowed("read", "vm_configs"));
+        assert!(super::action_is_allowed("read", "hypervisor_decisions"));
+        assert!(super::action_is_allowed("read", "kitty"));
+        assert!(super::action_is_allowed("read", "repo_api_policies"));
+        assert!(super::action_is_allowed("read", "dock_requirements"));
+        assert!(super::action_is_allowed("read", "updates"));
+        assert!(super::action_is_allowed("read", "updater_settings"));
+        assert!(super::action_is_allowed("read", "updater_info"));
+        assert!(super::action_is_allowed("write", "connect_repository"));
+        assert!(super::action_is_allowed("write", "vm_configs_replace"));
+        assert!(super::action_is_allowed("write", "fast_stop"));
+        assert!(super::action_is_allowed("write", "vault_set"));
+        assert!(super::action_is_allowed("write", "vault_delete"));
+        assert!(super::action_is_allowed("write", "zizmor_install"));
+        assert!(super::action_is_allowed("write", "zizmor_disable"));
+        assert!(super::action_is_allowed("write", "logic_rules_save"));
+        assert!(super::action_is_allowed("write", "vm_save"));
+        assert!(super::action_is_allowed("write", "vm_delete"));
+        assert!(super::action_is_allowed("write", "hypervisor_respond"));
+        assert!(super::action_is_allowed("write", "kitty_save"));
+        assert!(super::action_is_allowed("write", "gitrun_settings_save"));
+        assert!(super::action_is_allowed("write", "config_save"));
+        assert!(super::action_is_allowed("write", "dashboard_settings_save"));
+        assert!(super::action_is_allowed("write", "updater_settings_save"));
+        assert!(super::action_is_allowed(
+            "write",
+            "updater_operation_record"
+        ));
+        assert!(super::action_is_allowed("write", "service_control"));
+        assert!(super::action_is_allowed("write", "maintenance_task"));
+        assert!(super::action_is_allowed("write", "json_recovery"));
+        assert!(!super::action_is_allowed("read", "vault_delete"));
+        assert!(!super::action_is_allowed("write", "overview"));
+        assert!(!super::action_is_allowed("delete", "vault_delete"));
+        assert!(!super::action_is_allowed("read", "run_shell"));
+        assert!(!super::action_is_allowed("write", "../../etc/shadow"));
+        assert!(!super::action_is_allowed("read", "ipc_ping"));
+        assert!(!super::action_is_allowed("write", "ipc_test_write"));
+        assert!(!super::action_is_allowed("unknown", "overview"));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn control_manager_action_allowlist_is_closed() {
+        assert(super::action_is_allowed("read", "first_run"));
+        assert(super::action_is_allowed("read", "overview"));
+        assert(super::action_is_allowed("read", "health"));
+        assert(super::action_is_allowed("read", "runners"));
+        assert(super::action_is_allowed("read", "host_resources"));
+        assert(super::action_is_allowed("read", "repository_activity"));
+        assert(super::action_is_allowed("read", "repo_detail"));
+        assert(super::action_is_allowed("read", "repo_bootstrap"));
+        assert(super::action_is_allowed("read", "config"));
+        assert(super::action_is_allowed("read", "gitrun_settings"));
+        assert(super::action_is_allowed("read", "security_summary"));
+        assert(super::action_is_allowed("read", "vault_secrets"));
+        assert(super::action_is_allowed("read", "gsr_status"));
+        assert(super::action_is_allowed("read", "gsr_events"));
+        assert(super::action_is_allowed("read", "service_logs"));
+        assert(super::action_is_allowed("read", "zizmor"));
+        assert(super::action_is_allowed("read", "logic_rules"));
+        assert(super::action_is_allowed("read", "vm_configs"));
+        assert(super::action_is_allowed("read", "hypervisor_decisions"));
+        assert(super::action_is_allowed("read", "kitty"));
+        assert(super::action_is_allowed("read", "repo_api_policies"));
+        assert(super::action_is_allowed("read", "dock_requirements"));
+        assert(super::action_is_allowed("read", "updates"));
+        assert(super::action_is_allowed("read", "updater_settings"));
+        assert(super::action_is_allowed("read", "updater_info"));
+        assert(super::action_is_allowed("write", "connect_repository"));
+        assert(super::action_is_allowed("write", "vm_configs_replace"));
+        assert(super::action_is_allowed("write", "fast_stop"));
+        assert(super::action_is_allowed("write", "vault_set"));
+        assert(super::action_is_allowed("write", "vault_delete"));
+        assert(super::action_is_allowed("write", "zizmor_install"));
+        assert(super::action_is_allowed("write", "zizmor_disable"));
+        assert(super::action_is_allowed("write", "logic_rules_save"));
+        assert(super::action_is_allowed("write", "vm_save"));
+        assert(super::action_is_allowed("write", "vm_delete"));
+        assert(super::action_is_allowed("write", "hypervisor_respond"));
+        assert(super::action_is_allowed("write", "kitty_save"));
+        assert(super::action_is_allowed("write", "gitrun_settings_save"));
+        assert(super::action_is_allowed("write", "config_save"));
+        assert(super::action_is_allowed("write", "dashboard_settings_save"));
+        assert(super::action_is_allowed("write", "updater_settings_save"));
+        assert(super::action_is_allowed("write", "updater_operation_record"));
+        assert(super::action_is_allowed("write", "service_control"));
+        assert(super::action_is_allowed("write", "maintenance_task"));
+        assert(super::action_is_allowed("write", "json_recovery"));
+        assert(!super::action_is_allowed("read", "vault_delete"));
+        assert(!super::action_is_allowed("write", "overview"));
+        assert(!super::action_is_allowed("delete", "vault_delete"));
+        assert(!super::action_is_allowed("read", "run_shell"));
+        assert(!super::action_is_allowed("write", "../../etc/shadow"));
+        assert(!super::action_is_allowed("read", "ipc_ping"));
+        assert(!super::action_is_allowed("write", "ipc_test_write"));
+        assert(!super::action_is_allowed("unknown", "overview"));
+        }
+    }
+}
+
+#[cfg(kani)]
+#[allow(dead_code)]
+fn main() {}
+
+#[cfg(verus)]
+#[allow(dead_code)]
+fn main() {}

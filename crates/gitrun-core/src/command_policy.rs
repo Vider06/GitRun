@@ -1025,7 +1025,7 @@ mod kani_verification {
 
 #[cfg(verus)]
 mod verus_verification {
-    use super::ViolationAction;
+    use super::{violation_action_tag, ViolationAction};
     use vstd::prelude::*;
 
     verus! {

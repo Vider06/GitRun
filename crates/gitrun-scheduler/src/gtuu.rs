@@ -271,7 +271,12 @@ impl Drop for GtuuLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(self.path.join("pid"));
         let _ = fs::remove_dir(&self.path);
-        // _guard is dropped after this method, releasing flock automatically.
+        // Unlock explicitly before the guard file is closed. The sidecar inode
+        // remains persistent so contenders always coordinate on the same lock.
+        #[cfg(unix)]
+        {
+            let _ = unsafe { libc::flock(self._guard.as_raw_fd(), libc::LOCK_UN) };
+        }
     }
 }
 

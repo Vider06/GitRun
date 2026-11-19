@@ -32,14 +32,14 @@ sources=(
 for source in "${sources[@]}"; do
   [ -f "$source" ] || continue
   sed -i -E \
-    "s#https?://(([[:alnum:]-]+[.])?archive[.]ubuntu[.]com|security[.]ubuntu[.]com)/ubuntu/?#$mirror#g" \
+    "s#https?://(([[:alnum:]-]+[.])*archive[.]ubuntu[.]com|security[.]ubuntu[.]com)/ubuntu/?#$mirror#g" \
     "$source"
 done
 
 # Fail closed: no Ubuntu archive host may bypass the selected mirror.
 for source in "${sources[@]}"; do
   [ -f "$source" ] || continue
-  if grep -Eqi 'https?://(([[:alnum:]-]+[.])?archive[.]ubuntu[.]com|security[.]ubuntu[.]com)/ubuntu' "$source"; then
+  if grep -Eqi 'https?://(([[:alnum:]-]+[.])*archive[.]ubuntu[.]com|security[.]ubuntu[.]com)/ubuntu' "$source"; then
     echo "Ubuntu archive endpoint bypasses selected mirror in $source" >&2
     exit 1
   fi

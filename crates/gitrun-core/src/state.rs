@@ -52,8 +52,29 @@ pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
 verus! {
     exec_spec_verified! {
         pub open spec fn state_file_leaf_is_allowed_bytes_spec(name: Seq<u8>) -> bool {
-            name == seq![b'h', b'e', b'a', b'l', b't', b'h', b'.', b'j', b's', b'o', b'n']
-                || name == seq![b'l', b'a', b's', b't', b'-', b'c', b'r', b'a', b's', b'h']
+            (name.len() == 11
+                && name[0] == 104u8
+                && name[1] == 101u8
+                && name[2] == 97u8
+                && name[3] == 108u8
+                && name[4] == 116u8
+                && name[5] == 104u8
+                && name[6] == 46u8
+                && name[7] == 106u8
+                && name[8] == 115u8
+                && name[9] == 111u8
+                && name[10] == 110u8)
+                || (name.len() == 10
+                    && name[0] == 108u8
+                    && name[1] == 97u8
+                    && name[2] == 115u8
+                    && name[3] == 116u8
+                    && name[4] == 45u8
+                    && name[5] == 99u8
+                    && name[6] == 114u8
+                    && name[7] == 97u8
+                    && name[8] == 115u8
+                    && name[9] == 104u8)
         }
     }
 }
@@ -216,6 +237,7 @@ mod verus_verification {
 
     verus! {
         proof fn state_store_accepts_only_its_two_fixed_leaf_names() {
+            reveal(state_file_leaf_is_allowed_bytes_spec);
             let health: &[u8] = b"health.json";
             let crash: &[u8] = b"last-crash";
             let empty: &[u8] = b"";

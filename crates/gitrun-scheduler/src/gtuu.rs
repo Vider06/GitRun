@@ -631,7 +631,10 @@ mod tests {
         drop(first);
         // Lock released on drop, so a new acquire should now succeed.
         let third = GtuuLock::acquire(&dir);
-        assert!(third.is_ok(), "lock should be reacquirable after drop: {third:?}");
+        assert!(
+            third.is_ok(),
+            "lock should be reacquirable after drop: {third:?}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

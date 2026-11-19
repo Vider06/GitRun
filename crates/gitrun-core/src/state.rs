@@ -51,7 +51,7 @@ pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
 #[cfg(verus)]
 verus! {
     exec_spec_verified! {
-        pub open spec fn state_file_leaf_is_allowed_bytes_spec(name: SpecString) -> bool {
+        pub open spec fn state_file_leaf_is_allowed_bytes_spec(name: Seq<u8>) -> bool {
             name == "health.json"@ || name == "last-crash"@
         }
     }

@@ -97,9 +97,31 @@ pub enum ViolationAction {
 verus! {
     exec_spec_verified! {
         pub open spec fn violation_action_tag(value: Seq<u8>) -> u8 {
-            if value == seq![b'l', b'o', b'g', b'_', b'o', b'n', b'l', b'y'] {
+            if value.len() == 8
+                && value[0] == 108u8
+                && value[1] == 111u8
+                && value[2] == 103u8
+                && value[3] == 95u8
+                && value[4] == 111u8
+                && value[5] == 110u8
+                && value[6] == 108u8
+                && value[7] == 121u8
+            {
                 0
-            } else if value == seq![b'k', b'i', b'l', b'l', b'_', b'a', b'n', b'd', b'_', b'b', b'a', b'n'] {
+            } else if value.len() == 12
+                && value[0] == 107u8
+                && value[1] == 105u8
+                && value[2] == 108u8
+                && value[3] == 108u8
+                && value[4] == 95u8
+                && value[5] == 97u8
+                && value[6] == 110u8
+                && value[7] == 100u8
+                && value[8] == 95u8
+                && value[9] == 98u8
+                && value[10] == 97u8
+                && value[11] == 110u8
+            {
                 2
             } else {
                 1
@@ -1025,6 +1047,7 @@ mod verus_verification {
 
         /// Verifies canonical names and fail-safe handling of unknown values.
         proof fn violation_action_config_mapping_is_total() {
+            reveal(violation_action_tag);
             let log_only: &[u8] = b"log_only";
             let kill: &[u8] = b"kill";
             let kill_and_ban: &[u8] = b"kill_and_ban";

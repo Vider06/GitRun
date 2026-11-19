@@ -52,7 +52,7 @@ pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
 verus! {
     exec_spec_verified! {
         pub open spec fn state_file_leaf_is_allowed_bytes_spec(name: Seq<u8>) -> bool {
-            name == "health.json"@ || name == "last-crash"@
+            name == b"health.json"@ || name == b"last-crash"@
         }
     }
 }

@@ -146,6 +146,7 @@ pub fn noop_backend_unsupported_error(
     ExecutionError::Unsupported { api, operation }
 }
 
+#[cfg(verus)]
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns true))]
 pub(crate) fn noop_backend_error_preserves_pair(

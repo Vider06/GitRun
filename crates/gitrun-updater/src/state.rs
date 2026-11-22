@@ -132,15 +132,61 @@ impl UpdatePolicyChoice {
 #[cfg_attr(
     verus,
     verus_spec(
-        returns if value == "security_only" { Some(0u8) } else if value == "security_full" { Some(1u8) } else if value == "security_full_pre" { Some(2u8) } else { None }
+        returns if value@ == "security_only"@ { Some(0u8) } else if value@ == "security_full"@ { Some(1u8) } else if value@ == "security_full_pre"@ { Some(2u8) } else { None }
     )
 )]
 pub(crate) fn update_policy_choice_code(value: &str) -> Option<u8> {
-    if value == "security_only" {
+    if value.len() == 12
+        && value.as_bytes()[0] == b's'
+        && value.as_bytes()[1] == b'e'
+        && value.as_bytes()[2] == b'c'
+        && value.as_bytes()[3] == b'u'
+        && value.as_bytes()[4] == b'r'
+        && value.as_bytes()[5] == b'i'
+        && value.as_bytes()[6] == b't'
+        && value.as_bytes()[7] == b'y'
+        && value.as_bytes()[8] == b'_'
+        && value.as_bytes()[9] == b'o'
+        && value.as_bytes()[10] == b'n'
+        && value.as_bytes()[11] == b'l'
+        && value.as_bytes()[12] == b'y'
+    {
         Some(0)
-    } else if value == "security_full" {
+    } else if value.len() == 12
+        && value.as_bytes()[0] == b's'
+        && value.as_bytes()[1] == b'e'
+        && value.as_bytes()[2] == b'c'
+        && value.as_bytes()[3] == b'u'
+        && value.as_bytes()[4] == b'r'
+        && value.as_bytes()[5] == b'i'
+        && value.as_bytes()[6] == b't'
+        && value.as_bytes()[7] == b'y'
+        && value.as_bytes()[8] == b'_'
+        && value.as_bytes()[9] == b'f'
+        && value.as_bytes()[10] == b'u'
+        && value.as_bytes()[11] == b'l'
+        && value.as_bytes()[12] == b'l'
+    {
         Some(1)
-    } else if value == "security_full_pre" {
+    } else if value.len() == 16
+        && value.as_bytes()[0] == b's'
+        && value.as_bytes()[1] == b'e'
+        && value.as_bytes()[2] == b'c'
+        && value.as_bytes()[3] == b'u'
+        && value.as_bytes()[4] == b'r'
+        && value.as_bytes()[5] == b'i'
+        && value.as_bytes()[6] == b't'
+        && value.as_bytes()[7] == b'y'
+        && value.as_bytes()[8] == b'_'
+        && value.as_bytes()[9] == b'f'
+        && value.as_bytes()[10] == b'u'
+        && value.as_bytes()[11] == b'l'
+        && value.as_bytes()[12] == b'l'
+        && value.as_bytes()[13] == b'_'
+        && value.as_bytes()[14] == b'p'
+        && value.as_bytes()[15] == b'r'
+        && value.as_bytes()[16] == b'e'
+    {
         Some(2)
     } else {
         None

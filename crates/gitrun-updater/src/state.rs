@@ -136,7 +136,7 @@ impl UpdatePolicyChoice {
     )
 )]
 pub(crate) fn update_policy_choice_code(value: &str) -> Option<u8> {
-    if value.len() == 12
+    if value.len() == 13
         && value.as_bytes()[0] == b's'
         && value.as_bytes()[1] == b'e'
         && value.as_bytes()[2] == b'c'
@@ -152,7 +152,7 @@ pub(crate) fn update_policy_choice_code(value: &str) -> Option<u8> {
         && value.as_bytes()[12] == b'y'
     {
         Some(0)
-    } else if value.len() == 12
+    } else if value.len() == 13
         && value.as_bytes()[0] == b's'
         && value.as_bytes()[1] == b'e'
         && value.as_bytes()[2] == b'c'
@@ -168,7 +168,7 @@ pub(crate) fn update_policy_choice_code(value: &str) -> Option<u8> {
         && value.as_bytes()[12] == b'l'
     {
         Some(1)
-    } else if value.len() == 16
+    } else if value.len() == 17
         && value.as_bytes()[0] == b's'
         && value.as_bytes()[1] == b'e'
         && value.as_bytes()[2] == b'c'

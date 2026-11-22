@@ -31,12 +31,7 @@ pub use super::policy_logic::{ReleaseType, UpdatePolicy};
 #[cfg_attr(
     verus,
     verus_spec(
-        returns match value {
-            value@ == "pre"@ => Some(0u8),
-            value@ == "full"@ => Some(1u8),
-            value@ == "security"@ => Some(2u8),
-            _ => None,
-        }
+        returns if value@ == "pre"@ { Some(0u8) } else if value@ == "full"@ { Some(1u8) } else if value@ == "security"@ { Some(2u8) } else { None }
     )
 )]
 pub(crate) fn release_type_marker_code(value: &str) -> Option<u8> {

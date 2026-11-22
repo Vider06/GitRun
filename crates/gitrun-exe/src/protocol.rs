@@ -1,3 +1,6 @@
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 //! Authenticated protocol primitives for the private GSR -> gitrun-exe channel.
 //!
 //! Transport is deliberately separate from authorization and execution.

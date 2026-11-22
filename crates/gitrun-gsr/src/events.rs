@@ -17,6 +17,9 @@
 //! plugs GitVault's tamper detection into GSR without gitrun-vault knowing
 //! GSR exists.
 
+
+#[allow(unused_imports)]
+use vstd::prelude::*;
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 #[cfg(not(any(kani, verus)))]

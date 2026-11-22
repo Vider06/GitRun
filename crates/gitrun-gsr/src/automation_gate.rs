@@ -6,6 +6,9 @@
 //! a permit can be returned. The permit is intentionally not constructible by
 //! callers outside this module.
 
+
+#[allow(unused_imports)]
+use vstd::prelude::*;
 #[cfg(not(any(kani, verus)))]
 use crate::events::{self, SecurityEvent, Severity};
 #[cfg(not(any(kani, verus)))]

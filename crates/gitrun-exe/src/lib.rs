@@ -139,12 +139,26 @@ pub trait ExecutionBackend: Send + Sync {
     }
 }
 
-#[cfg(not(verus))]
 pub fn noop_backend_unsupported_error(
     api: GitRunApi,
     operation: GitRunOperation,
 ) -> ExecutionError {
     ExecutionError::Unsupported { api, operation }
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_spec(returns true))]
+pub(crate) fn noop_backend_error_preserves_pair(
+    api: GitRunApi,
+    operation: GitRunOperation,
+) -> bool {
+    match noop_backend_unsupported_error(api, operation) {
+        ExecutionError::Unsupported {
+            api: actual_api,
+            operation: actual_operation,
+        } => actual_api == api && actual_operation == operation,
+        ExecutionError::Failed(_) => false,
+    }
 }
 
 /// Safe default backend used while the concrete handlers are introduced.
@@ -261,6 +275,22 @@ mod kani_verification {
                     if actual_api == api && actual_operation == operation)
                 );
             }
+        }
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{noop_backend_error_preserves_pair, GitRunApi, GitRunOperation};
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn noop_backend_preserves_every_declared_operation_pair(
+            api: GitRunApi,
+            operation: GitRunOperation,
+        )
+            ensures noop_backend_error_preserves_pair(api, operation),
+        {
         }
     }
 }

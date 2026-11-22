@@ -1530,22 +1530,21 @@ mod kani_verification {
     #[kani::proof]
     fn vault_secret_name_reserved_codepoints_are_rejected() {
         let codepoint: u32 = kani::any();
-        assert_eq!(
-            secret_name_codepoint_is_allowed(codepoint),
-            codepoint != 0 && codepoint != 1 && codepoint != 61
-        );
+        if codepoint == 0 || codepoint == 1 || codepoint == 61 {
+            assert!(!secret_name_codepoint_is_allowed(codepoint));
+        } else {
+            assert!(secret_name_codepoint_is_allowed(codepoint));
+        }
     }
 
     #[kani::proof]
     fn vault_scope_components_reject_only_the_storage_separator() {
         let codepoint: u32 = kani::any();
-        assert_eq!(
-            scope_component_codepoint_is_allowed(codepoint),
-            codepoint != 1
-        );
-        assert!(!scope_component_codepoint_is_allowed(1));
-        assert!(scope_component_codepoint_is_allowed(0));
-        assert!(scope_component_codepoint_is_allowed(61));
+        if codepoint == 1 {
+            assert!(!scope_component_codepoint_is_allowed(codepoint));
+        } else {
+            assert!(scope_component_codepoint_is_allowed(codepoint));
+        }
     }
 }
 

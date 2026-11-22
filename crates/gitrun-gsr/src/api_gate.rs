@@ -5,6 +5,9 @@
 //! resource policy, and (for Dock execute) the existing GSR command policy
 //! before it can be converted into an AuthorizedOperation for gitrun-exe.
 
+
+#[allow(unused_imports)]
+use vstd::prelude::*;
 #[cfg(not(any(kani, verus)))]
 use gitrun_core::{
     api_policy::{parse_boolean_argument, validate_arguments, GitRunApi, GitRunOperation},

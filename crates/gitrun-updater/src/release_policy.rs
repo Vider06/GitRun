@@ -35,29 +35,11 @@ pub use super::policy_logic::{ReleaseType, UpdatePolicy};
     )
 )]
 pub(crate) fn release_type_marker_code(value: &str) -> Option<u8> {
-    if value.len() == 3
-        && value.as_bytes()[0] == b'p'
-        && value.as_bytes()[1] == b'r'
-        && value.as_bytes()[2] == b'e'
-    {
+    if value == "pre" {
         Some(0)
-    } else if value.len() == 4
-        && value.as_bytes()[0] == b'f'
-        && value.as_bytes()[1] == b'u'
-        && value.as_bytes()[2] == b'l'
-        && value.as_bytes()[3] == b'l'
-    {
+    } else if value == "full" {
         Some(1)
-    } else if value.len() == 8
-        && value.as_bytes()[0] == b's'
-        && value.as_bytes()[1] == b'e'
-        && value.as_bytes()[2] == b'c'
-        && value.as_bytes()[3] == b'u'
-        && value.as_bytes()[4] == b'r'
-        && value.as_bytes()[5] == b'i'
-        && value.as_bytes()[6] == b't'
-        && value.as_bytes()[7] == b'y'
-    {
+    } else if value == "security" {
         Some(2)
     } else {
         None

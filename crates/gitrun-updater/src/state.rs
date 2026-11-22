@@ -136,57 +136,11 @@ impl UpdatePolicyChoice {
     )
 )]
 pub(crate) fn update_policy_choice_code(value: &str) -> Option<u8> {
-    if value.len() == 13
-        && value.as_bytes()[0] == b's'
-        && value.as_bytes()[1] == b'e'
-        && value.as_bytes()[2] == b'c'
-        && value.as_bytes()[3] == b'u'
-        && value.as_bytes()[4] == b'r'
-        && value.as_bytes()[5] == b'i'
-        && value.as_bytes()[6] == b't'
-        && value.as_bytes()[7] == b'y'
-        && value.as_bytes()[8] == b'_'
-        && value.as_bytes()[9] == b'o'
-        && value.as_bytes()[10] == b'n'
-        && value.as_bytes()[11] == b'l'
-        && value.as_bytes()[12] == b'y'
-    {
+    if value == "security_only" {
         Some(0)
-    } else if value.len() == 13
-        && value.as_bytes()[0] == b's'
-        && value.as_bytes()[1] == b'e'
-        && value.as_bytes()[2] == b'c'
-        && value.as_bytes()[3] == b'u'
-        && value.as_bytes()[4] == b'r'
-        && value.as_bytes()[5] == b'i'
-        && value.as_bytes()[6] == b't'
-        && value.as_bytes()[7] == b'y'
-        && value.as_bytes()[8] == b'_'
-        && value.as_bytes()[9] == b'f'
-        && value.as_bytes()[10] == b'u'
-        && value.as_bytes()[11] == b'l'
-        && value.as_bytes()[12] == b'l'
-    {
+    } else if value == "security_full" {
         Some(1)
-    } else if value.len() == 17
-        && value.as_bytes()[0] == b's'
-        && value.as_bytes()[1] == b'e'
-        && value.as_bytes()[2] == b'c'
-        && value.as_bytes()[3] == b'u'
-        && value.as_bytes()[4] == b'r'
-        && value.as_bytes()[5] == b'i'
-        && value.as_bytes()[6] == b't'
-        && value.as_bytes()[7] == b'y'
-        && value.as_bytes()[8] == b'_'
-        && value.as_bytes()[9] == b'f'
-        && value.as_bytes()[10] == b'u'
-        && value.as_bytes()[11] == b'l'
-        && value.as_bytes()[12] == b'l'
-        && value.as_bytes()[13] == b'_'
-        && value.as_bytes()[14] == b'p'
-        && value.as_bytes()[15] == b'r'
-        && value.as_bytes()[16] == b'e'
-    {
+    } else if value == "security_full_pre" {
         Some(2)
     } else {
         None

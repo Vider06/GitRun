@@ -565,7 +565,7 @@ mod tests {
 mod kani_verification {
     use super::{
         channel_key_length_is_valid, mac_length_is_valid, nonce_length_is_valid,
-        timestamp_is_within_skew,
+        timestamp_is_within_skew, MIN_CHANNEL_KEY_LEN, NONCE_LEN, MAC_LEN,
     };
 
     #[kani::proof]

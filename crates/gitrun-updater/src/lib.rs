@@ -2706,6 +2706,8 @@ fn hex_encode(bytes: &[u8]) -> String {
     output
 }
 
+// Keep explicit bounds: Verus does not support RangeInclusive::contains here.
+#[allow(clippy::manual_range_contains)]
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns (byte >= b'0' && byte <= b'9') || (byte >= b'a' && byte <= b'f') || (byte >= b'A' && byte <= b'F')))]
 pub fn sha256_digest_byte_is_valid(byte: u8) -> bool {

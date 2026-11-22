@@ -1,7 +1,7 @@
+//! Updater-owned policy persistence, host diagnostics and bounded operation history.
+
 #[allow(unused_imports)]
 use vstd::prelude::*;
-
-//! Updater-owned policy persistence, host diagnostics and bounded operation history.
 
 #[cfg(not(any(kani, verus)))]
 use crate::{build_plan, resolve_policy_update_for_target, UpdatePolicy};

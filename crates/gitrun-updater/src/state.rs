@@ -132,20 +132,18 @@ impl UpdatePolicyChoice {
 #[cfg_attr(
     verus,
     verus_spec(
-        returns match value {
-            "security_only" => Some(0u8),
-            "security_full" => Some(1u8),
-            "security_full_pre" => Some(2u8),
-            _ => None,
-        }
+        returns if value == "security_only" { Some(0u8) } else if value == "security_full" { Some(1u8) } else if value == "security_full_pre" { Some(2u8) } else { None }
     )
 )]
 pub(crate) fn update_policy_choice_code(value: &str) -> Option<u8> {
-    match value {
-        "security_only" => Some(0),
-        "security_full" => Some(1),
-        "security_full_pre" => Some(2),
-        _ => None,
+    if value == "security_only" {
+        Some(0)
+    } else if value == "security_full" {
+        Some(1)
+    } else if value == "security_full_pre" {
+        Some(2)
+    } else {
+        None
     }
 }
 

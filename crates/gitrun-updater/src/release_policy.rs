@@ -1,3 +1,6 @@
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 #[cfg(not(any(kani, verus)))]
 use super::{
     compare_versions, fetch_manifest, release_manifest_download_url, ReleaseManifest, UpdateError,

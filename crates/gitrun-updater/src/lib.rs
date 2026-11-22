@@ -2709,7 +2709,9 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns (byte >= b'0' && byte <= b'9') || (byte >= b'a' && byte <= b'f') || (byte >= b'A' && byte <= b'F')))]
 pub fn sha256_digest_byte_is_valid(byte: u8) -> bool {
-    (byte >= b'0' && byte <= b'9') || (byte >= b'a' && byte <= b'f') || (byte >= b'A' && byte <= b'F')
+    (byte >= b'0' && byte <= b'9')
+        || (byte >= b'a' && byte <= b'f')
+        || (byte >= b'A' && byte <= b'F')
 }
 
 fn is_sha256_digest(value: &str) -> bool {

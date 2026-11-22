@@ -53,7 +53,11 @@ pub(crate) fn mac_length_is_valid(length: usize) -> bool {
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns if current >= timestamp { current - timestamp <= maximum_skew } else { timestamp - current <= maximum_skew }))]
 pub(crate) fn timestamp_is_within_skew(current: u64, timestamp: u64, maximum_skew: u64) -> bool {
-    if current >= timestamp { current - timestamp <= maximum_skew } else { timestamp - current <= maximum_skew }
+    if current >= timestamp {
+        current - timestamp <= maximum_skew
+    } else {
+        timestamp - current <= maximum_skew
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

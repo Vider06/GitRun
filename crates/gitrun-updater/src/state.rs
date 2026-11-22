@@ -1,3 +1,6 @@
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 //! Updater-owned policy persistence, host diagnostics and bounded operation history.
 
 #[cfg(not(any(kani, verus)))]

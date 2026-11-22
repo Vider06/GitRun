@@ -25,9 +25,6 @@
 //! deliberately fail closed instead of silently falling back to the weaker
 //! shell-only implementation.
 
-
-#[allow(unused_imports)]
-use vstd::prelude::*;
 #[cfg(not(any(kani, verus)))]
 use gitrun_core::command_policy::CommandPolicy;
 #[cfg(not(any(kani, verus)))]
@@ -50,6 +47,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 #[cfg(not(any(kani, verus)))]
 use thiserror::Error;
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 #[cfg(not(any(kani, verus)))]
 #[derive(Debug, Error)]

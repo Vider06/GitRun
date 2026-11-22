@@ -6,15 +6,14 @@
 //! a permit can be returned. The permit is intentionally not constructible by
 //! callers outside this module.
 
-
-#[allow(unused_imports)]
-use vstd::prelude::*;
 #[cfg(not(any(kani, verus)))]
 use crate::events::{self, SecurityEvent, Severity};
 #[cfg(not(any(kani, verus)))]
 use std::path::{Path, PathBuf};
 #[cfg(not(any(kani, verus)))]
 use thiserror::Error;
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(verus, verus_verify)]

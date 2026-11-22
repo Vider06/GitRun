@@ -17,9 +17,6 @@
 //! plugs GitVault's tamper detection into GSR without gitrun-vault knowing
 //! GSR exists.
 
-
-#[allow(unused_imports)]
-use vstd::prelude::*;
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 #[cfg(not(any(kani, verus)))]
@@ -36,6 +33,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(not(any(kani, verus)))]
 use std::time::{SystemTime, UNIX_EPOCH};
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 /// Active JSONL stays bounded; archives provide a finite, ordered audit window.
 #[cfg(not(any(kani, verus)))]

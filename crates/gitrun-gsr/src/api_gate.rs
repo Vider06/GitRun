@@ -5,9 +5,6 @@
 //! resource policy, and (for Dock execute) the existing GSR command policy
 //! before it can be converted into an AuthorizedOperation for gitrun-exe.
 
-
-#[allow(unused_imports)]
-use vstd::prelude::*;
 #[cfg(not(any(kani, verus)))]
 use gitrun_core::{
     api_policy::{parse_boolean_argument, validate_arguments, GitRunApi, GitRunOperation},
@@ -26,6 +23,8 @@ use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard};
 #[cfg(not(any(kani, verus)))]
 use thiserror::Error;
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 #[cfg(not(any(kani, verus)))]

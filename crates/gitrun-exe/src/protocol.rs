@@ -565,7 +565,7 @@ mod tests {
 mod kani_verification {
     use super::{
         channel_key_length_is_valid, mac_length_is_valid, nonce_length_is_valid,
-        timestamp_is_within_skew, MAC_LEN, MIN_CHANNEL_KEY_LEN, NONCE_LEN,
+        timestamp_is_within_skew,
     };
 
     #[kani::proof]
@@ -615,9 +615,9 @@ mod verus_verification {
             mac_length: usize,
         )
             ensures
-                channel_key_length_is_valid(key_length) == (key_length >= MIN_CHANNEL_KEY_LEN),
-                nonce_length_is_valid(nonce_length) == (nonce_length == NONCE_LEN),
-                mac_length_is_valid(mac_length) == (mac_length == MAC_LEN),
+                channel_key_length_is_valid(key_length) == (key_length >= 32),
+                nonce_length_is_valid(nonce_length) == (nonce_length == 32),
+                mac_length_is_valid(mac_length) == (mac_length == 32),
         {
         }
 

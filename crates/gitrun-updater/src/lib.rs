@@ -2707,9 +2707,9 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
-#[cfg_attr(verus, verus_spec(returns byte.is_ascii_hexdigit()))]
+#[cfg_attr(verus, verus_spec(returns (byte >= b'0' && byte <= b'9') || (byte >= b'a' && byte <= b'f') || (byte >= b'A' && byte <= b'F')))]
 pub fn sha256_digest_byte_is_valid(byte: u8) -> bool {
-    byte.is_ascii_hexdigit()
+    (byte >= b'0' && byte <= b'9') || (byte >= b'a' && byte <= b'f') || (byte >= b'A' && byte <= b'F')
 }
 
 fn is_sha256_digest(value: &str) -> bool {
@@ -4508,7 +4508,7 @@ mod verus_verification {
 
     verus! {
         proof fn sha256_digest_byte_alphabet_is_exact(byte: u8)
-            ensures sha256_digest_byte_is_valid(byte) == byte.is_ascii_hexdigit(),
+            ensures sha256_digest_byte_is_valid(byte) == ((byte >= b'0' && byte <= b'9') || (byte >= b'a' && byte <= b'f') || (byte >= b'A' && byte <= b'F')),
         {
         }
     }

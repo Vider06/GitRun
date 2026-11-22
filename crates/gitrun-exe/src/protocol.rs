@@ -1,11 +1,11 @@
-#[allow(unused_imports)]
-use vstd::prelude::*;
-
 //! Authenticated protocol primitives for the private GSR -> gitrun-exe channel.
 //!
 //! Transport is deliberately separate from authorization and execution.
 //! A transport can carry these envelopes over a Unix socket or another
 //! protected local channel, while the executor still verifies the GSR MAC.
+
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 #[cfg(not(any(kani, verus)))]
 use crate::AuthorizedOperation;

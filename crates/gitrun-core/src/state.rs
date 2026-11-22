@@ -52,7 +52,29 @@ pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
 verus! {
     exec_spec_verified! {
         pub open spec fn state_file_leaf_is_allowed_bytes_spec(name: Seq<u8>) -> bool {
-            name == seq![b'h', b'e', b'a', b'l', b't', b'h', b'.', b'j', b's', b'o', b'n'] || name == seq![b'l', b'a', b's', b't', b'-', b'c', b'r', b'a', b's', b'h']
+            (name.len() == 11
+                && name[0usize as int] == b'h'
+                && name[1usize as int] == b'e'
+                && name[2usize as int] == b'a'
+                && name[3usize as int] == b'l'
+                && name[4usize as int] == b't'
+                && name[5usize as int] == b'h'
+                && name[6usize as int] == b'.'
+                && name[7usize as int] == b'j'
+                && name[8usize as int] == b's'
+                && name[9usize as int] == b'o'
+                && name[10usize as int] == b'n')
+                || (name.len() == 10
+                && name[0usize as int] == b'l'
+                && name[1usize as int] == b'a'
+                && name[2usize as int] == b's'
+                && name[3usize as int] == b't'
+                && name[4usize as int] == b'-'
+                && name[5usize as int] == b'c'
+                && name[6usize as int] == b'r'
+                && name[7usize as int] == b'a'
+                && name[8usize as int] == b's'
+                && name[9usize as int] == b'h')
         }
     }
 }
@@ -216,22 +238,33 @@ mod verus_verification {
     verus! {
         proof fn state_store_accepts_only_its_two_fixed_leaf_names() {
             reveal(state_file_leaf_is_allowed_bytes_spec);
-            let health: &[u8] = b"health.json";
-            let crash: &[u8] = b"last-crash";
-            let empty: &[u8] = b"";
-            let other: &[u8] = b"state.json";
-            let parent_path: &[u8] = b"../health.json";
-            let nested_path: &[u8] = b"sub/health.json";
-            let suffixed: &[u8] = b"health.json.tmp";
-            assert(health@ == b"health.json"@);
-            assert(state_file_leaf_is_allowed_bytes_spec(health@));
-            assert(crash@ == b"last-crash"@);
-            assert(state_file_leaf_is_allowed_bytes_spec(crash@));
-            assert(!state_file_leaf_is_allowed_bytes_spec(empty@));
-            assert(!state_file_leaf_is_allowed_bytes_spec(other@));
-            assert(!state_file_leaf_is_allowed_bytes_spec(parent_path@));
-            assert(!state_file_leaf_is_allowed_bytes_spec(nested_path@));
-            assert(!state_file_leaf_is_allowed_bytes_spec(suffixed@));
+            // Sequence literals keep the inputs in the representation the
+            // specification reasons about (see the note in command_policy).
+            let health: Seq<u8> =
+                seq![b'h', b'e', b'a', b'l', b't', b'h', b'.', b'j', b's', b'o', b'n'];
+            let crash: Seq<u8> =
+                seq![b'l', b'a', b's', b't', b'-', b'c', b'r', b'a', b's', b'h'];
+            let empty: Seq<u8> = seq![];
+            let other: Seq<u8> =
+                seq![b's', b't', b'a', b't', b'e', b'.', b'j', b's', b'o', b'n'];
+            let parent_path: Seq<u8> = seq![
+                b'.', b'.', b'/', b'h', b'e', b'a', b'l', b't', b'h', b'.', b'j', b's', b'o', b'n'
+            ];
+            let nested_path: Seq<u8> = seq![
+                b's', b'u', b'b', b'/', b'h', b'e', b'a', b'l', b't', b'h', b'.', b'j', b's', b'o',
+                b'n'
+            ];
+            let suffixed: Seq<u8> = seq![
+                b'h', b'e', b'a', b'l', b't', b'h', b'.', b'j', b's', b'o', b'n', b'.', b't', b'm',
+                b'p'
+            ];
+            assert(state_file_leaf_is_allowed_bytes_spec(health));
+            assert(state_file_leaf_is_allowed_bytes_spec(crash));
+            assert(!state_file_leaf_is_allowed_bytes_spec(empty));
+            assert(!state_file_leaf_is_allowed_bytes_spec(other));
+            assert(!state_file_leaf_is_allowed_bytes_spec(parent_path));
+            assert(!state_file_leaf_is_allowed_bytes_spec(nested_path));
+            assert(!state_file_leaf_is_allowed_bytes_spec(suffixed));
         }
     }
 }

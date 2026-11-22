@@ -97,9 +97,31 @@ pub enum ViolationAction {
 verus! {
     exec_spec_verified! {
         pub open spec fn violation_action_tag(value: Seq<u8>) -> u8 {
-            if value == seq![b'l', b'o', b'g', b'_', b'o', b'n', b'l', b'y'] {
+            if value.len() == 8
+                && value[0usize as int] == b'l'
+                && value[1usize as int] == b'o'
+                && value[2usize as int] == b'g'
+                && value[3usize as int] == b'_'
+                && value[4usize as int] == b'o'
+                && value[5usize as int] == b'n'
+                && value[6usize as int] == b'l'
+                && value[7usize as int] == b'y'
+            {
                 0
-            } else if value == seq![b'k', b'i', b'l', b'l', b'_', b'a', b'n', b'd', b'_', b'b', b'a', b'n'] {
+            } else if value.len() == 12
+                && value[0usize as int] == b'k'
+                && value[1usize as int] == b'i'
+                && value[2usize as int] == b'l'
+                && value[3usize as int] == b'l'
+                && value[4usize as int] == b'_'
+                && value[5usize as int] == b'a'
+                && value[6usize as int] == b'n'
+                && value[7usize as int] == b'd'
+                && value[8usize as int] == b'_'
+                && value[9usize as int] == b'b'
+                && value[10usize as int] == b'a'
+                && value[11usize as int] == b'n'
+            {
                 2
             } else {
                 1
@@ -1026,22 +1048,28 @@ mod verus_verification {
         /// Verifies canonical names and fail-safe handling of unknown values.
         proof fn violation_action_config_mapping_is_total() {
             reveal(violation_action_tag);
-            let log_only: &[u8] = b"log_only";
-            let kill: &[u8] = b"kill";
-            let kill_and_ban: &[u8] = b"kill_and_ban";
-            let unknown: &[u8] = b"unknown";
-            let empty: &[u8] = b"";
-            let log_only_extra: &[u8] = b"log_only_extra";
-            let kill_and_ban_extra: &[u8] = b"kill_and_ban_extra";
-            assert(log_only@ == b"log_only"@);
-            assert(violation_action_tag(log_only@) == 0);
-            assert(violation_action_tag(kill@) == 1);
-            assert(kill_and_ban@ == b"kill_and_ban"@);
-            assert(violation_action_tag(kill_and_ban@) == 2);
-            assert(violation_action_tag(unknown@) == 1);
-            assert(violation_action_tag(empty@) == 1);
-            assert(violation_action_tag(log_only_extra@) == 1);
-            assert(violation_action_tag(kill_and_ban_extra@) == 1);
+            // The proof inputs are built as sequence literals: Verus relates
+            // those to the specification directly, while the view of a byte
+            // slice literal is only opaque to the solver.
+            let log_only: Seq<u8> = seq![b'l', b'o', b'g', b'_', b'o', b'n', b'l', b'y'];
+            let kill: Seq<u8> = seq![b'k', b'i', b'l', b'l'];
+            let kill_and_ban: Seq<u8> =
+                seq![b'k', b'i', b'l', b'l', b'_', b'a', b'n', b'd', b'_', b'b', b'a', b'n'];
+            let unknown: Seq<u8> = seq![b'u', b'n', b'k', b'n', b'o', b'w', b'n'];
+            let empty: Seq<u8> = seq![];
+            let log_only_extra: Seq<u8> =
+                seq![b'l', b'o', b'g', b'_', b'o', b'n', b'l', b'y', b'_'];
+            let kill_and_ban_extra: Seq<u8> = seq![
+                b'k', b'i', b'l', b'l', b'_', b'a', b'n', b'd', b'_', b'b', b'a', b'n', b'_', b'e',
+                b'x', b't', b'r', b'a'
+            ];
+            assert(violation_action_tag(log_only) == 0);
+            assert(violation_action_tag(kill) == 1);
+            assert(violation_action_tag(kill_and_ban) == 2);
+            assert(violation_action_tag(unknown) == 1);
+            assert(violation_action_tag(empty) == 1);
+            assert(violation_action_tag(log_only_extra) == 1);
+            assert(violation_action_tag(kill_and_ban_extra) == 1);
             assert(ViolationAction::LogOnly.as_config_str() == "log_only");
             assert(ViolationAction::Kill.as_config_str() == "kill");
             assert(ViolationAction::KillAndBan.as_config_str() == "kill_and_ban");

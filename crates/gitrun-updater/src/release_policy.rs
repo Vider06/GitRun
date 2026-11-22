@@ -32,19 +32,40 @@ pub use super::policy_logic::{ReleaseType, UpdatePolicy};
     verus,
     verus_spec(
         returns match value {
-            "pre" => Some(0u8),
-            "full" => Some(1u8),
-            "security" => Some(2u8),
+            value@ == "pre"@ => Some(0u8),
+            value@ == "full"@ => Some(1u8),
+            value@ == "security"@ => Some(2u8),
             _ => None,
         }
     )
 )]
 pub(crate) fn release_type_marker_code(value: &str) -> Option<u8> {
-    match value {
-        "pre" => Some(0),
-        "full" => Some(1),
-        "security" => Some(2),
-        _ => None,
+    if value.len() == 3
+        && value.as_bytes()[0] == b'p'
+        && value.as_bytes()[1] == b'r'
+        && value.as_bytes()[2] == b'e'
+    {
+        Some(0)
+    } else if value.len() == 4
+        && value.as_bytes()[0] == b'f'
+        && value.as_bytes()[1] == b'u'
+        && value.as_bytes()[2] == b'l'
+        && value.as_bytes()[3] == b'l'
+    {
+        Some(1)
+    } else if value.len() == 8
+        && value.as_bytes()[0] == b's'
+        && value.as_bytes()[1] == b'e'
+        && value.as_bytes()[2] == b'c'
+        && value.as_bytes()[3] == b'u'
+        && value.as_bytes()[4] == b'r'
+        && value.as_bytes()[5] == b'i'
+        && value.as_bytes()[6] == b't'
+        && value.as_bytes()[7] == b'y'
+    {
+        Some(2)
+    } else {
+        None
     }
 }
 

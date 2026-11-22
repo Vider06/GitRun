@@ -35,19 +35,19 @@ const MIN_CHANNEL_KEY_LEN: usize = 32;
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns length >= 32))]
 pub(crate) fn channel_key_length_is_valid(length: usize) -> bool {
-    length >= MIN_CHANNEL_KEY_LEN
+    length >= 32
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns length == 32))]
 pub(crate) fn nonce_length_is_valid(length: usize) -> bool {
-    length == NONCE_LEN
+    length == 32
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(verus, verus_spec(returns length == 32))]
 pub(crate) fn mac_length_is_valid(length: usize) -> bool {
-    length == MAC_LEN
+    length == 32
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
@@ -604,7 +604,7 @@ mod kani_verification {
 mod verus_verification {
     use super::{
         channel_key_length_is_valid, mac_length_is_valid, nonce_length_is_valid,
-        timestamp_is_within_skew, MAC_LEN, MIN_CHANNEL_KEY_LEN, NONCE_LEN,
+        timestamp_is_within_skew,
     };
     use vstd::prelude::*;
 

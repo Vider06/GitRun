@@ -39,10 +39,8 @@ use vstd::prelude::*;
 
 #[cfg(verus)]
 verus! {
-    exec_spec_verified! {
-        pub open spec fn is_bash_invocation_spec(invocation: SpecString) -> bool {
-            invocation == "bash"@ || "/bash"@.is_suffix_of(invocation)
-        }
+    pub open spec fn is_bash_invocation_spec(invocation: SpecString) -> bool {
+        invocation == "bash"@ || (invocation.len() >= 5 && "/bash"@.is_suffix_of(invocation))
     }
 }
 

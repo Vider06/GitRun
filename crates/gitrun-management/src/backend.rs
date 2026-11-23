@@ -1,3 +1,5 @@
+use vstd::prelude::*;
+
 //! GitRun shared management backend.
 //! This crate owns management operations and the Control Manager. Updater policy,
 //! updater state and update history are owned by gitrun-updater.

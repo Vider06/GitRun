@@ -164,7 +164,7 @@ impl Drop for DecisionLock {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 #[link(name = "c")]
 extern "C" {
     fn flock(fd: i32, operation: i32) -> i32;
@@ -552,6 +552,7 @@ mod verus_verification {
 }
 
 #[cfg(kani)]
+#[allow(dead_code)]
 fn main() {}
 
 #[cfg(verus)]

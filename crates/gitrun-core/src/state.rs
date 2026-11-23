@@ -85,7 +85,7 @@ pub fn state_file_leaf_is_allowed_bytes(name: &[u8]) -> bool {
     exec_state_file_leaf_is_allowed_bytes_spec(name)
 }
 
-#[cfg(not(verus))]
+#[cfg(not(any(kani, verus)))]
 pub(crate) fn state_file_leaf_is_allowed(name: &str) -> bool {
     state_file_leaf_is_allowed_bytes(name.as_bytes())
 }
@@ -270,6 +270,7 @@ mod verus_verification {
 }
 
 #[cfg(kani)]
+#[allow(dead_code)]
 fn main() {}
 
 #[cfg(verus)]

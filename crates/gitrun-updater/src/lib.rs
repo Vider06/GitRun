@@ -3422,7 +3422,7 @@ impl UpdateLock {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(any(kani, verus))))]
 unsafe extern "C" {
     #[link_name = "flock"]
     fn native_flock(fd: std::os::fd::RawFd, operation: i32) -> i32;
@@ -4519,6 +4519,7 @@ mod verus_verification {
 }
 
 #[cfg(kani)]
+#[allow(dead_code)]
 fn main() {}
 
 #[cfg(verus)]

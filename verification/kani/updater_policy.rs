@@ -1,6 +1,8 @@
+#![cfg_attr(kani, allow(unexpected_cfgs))]
 #[path = "../../crates/gitrun-updater/src/policy_logic.rs"]
 mod policy_logic;
 
+#[allow(dead_code)]
 fn main() {}
 
 #[cfg(kani)]

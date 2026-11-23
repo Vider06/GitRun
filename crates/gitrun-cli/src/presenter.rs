@@ -1,3 +1,4 @@
+#![cfg_attr(kani, allow(unexpected_cfgs))]
 #[cfg(verus)]
 use vstd::prelude::*;
 
@@ -889,6 +890,7 @@ mod verus_verification {
 }
 
 #[cfg(kani)]
+#[allow(dead_code)]
 fn main() {}
 
 #[cfg(verus)]

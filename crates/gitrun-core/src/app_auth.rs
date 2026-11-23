@@ -233,7 +233,7 @@ fn is_valid_github_id(value: &str) -> bool {
     is_positive_github_id_value(parsed)
 }
 
-#[cfg(not(verus))]
+#[cfg(not(any(kani, verus)))]
 fn validate_github_id(value: String, field: &'static str) -> Result<String> {
     if !is_valid_github_id(&value) {
         return Err(AppAuthError::InvalidIdentifier(field));

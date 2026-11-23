@@ -178,6 +178,7 @@ mod verus_verification {
 }
 
 #[cfg(kani)]
+#[allow(dead_code)]
 fn main() {}
 
 #[cfg(verus)]

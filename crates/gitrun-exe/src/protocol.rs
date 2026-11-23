@@ -28,6 +28,7 @@ type HmacSha256 = Hmac<Sha256>;
 const NONCE_LEN: usize = 32;
 const MAC_LEN: usize = 32;
 pub const DEFAULT_MAX_CLOCK_SKEW_SECS: u64 = 30;
+#[cfg(not(any(kani, verus)))]
 const DEFAULT_REPLAY_CACHE_SIZE: usize = 4096;
 
 const MIN_CHANNEL_KEY_LEN: usize = 32;
@@ -327,6 +328,7 @@ where
     Ok(bytes)
 }
 
+#[cfg(not(any(kani, verus)))]
 mod serde_bytes_hex {
     use serde::{Deserialize, Deserializer, Serializer};
 
@@ -637,6 +639,7 @@ mod verus_verification {
 }
 
 #[cfg(kani)]
+#[allow(dead_code)]
 fn main() {}
 
 #[cfg(verus)]

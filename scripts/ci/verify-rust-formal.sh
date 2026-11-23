@@ -98,7 +98,7 @@ run_kani_target() {
   shift
   local -a sources=("$@")
   local source
-  if kani "$entrypoint"; then
+  if kani --verbose --debug --keep-temps "$entrypoint"; then
     for source in "${sources[@]}"; do
       record_result "$source" PROVEN
     done
@@ -117,7 +117,7 @@ run_kani_binary() {
   local package="$1"
   local binary="$2"
   local source="$3"
-  if cargo --locked kani -p "$package" --bin "$binary"; then
+  if cargo --locked kani --verbose --debug --keep-temps -p "$package" --bin "$binary"; then
     record_result "$source" PROVEN
   else
     local rc=$?
@@ -133,7 +133,7 @@ run_kani_package() {
   shift
   local -a sources=("$@")
   local source
-  if cargo --locked kani -p "$package" --lib; then
+  if cargo --locked kani --verbose --debug --keep-temps -p "$package" --lib; then
     for source in "${sources[@]}"; do
       record_result "$source" PROVEN
     done

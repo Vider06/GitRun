@@ -78,7 +78,7 @@ pub enum Severity {
 }
 impl Severity {
     /// True only for the critical event class used by GSR enforcement.
-    #[cfg_attr(verus, verus_verify)]
+    #[cfg_attr(verus, verus_verify(dual_spec, open))]
     pub const fn is_critical(self) -> bool {
         matches!(self, Self::Critical)
     }

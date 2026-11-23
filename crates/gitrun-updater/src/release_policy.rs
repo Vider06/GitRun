@@ -36,7 +36,11 @@ pub use super::policy_logic::{ReleaseType, UpdatePolicy};
 )]
 pub(crate) fn release_type_marker_code(value: &str) -> Option<u8> {
     let bytes = value.as_bytes();
-    if bytes.len() == 3 && bytes.get(0) == Some(&b'p') && bytes.get(1) == Some(&b'r') && bytes.get(2) == Some(&b'e') {
+    if bytes.len() == 3
+        && bytes.get(0) == Some(&b'p')
+        && bytes.get(1) == Some(&b'r')
+        && bytes.get(2) == Some(&b'e')
+    {
         Some(0)
     } else if bytes.len() == 4
         && bytes.get(0) == Some(&b'f')

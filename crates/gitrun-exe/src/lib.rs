@@ -141,7 +141,7 @@ pub trait ExecutionBackend: Send + Sync {
 
 /// Pure production decision shared by the runtime error constructor and Verus.
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
-#[cfg_attr(verus, verus_spec(returns (api, operation)))]
+#[cfg_attr(verus, verus_spec(returns(api, operation)))]
 pub(crate) fn noop_backend_unsupported_pair(
     api: GitRunApi,
     operation: GitRunOperation,

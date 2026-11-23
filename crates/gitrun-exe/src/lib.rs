@@ -165,7 +165,43 @@ pub(crate) fn noop_backend_error_preserves_pair(
     operation: GitRunOperation,
 ) -> bool {
     let (actual_api, actual_operation) = noop_backend_unsupported_pair(api, operation);
-    actual_api == api && actual_operation == operation
+    let api_preserved = match (actual_api, api) {
+        (GitRunApi::GitVaultRun, GitRunApi::GitVaultRun)
+        | (GitRunApi::GitDockRun, GitRunApi::GitDockRun)
+        | (GitRunApi::GitSaveRun, GitRunApi::GitSaveRun)
+        | (GitRunApi::GitRegisterRun, GitRunApi::GitRegisterRun)
+        | (GitRunApi::GitInstallRun, GitRunApi::GitInstallRun)
+        | (GitRunApi::GitReadRun, GitRunApi::GitReadRun)
+        | (GitRunApi::GitWriteRun, GitRunApi::GitWriteRun)
+        | (GitRunApi::GitVerifyRun, GitRunApi::GitVerifyRun)
+        | (GitRunApi::GitStatusRun, GitRunApi::GitStatusRun)
+        | (GitRunApi::GitDispatchRun, GitRunApi::GitDispatchRun) => true,
+        _ => false,
+    };
+    let operation_preserved = match (actual_operation, operation) {
+        (GitRunOperation::Read, GitRunOperation::Read)
+        | (GitRunOperation::Write, GitRunOperation::Write)
+        | (GitRunOperation::Exists, GitRunOperation::Exists)
+        | (GitRunOperation::Delete, GitRunOperation::Delete)
+        | (GitRunOperation::List, GitRunOperation::List)
+        | (GitRunOperation::Connect, GitRunOperation::Connect)
+        | (GitRunOperation::Disconnect, GitRunOperation::Disconnect)
+        | (GitRunOperation::Execute, GitRunOperation::Execute)
+        | (GitRunOperation::Melt, GitRunOperation::Melt)
+        | (GitRunOperation::Mount, GitRunOperation::Mount)
+        | (GitRunOperation::Unmount, GitRunOperation::Unmount)
+        | (GitRunOperation::File, GitRunOperation::File)
+        | (GitRunOperation::Logs, GitRunOperation::Logs)
+        | (GitRunOperation::Register, GitRunOperation::Register)
+        | (GitRunOperation::Install, GitRunOperation::Install)
+        | (GitRunOperation::Remove, GitRunOperation::Remove)
+        | (GitRunOperation::Update, GitRunOperation::Update)
+        | (GitRunOperation::Verify, GitRunOperation::Verify)
+        | (GitRunOperation::Status, GitRunOperation::Status)
+        | (GitRunOperation::Plan, GitRunOperation::Plan) => true,
+        _ => false,
+    };
+    api_preserved && operation_preserved
 }
 
 /// Safe default backend used while the concrete handlers are introduced.

@@ -568,17 +568,17 @@ mod tests {
             std::env::temp_dir().join(format!("gitrun-gsr-events-parent-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
-        let real = base.join("real");
+        let real_dir = base.join("real");
         let link = base.join("link");
-        std::fs::create_dir(&real).unwrap();
-        symlink(&real, &link).unwrap();
+        std::fs::create_dir(&real_dir).unwrap();
+        symlink(&real_dir, &link).unwrap();
         let path = link.join("events.jsonl");
         assert!(emit(
             &path,
             &SecurityEvent::new("test", Severity::Critical, "blocked")
         )
         .is_err());
-        assert!(!real.join("events.jsonl").exists());
+        assert!(!real_dir.join("events.jsonl").exists());
         let _ = std::fs::remove_dir_all(&base);
     }
 

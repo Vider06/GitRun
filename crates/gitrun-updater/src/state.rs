@@ -1160,20 +1160,20 @@ mod kani_verification {
 
 #[cfg(verus)]
 mod verus_verification {
-    use super::update_policy_choice_code;
+    use super::update_policy_choice_code_spec;
     use vstd::prelude::*;
 
     verus! {
         proof fn updater_policy_choice_vocabulary_is_closed() {
-            assert(update_policy_choice_code("security_only") == Some(0));
-            assert(update_policy_choice_code("security_full") == Some(1));
-            assert(update_policy_choice_code("security_full_pre") == Some(2));
-            assert(update_policy_choice_code("") == None);
-            assert(update_policy_choice_code("full") == None);
-            assert(update_policy_choice_code("security") == None);
-            assert(update_policy_choice_code("SECURITY_FULL") == None);
-            assert(update_policy_choice_code(" security_full ") == None);
-            assert(update_policy_choice_code("security_full_pre_release") == None);
+            assert(update_policy_choice_code_spec("security_only"@) == Some(0));
+            assert(update_policy_choice_code_spec("security_full"@) == Some(1));
+            assert(update_policy_choice_code_spec("security_full_pre"@) == Some(2));
+            assert(update_policy_choice_code_spec(""@) == None);
+            assert(update_policy_choice_code_spec("full"@) == None);
+            assert(update_policy_choice_code_spec("security"@) == None);
+            assert(update_policy_choice_code_spec("SECURITY_FULL"@) == None);
+            assert(update_policy_choice_code_spec(" security_full "@) == None);
+            assert(update_policy_choice_code_spec("security_full_pre_release"@) == None);
         }
     }
 }

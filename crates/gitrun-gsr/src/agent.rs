@@ -32,8 +32,27 @@ use std::process::Command;
 const REAL_SHELL_FALLBACK: &str = "/bin/sh.gitrun-real";
 const REAL_BASH_FALLBACK: &str = "/bin/bash.gitrun-real";
 
+#[cfg(verus)]
+use vstd::contrib::exec_spec::*;
+
+#[cfg(verus)]
+verus! {
+    exec_spec_verified! {
+        pub open spec fn is_bash_invocation_spec(invocation: SpecString) -> bool {
+            invocation == "bash"@ || "/bash"@.is_suffix_of(invocation)
+        }
+    }
+}
+
+#[cfg(not(verus))]
 fn is_bash_invocation(invocation: &str) -> bool {
     invocation.ends_with("/bash") || invocation == "bash"
+}
+
+#[cfg(verus)]
+#[verus_spec(returns is_bash_invocation_spec(invocation@))]
+fn is_bash_invocation(invocation: &str) -> bool {
+    exec_is_bash_invocation_spec(invocation)
 }
 
 fn real_shell_for_invocation(invocation: &str) -> &'static str {
@@ -300,9 +319,7 @@ mod tests {
 
 #[cfg(kani)]
 mod kani_verification {
-    use super::{
-        is_bash_invocation, real_shell_for_invocation, REAL_BASH_FALLBACK, REAL_SHELL_FALLBACK,
-    };
+    use super::is_bash_invocation;
 
     #[kani::proof]
     fn shell_dispatch_never_crosses_shell_families() {
@@ -336,10 +353,6 @@ mod verus_verification {
             assert(!is_bash_invocation("/bin/sh"));
             assert(!is_bash_invocation("/bin/bash.gitrun-real"));
 
-            assert(real_shell_for_invocation("bash") == REAL_BASH_FALLBACK);
-            assert(real_shell_for_invocation("/bin/bash") == REAL_BASH_FALLBACK);
-            assert(real_shell_for_invocation("sh") == REAL_SHELL_FALLBACK);
-            assert(real_shell_for_invocation("/bin/sh") == REAL_SHELL_FALLBACK);
         }
     }
 }

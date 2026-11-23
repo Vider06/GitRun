@@ -3998,3 +3998,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DRY_RUN: ${{ env.CI_GC_DRY_RUN }}
           CACHE_BASE_EPOCH: ${{ env.CACHE_BASE_EPOCH }}
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/render-cache-gc-summary.py | tee -a "$GITHUB_STEP_SUMMARY"

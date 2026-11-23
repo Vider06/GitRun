@@ -1116,14 +1116,14 @@ jobs:
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           fmt_run() { cargo fmt --all -- --check 2>&1 | ci_awk_fmt; }
-          clippy_run() { cargo clippy --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --exclude gitrun-management --all-targets --all-features --locked --message-format=json-diagnostic-rendered-ansi -- -D warnings | ci_cargo_json; }
-          doc_run() { cargo doc --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --exclude gitrun-management --all-features --no-deps --locked --message-format=json-diagnostic-rendered-ansi | ci_cargo_json; }
+          clippy_run() { ci_cargo_clippy --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --exclude gitrun-management --all-targets --all-features --locked --message-format=json-diagnostic-rendered-ansi -- -D warnings | ci_cargo_json; }
+          doc_run() { ci_cargo_doc --workspace --exclude gitrun-dashboard-tauri --exclude gitrun-recovery --exclude gitrun-management --all-features --no-deps --locked --message-format=json-diagnostic-rendered-ansi | ci_cargo_json; }
           rc=0
           ci_run "cargo fmt --check" fmt_run || rc=1
           ci_run "cargo clippy (-D warnings)" clippy_run || rc=1
           ci_run "cargo doc --no-deps" doc_run || rc=1
-          ci_run "cargo clippy shared management backend (headless)" cargo clippy --locked -p gitrun-management --no-default-features --all-targets -- -D warnings || rc=1
-          ci_run "cargo doc shared management backend (headless)" cargo doc --locked -p gitrun-management --no-default-features --no-deps || rc=1
+          ci_run "cargo clippy shared management backend (headless)" ci_cargo_clippy --locked -p gitrun-management --no-default-features --all-targets -- -D warnings || rc=1
+          ci_run "cargo doc shared management backend (headless)" ci_cargo_doc --locked -p gitrun-management --no-default-features --no-deps || rc=1
           exit "$rc"
       - &rust_prune
         name: Prune target cache
@@ -3250,8 +3250,8 @@ jobs:
           cargo audit --version
           cargo deny --version
           mkdir -p "$CARGO_HOME/advisory-dbs"
-          audit_run() { cargo audit 2>&1 | ci_awk_audit; }
-          deny_run() { cargo deny check advisories bans 2>&1; }
+          audit_run() { ci_cargo_audit | ci_awk_audit; }
+          deny_run() { ci_cargo_deny check advisories bans 2>&1; }
           dup_run() {
             local out
             out="$(cargo tree --workspace --duplicates --locked 2>/dev/null | head -n 120 || true)"
@@ -3261,7 +3261,7 @@ jobs:
           rc=0
           ci_run "cargo audit" audit_run || rc=1
           ci_run "cargo deny check advisories bans" deny_run || rc=1
-          if [ -f deny.toml ]; then ci_adv "cargo deny check licenses sources (advisory)" cargo deny check licenses sources; fi
+          if [ -f deny.toml ]; then ci_adv "cargo deny check licenses sources (advisory)" ci_cargo_deny check licenses sources; fi
           ci_adv "duplicate dependencies (info)" dup_run
           exit "$rc"
       - *s_tc

@@ -339,6 +339,21 @@ ci_need_report() {
   return 1
 }
 
+# ------------------------------------------------------- Cargo verbosity ----
+# Keep normal CI output concise; CI_VERBOSE=1 adds tool-native diagnostics.
+ci_cargo_clippy() {
+  if [ "${CI_VERBOSE:-0}" = 1 ]; then cargo clippy --verbose "$@"; else cargo clippy "$@"; fi
+}
+ci_cargo_doc() {
+  if [ "${CI_VERBOSE:-0}" = 1 ]; then cargo doc --verbose "$@"; else cargo doc "$@"; fi
+}
+ci_cargo_audit() {
+  if [ "${CI_VERBOSE:-0}" = 1 ]; then cargo audit --verbose "$@"; else cargo audit "$@"; fi
+}
+ci_cargo_deny() {
+  if [ "${CI_VERBOSE:-0}" = 1 ]; then cargo deny --log-level debug "$@"; else cargo deny "$@"; fi
+}
+
 # ----------------------------------------------------------- diagnostics ----
 ci_image_fp() {
   {

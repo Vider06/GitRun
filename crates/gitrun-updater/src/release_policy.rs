@@ -33,11 +33,11 @@ pub use super::policy_logic::{ReleaseType, UpdatePolicy};
 verus! {
     exec_spec_verified! {
         pub open spec fn release_type_marker_code_spec(value: SpecString) -> Option<u8> {
-            if value == "pre" {
+            if value == "pre"@ {
                 Some(0u8)
-            } else if value == "full" {
+            } else if value == "full"@ {
                 Some(1u8)
-            } else if value == "security" {
+            } else if value == "security"@ {
                 Some(2u8)
             } else {
                 None

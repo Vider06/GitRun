@@ -138,7 +138,7 @@ impl UpdatePolicyChoice {
 pub(crate) fn update_policy_choice_code(value: &str) -> Option<u8> {
     let bytes = value.as_bytes();
     if bytes.len() == 13
-        && bytes.get(0) == Some(&b's')
+        && bytes.first() == Some(&b's')
         && bytes.get(1) == Some(&b'e')
         && bytes.get(2) == Some(&b'c')
         && bytes.get(3) == Some(&b'u')
@@ -154,7 +154,7 @@ pub(crate) fn update_policy_choice_code(value: &str) -> Option<u8> {
     {
         Some(0)
     } else if bytes.len() == 13
-        && bytes.get(0) == Some(&b's')
+        && bytes.first() == Some(&b's')
         && bytes.get(1) == Some(&b'e')
         && bytes.get(2) == Some(&b'c')
         && bytes.get(3) == Some(&b'u')
@@ -170,7 +170,7 @@ pub(crate) fn update_policy_choice_code(value: &str) -> Option<u8> {
     {
         Some(1)
     } else if bytes.len() == 17
-        && bytes.get(0) == Some(&b's')
+        && bytes.first() == Some(&b's')
         && bytes.get(1) == Some(&b'e')
         && bytes.get(2) == Some(&b'c')
         && bytes.get(3) == Some(&b'u')

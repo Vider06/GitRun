@@ -143,7 +143,7 @@ run_verus_package() {
   # Remove only this package's artifacts so every certification unit executes
   # Verus now; dependencies remain cached.
   cargo clean -p "$package"
-  if output="$(cargo verus verify --verbose --locked -p "$package" --lib -- --expand-errors --time --time-expanded --triggers-mode verbose --log-all --multiple-errors 100 --cfg verus 2>&1)"; then
+  if output="$(cargo -vv verus verify --locked -p "$package" --lib -- --expand-errors --time --time-expanded --triggers-mode verbose --log-all --multiple-errors 100 --cfg verus 2>&1)"; then
     printf '%s\n' "$output"
     record_successful_verus_results "$output" "Cargo package $package" "${sources[@]}" || true
   else
@@ -167,7 +167,7 @@ run_verus_binary() {
   # Force a fresh package build for the binary target as well. An old cached
   # artifact is not evidence that this binary's current sources were verified.
   cargo clean -p "$package"
-  if output="$(cargo verus verify --verbose --locked -p "$package" --bin "$binary" -- --expand-errors --time --time-expanded --triggers-mode verbose --log-all --multiple-errors 100 --cfg verus 2>&1)"; then
+  if output="$(cargo -vv verus verify --locked -p "$package" --bin "$binary" -- --expand-errors --time --time-expanded --triggers-mode verbose --log-all --multiple-errors 100 --cfg verus 2>&1)"; then
     printf '%s\n' "$output"
     record_successful_verus_results "$output" "Cargo binary $package/$binary" "$source" || true
   else

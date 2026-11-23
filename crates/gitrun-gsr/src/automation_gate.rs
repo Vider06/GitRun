@@ -24,7 +24,7 @@ pub enum AutomationAction {
 }
 
 impl AutomationAction {
-    #[cfg_attr(verus, verus_verify)]
+    #[cfg_attr(verus, verus_verify(dual_spec, open))]
     fn as_str(self) -> &'static str {
         match self {
             Self::PredictiveWarmPool => "predictive_warm_pool",
@@ -502,9 +502,9 @@ mod kani_verification {
     #[kani::proof]
     fn repository_component_byte_alphabet_is_closed() {
         let byte: u8 = kani::any();
-        let expected = byte.is_ascii_lowercase()
-            || byte.is_ascii_uppercase()
-            || byte.is_ascii_digit()
+        let expected = (byte >= b'a' && byte <= b'z')
+            || (byte >= b'A' && byte <= b'Z')
+            || (byte >= b'0' && byte <= b'9')
             || byte == b'-'
             || byte == b'_'
             || byte == b'.';
@@ -514,9 +514,9 @@ mod kani_verification {
     /// Proves all automation action names are stable and exhaustive.
     #[kani::proof]
     fn automation_action_wire_names_are_total() {
-        assert!(AutomationAction::PredictiveWarmPool.as_str() == "predictive_warm_pool");
-        assert!(AutomationAction::StopIdleRunner.as_str() == "stop_idle_runner");
-        assert!(AutomationAction::FastStopWorkflowRun.as_str() == "fast_stop_workflow_run");
+        assert!(AutomationAction::PredictiveWarmPool.as_str()@ == "predictive_warm_pool"@);
+        assert!(AutomationAction::StopIdleRunner.as_str()@ == "stop_idle_runner"@);
+        assert!(AutomationAction::FastStopWorkflowRun.as_str()@ == "fast_stop_workflow_run"@);
     }
 }
 
@@ -543,9 +543,9 @@ mod verus_verification {
             ensures
                 super::valid_repository_component_byte(byte)
                     == (
-                        byte.is_ascii_lowercase()
-                            || byte.is_ascii_uppercase()
-                            || byte.is_ascii_digit()
+                        (byte >= b'a' && byte <= b'z')
+                            || (byte >= b'A' && byte <= b'Z')
+                            || (byte >= b'0' && byte <= b'9')
                             || byte == b'-'
                             || byte == b'_'
                             || byte == b'.'

@@ -27,15 +27,31 @@
 
 #[cfg(not(any(kani, verus)))]
 use gitrun_core::command_policy::CommandPolicy;
-#[cfg(all(not(any(kani, verus)), all(target_os = "linux", target_arch = "x86_64"), not(any(kani, verus))))]
+#[cfg(all(
+    not(any(kani, verus)),
+    all(target_os = "linux", target_arch = "x86_64"),
+    not(any(kani, verus))
+))]
 use gitrun_core::command_policy::Decision;
-#[cfg(all(not(any(kani, verus)), all(target_os = "linux", target_arch = "x86_64"), not(any(kani, verus))))]
+#[cfg(all(
+    not(any(kani, verus)),
+    all(target_os = "linux", target_arch = "x86_64"),
+    not(any(kani, verus))
+))]
 use std::ffi::{CStr, CString};
 #[cfg(not(any(kani, verus)))]
 use std::path::Path;
-#[cfg(all(not(any(kani, verus)), all(target_os = "linux", target_arch = "x86_64"), not(any(kani, verus))))]
+#[cfg(all(
+    not(any(kani, verus)),
+    all(target_os = "linux", target_arch = "x86_64"),
+    not(any(kani, verus))
+))]
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(all(not(any(kani, verus)), all(target_os = "linux", target_arch = "x86_64"), not(any(kani, verus))))]
+#[cfg(all(
+    not(any(kani, verus)),
+    all(target_os = "linux", target_arch = "x86_64"),
+    not(any(kani, verus))
+))]
 use std::sync::Arc;
 #[cfg(not(any(kani, verus)))]
 use thiserror::Error;

@@ -139,10 +139,21 @@ pub trait ExecutionBackend: Send + Sync {
     }
 }
 
+/// Pure production decision shared by the runtime error constructor and Verus.
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
+#[cfg_attr(verus, verus_spec(returns (api, operation)))]
+pub(crate) fn noop_backend_unsupported_pair(
+    api: GitRunApi,
+    operation: GitRunOperation,
+) -> (GitRunApi, GitRunOperation) {
+    (api, operation)
+}
+
 pub fn noop_backend_unsupported_error(
     api: GitRunApi,
     operation: GitRunOperation,
 ) -> ExecutionError {
+    let (api, operation) = noop_backend_unsupported_pair(api, operation);
     ExecutionError::Unsupported { api, operation }
 }
 
@@ -153,13 +164,8 @@ pub(crate) fn noop_backend_error_preserves_pair(
     api: GitRunApi,
     operation: GitRunOperation,
 ) -> bool {
-    match noop_backend_unsupported_error(api, operation) {
-        ExecutionError::Unsupported {
-            api: actual_api,
-            operation: actual_operation,
-        } => actual_api == api && actual_operation == operation,
-        ExecutionError::Failed(_) => false,
-    }
+    let (actual_api, actual_operation) = noop_backend_unsupported_pair(api, operation);
+    actual_api == api && actual_operation == operation
 }
 
 /// Safe default backend used while the concrete handlers are introduced.

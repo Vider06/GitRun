@@ -1804,6 +1804,12 @@ mod verus_verification {
                 !(wait_status_is_stopped(status) && wait_status_is_signaled(status)),
                 !(wait_status_is_exited(status) && wait_status_is_signaled(status)),
         {
+            // A stopped status has all seven low bits set (0x7f), so it
+            // cannot simultaneously satisfy the exited predicate (zero
+            // low seven bits). Make that bit-mask relationship explicit
+            // for the SMT solver.
+            assert((status & 0xff) == 0x7f ==> (status & 0x7f) == 0x7f);
+            assert((status & 0x7f) == 0x7f ==> (status & 0x7f) != 0);
         }
     }
 }

@@ -110,7 +110,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
         # fixtures. Capture both streams so unit-test cases do not create false
         # workflow annotations in the Python quality job.
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            return self.run_gate()
+            return DUAL_COVERAGE.main()
 
     def read_report(self) -> list[dict[str, str]]:
         with self.report.open(encoding="utf-8", newline="") as handle:

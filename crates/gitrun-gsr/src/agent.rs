@@ -60,11 +60,7 @@ verus! {
 fn is_bash_invocation(invocation: &str) -> bool {
     let bytes = invocation.as_bytes();
     let length = bytes.len();
-    (length == 4
-        && bytes[0] == b'b'
-        && bytes[1] == b'a'
-        && bytes[2] == b's'
-        && bytes[3] == b'h')
+    (length == 4 && bytes[0] == b'b' && bytes[1] == b'a' && bytes[2] == b's' && bytes[3] == b'h')
         || (length >= 5
             && bytes[length - 5] == b'/'
             && bytes[length - 4] == b'b'
@@ -78,11 +74,7 @@ fn is_bash_invocation(invocation: &str) -> bool {
 fn is_bash_invocation(invocation: &str) -> bool {
     let bytes = invocation.as_bytes();
     let length = bytes.len();
-    (length == 4
-        && bytes[0] == b'b'
-        && bytes[1] == b'a'
-        && bytes[2] == b's'
-        && bytes[3] == b'h')
+    (length == 4 && bytes[0] == b'b' && bytes[1] == b'a' && bytes[2] == b's' && bytes[3] == b'h')
         || (length >= 5
             && bytes[length - 5] == b'/'
             && bytes[length - 4] == b'b'

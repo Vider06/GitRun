@@ -1,4 +1,6 @@
+import contextlib
 import csv
+import io
 import importlib.util
 import os
 import tempfile
@@ -103,6 +105,13 @@ class DualVerifierCoverageTests(unittest.TestCase):
             writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
             writer.writerows(rows)
 
+    def run_gate(self) -> int:
+        # The gate intentionally emits GitHub ::error annotations for failing
+        # fixtures. Capture both streams so unit-test cases do not create false
+        # workflow annotations in the Python quality job.
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return self.run_gate()
+
     def read_report(self) -> list[dict[str, str]]:
         with self.report.open(encoding="utf-8", newline="") as handle:
             return list(csv.DictReader(handle, delimiter="\t"))
@@ -119,7 +128,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
 
     def test_implemented_scope_stays_unverified_until_both_verifiers_run(self) -> None:
         with patch.object(DUAL_COVERAGE.subprocess, "run") as run:
-            result = DUAL_COVERAGE.main()
+            result = self.run_gate()
 
         self.assertEqual(result, 1)
         run.assert_not_called()
@@ -143,7 +152,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
         self.write_results(self.kani_results, [("src/policy.rs", "PROVEN")])
         self.write_results(self.verus_results, [("src/policy.rs", "PROVEN")])
 
-        result = DUAL_COVERAGE.main()
+        result = self.run_gate()
 
         self.assertEqual(result, 0)
         self.assertEqual(
@@ -164,7 +173,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
         self.write_results(self.kani_results, [("src/policy.rs", "PROVEN")])
         self.write_results(self.verus_results, [("src/policy.rs", "FAILED")])
 
-        result = DUAL_COVERAGE.main()
+        result = self.run_gate()
 
         self.assertEqual(result, 1)
         row = self.read_report()[0]
@@ -176,7 +185,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
     def test_one_verifier_success_without_the_other_stays_unverified(self) -> None:
         self.write_results(self.kani_results, [("src/policy.rs", "PROVEN")])
 
-        result = DUAL_COVERAGE.main()
+        result = self.run_gate()
 
         self.assertEqual(result, 1)
         row = self.read_report()[0]
@@ -200,7 +209,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
             ]
         )
 
-        result = DUAL_COVERAGE.main()
+        result = self.run_gate()
 
         self.assertEqual(result, 1)
         row = self.read_report()[0]
@@ -225,7 +234,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
             ]
         )
 
-        result = DUAL_COVERAGE.main()
+        result = self.run_gate()
 
         self.assertEqual(result, 0)
         row = self.read_report()[0]
@@ -252,7 +261,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
             ]
         )
 
-        result = DUAL_COVERAGE.main()
+        result = self.run_gate()
 
         self.assertEqual(result, 0)
         row = self.read_report()[0]
@@ -269,7 +278,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
         )
         self.sources_mock.return_value = {"src/policy.rs", "src/other.rs"}
 
-        result = DUAL_COVERAGE.main()
+        result = self.run_gate()
 
         self.assertEqual(result, 1)
         rows = {row["SOURCE_FILE"]: row for row in self.read_report()}
@@ -297,7 +306,7 @@ class DualVerifierCoverageTests(unittest.TestCase):
             ]
         )
 
-        result = DUAL_COVERAGE.main()
+        result = self.run_gate()
 
         self.assertEqual(result, 1)
         self.assertIn("Manifest / ownership issues | 2", self.summary.read_text())

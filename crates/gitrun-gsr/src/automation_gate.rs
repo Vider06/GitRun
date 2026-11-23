@@ -226,9 +226,7 @@ pub(crate) fn runner_floor_is_bounded(configured: u32, proposed: u32, maximum: u
     )
 )]
 pub(crate) fn valid_repository_component_byte(byte: u8) -> bool {
-    (byte >= b'a' && byte <= b'z')
-        || (byte >= b'A' && byte <= b'Z')
-        || (byte >= b'0' && byte <= b'9')
+    matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9')
         || byte == b'-'
         || byte == b'_'
         || byte == b'.'

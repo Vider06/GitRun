@@ -3250,7 +3250,7 @@ jobs:
           cargo audit --version
           cargo deny --version
           mkdir -p "$CARGO_HOME/advisory-dbs"
-          audit_run() { ci_cargo_audit | ci_awk_audit; }
+          audit_run() { ci_cargo_audit 2>&1 | ci_awk_audit; }
           deny_run() { ci_cargo_deny check advisories bans 2>&1; }
           dup_run() {
             local out

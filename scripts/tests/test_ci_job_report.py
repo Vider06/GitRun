@@ -30,7 +30,9 @@ class JobReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             log = root / "kani.log"
-            token_prefix = "github" + "_pat_"  # Keep the synthetic fixture out of repository secret scans.\n            token = token_prefix + "abcdefghijklmnopqrstuvwxyz123456"\n            log.write_text(f"proof failed: error[E0001]\\n{token}\\n", encoding="utf-8")
+            token_prefix = "github" + "_pat_"  # Keep the synthetic fixture out of repository secret scans.
+            token = token_prefix + "abcdefghijklmnopqrstuvwxyz123456"
+            log.write_text(f"proof failed: error[E0001]\n{token}\n", encoding="utf-8")
             env = {**os.environ, "RUNNER_TEMP": temp}
             subprocess.run(["python3", str(SCRIPT), "diagnostic", "--step", "kani", "--command", "cargo kani", "--exit-code", "1", "--log-file", str(log)], env=env, check=True, capture_output=True, text=True)
             record = json.loads((root / "gitrun-ci" / "diagnostics.jsonl").read_text(encoding="utf-8"))

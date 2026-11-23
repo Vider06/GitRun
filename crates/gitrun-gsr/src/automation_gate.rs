@@ -226,9 +226,9 @@ pub(crate) fn runner_floor_is_bounded(configured: u32, proposed: u32, maximum: u
     )
 )]
 pub(crate) fn valid_repository_component_byte(byte: u8) -> bool {
-    byte.is_ascii_lowercase()
-        || byte.is_ascii_uppercase()
-        || byte.is_ascii_digit()
+    (byte >= b'a' && byte <= b'z')
+        || (byte >= b'A' && byte <= b'Z')
+        || (byte >= b'0' && byte <= b'9')
         || byte == b'-'
         || byte == b'_'
         || byte == b'.'

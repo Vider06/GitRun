@@ -134,11 +134,11 @@ impl UpdatePolicyChoice {
 verus! {
     exec_spec_verified! {
         pub open spec fn update_policy_choice_code_spec(value: SpecString) -> Option<u8> {
-            if value == "security_only"@@ {
+            if value == "security_only"@ {
                 Some(0u8)
-            } else if value == "security_full"@@ {
+            } else if value == "security_full"@ {
                 Some(1u8)
-            } else if value == "security_full_pre"@@ {
+            } else if value == "security_full_pre"@ {
                 Some(2u8)
             } else {
                 None

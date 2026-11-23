@@ -347,9 +347,8 @@ ci_cargo_clippy() {
 ci_cargo_doc() {
   if [ "${CI_VERBOSE:-0}" = 1 ]; then cargo doc --verbose "$@"; else cargo doc "$@"; fi
 }
-ci_cargo_audit() {
-  if [ "${CI_VERBOSE:-0}" = 1 ]; then cargo audit --verbose "$@"; else cargo audit "$@"; fi
-}
+# cargo-audit 0.22.x has no --verbose flag; preserve its native output in both modes.
+ci_cargo_audit() { cargo audit "$@"; }
 ci_cargo_deny() {
   if [ "${CI_VERBOSE:-0}" = 1 ]; then cargo deny --log-level debug "$@"; else cargo deny "$@"; fi
 }

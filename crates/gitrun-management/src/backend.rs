@@ -1,5 +1,3 @@
-use vstd::prelude::*;
-
 //! GitRun shared management backend.
 //! This crate owns management operations and the Control Manager. Updater policy,
 //! updater state and update history are owned by gitrun-updater.
@@ -10,6 +8,8 @@ use vstd::prelude::*;
 //!
 //! Management operations use GitRun runtime crates and real host state; this
 //! crate contains no dashboard frontend or window lifecycle ownership.
+
+use vstd::prelude::*;
 
 #[cfg(not(any(kani, verus)))]
 use gitrun_core::{Config, GitRunApi, GitRunSettings};

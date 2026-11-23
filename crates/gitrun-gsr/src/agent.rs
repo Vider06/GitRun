@@ -52,7 +52,7 @@ fn is_bash_invocation(invocation: &str) -> bool {
 #[cfg(verus)]
 #[verus_spec(returns is_bash_invocation_spec(invocation@))]
 fn is_bash_invocation(invocation: &str) -> bool {
-    exec_is_bash_invocation_spec(invocation)
+    invocation.ends_with("/bash") || invocation == "bash"
 }
 
 fn real_shell_for_invocation(invocation: &str) -> &'static str {

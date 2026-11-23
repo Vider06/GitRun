@@ -63,6 +63,11 @@ fn is_bash_invocation(invocation: &str) -> bool {
 #[cfg(verus)]
 #[verus_spec(returns is_bash_invocation_spec(invocation@))]
 fn is_bash_invocation(invocation: &str) -> bool {
+    proof {
+        reveal_strlit("bash");
+        reveal_strlit("/bash");
+    }
+
     if invocation == "bash" {
         return true;
     }
@@ -341,7 +346,7 @@ mod tests {
 
 #[cfg(kani)]
 mod kani_verification {
-    use super::is_bash_invocation;
+    use super::{is_bash_invocation, real_shell_for_invocation};
 
     #[kani::proof]
     fn shell_dispatch_never_crosses_shell_families() {
@@ -366,6 +371,14 @@ mod verus_verification {
 
     verus! {
         proof fn shell_dispatch_spec_separates_bash_from_sh() {
+            reveal_strlit("bash");
+            reveal_strlit("/bash");
+            reveal_strlit("/bin/bash");
+            reveal_strlit("/usr/bin/bash");
+            reveal_strlit("sh");
+            reveal_strlit("/bin/sh");
+            reveal_strlit("/bin/bash.gitrun-real");
+
             assert(is_bash_invocation_spec("bash"@));
             assert(is_bash_invocation_spec("/bin/bash"@));
             assert(is_bash_invocation_spec("/usr/bin/bash"@));

@@ -512,9 +512,18 @@ mod kani_verification {
     /// Proves all automation action names are stable and exhaustive.
     #[kani::proof]
     fn automation_action_wire_names_are_total() {
-        assert_eq!(AutomationAction::PredictiveWarmPool.as_str(), "predictive_warm_pool");
-        assert_eq!(AutomationAction::StopIdleRunner.as_str(), "stop_idle_runner");
-        assert_eq!(AutomationAction::FastStopWorkflowRun.as_str(), "fast_stop_workflow_run");
+        assert_eq!(
+            AutomationAction::PredictiveWarmPool.as_str(),
+            "predictive_warm_pool"
+        );
+        assert_eq!(
+            AutomationAction::StopIdleRunner.as_str(),
+            "stop_idle_runner"
+        );
+        assert_eq!(
+            AutomationAction::FastStopWorkflowRun.as_str(),
+            "fast_stop_workflow_run"
+        );
     }
 }
 

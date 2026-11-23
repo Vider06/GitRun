@@ -6,7 +6,6 @@ import argparse
 import json
 import os
 import re
-import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path

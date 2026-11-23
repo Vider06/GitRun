@@ -3999,6 +3999,9 @@ mod mount_runtime_tests {
 
     const MOUNT_TEST_IMAGE_PULL_ATTEMPTS: usize = 3;
 
+    /// Ensures the privileged mount test has its disposable image available locally.
+    /// Registry pulls are retried for transient network failures, but a persistent
+    /// registry outage remains a hard test failure with all attempt diagnostics.
     fn ensure_mount_test_image_available(image: &str) -> Result<(), String> {
         let inspect = Command::new("docker")
             .args(["image", "inspect", image])

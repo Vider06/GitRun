@@ -463,18 +463,18 @@ mod kani_verification {
 
 #[cfg(verus)]
 mod verus_verification {
-    use super::release_type_marker_code;
+    use super::release_type_marker_code_spec;
     use vstd::prelude::*;
 
     verus! {
         proof fn release_type_marker_is_a_closed_three_value_contract() {
-            assert(release_type_marker_code("pre") == Some(0));
-            assert(release_type_marker_code("full") == Some(1));
-            assert(release_type_marker_code("security") == Some(2));
-            assert(release_type_marker_code("beta") == None);
-            assert(release_type_marker_code("") == None);
-            assert(release_type_marker_code("PRE") == None);
-            assert(release_type_marker_code(" security ") == None);
+            assert(release_type_marker_code_spec("pre"@) == Some(0));
+            assert(release_type_marker_code_spec("full"@) == Some(1));
+            assert(release_type_marker_code_spec("security"@) == Some(2));
+            assert(release_type_marker_code_spec("beta"@) == None);
+            assert(release_type_marker_code_spec(""@) == None);
+            assert(release_type_marker_code_spec("PRE"@) == None);
+            assert(release_type_marker_code_spec(" security "@) == None);
         }
     }
 }

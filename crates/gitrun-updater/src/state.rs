@@ -137,7 +137,7 @@ impl UpdatePolicyChoice {
 )]
 pub(crate) fn update_policy_choice_code(value: &str) -> Option<u8> {
     let bytes = value.as_bytes();
-    if bytes.len() == 12 && bytes[0] == b's' && bytes[1] == b'e' && bytes[2] == b'c' && bytes[3] == b'u' && bytes[4] == b'r' && bytes[5] == b'i' && bytes[6] == b't' && bytes[7] == b'y' && bytes[8] == b'_' && bytes[9] == b'o' && bytes[10] == b'n' && bytes[11] == b'l' && bytes[12] == b'y' {
+    if bytes.len() == 13 && bytes[0] == b's' && bytes[1] == b'e' && bytes[2] == b'c' && bytes[3] == b'u' && bytes[4] == b'r' && bytes[5] == b'i' && bytes[6] == b't' && bytes[7] == b'y' && bytes[8] == b'_' && bytes[9] == b'o' && bytes[10] == b'n' && bytes[11] == b'l' && bytes[12] == b'y' {
         Some(0)
     } else if bytes.len() == 13 && bytes[0] == b's' && bytes[1] == b'e' && bytes[2] == b'c' && bytes[3] == b'u' && bytes[4] == b'r' && bytes[5] == b'i' && bytes[6] == b't' && bytes[7] == b'y' && bytes[8] == b'_' && bytes[9] == b'f' && bytes[10] == b'u' && bytes[11] == b'l' && bytes[12] == b'l' {
         Some(1)

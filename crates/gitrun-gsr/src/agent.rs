@@ -34,6 +34,8 @@ const REAL_BASH_FALLBACK: &str = "/bin/bash.gitrun-real";
 
 #[cfg(verus)]
 use vstd::contrib::exec_spec::*;
+#[cfg(verus)]
+use vstd::prelude::*;
 
 #[cfg(verus)]
 verus! {
@@ -342,17 +344,13 @@ mod verus_verification {
     use vstd::prelude::*;
 
     verus! {
-        assume_specification [crate::agent::is_bash_invocation] (invocation: &str) -> bool;
-        assume_specification [crate::agent::real_shell_for_invocation] (invocation: &str) -> &'static str;
-
-        proof fn shell_dispatch_never_crosses_shell_families() {
-            assert(is_bash_invocation("bash"));
-            assert(is_bash_invocation("/bin/bash"));
-            assert(is_bash_invocation("/usr/bin/bash"));
-            assert(!is_bash_invocation("sh"));
-            assert(!is_bash_invocation("/bin/sh"));
-            assert(!is_bash_invocation("/bin/bash.gitrun-real"));
-
+        proof fn shell_dispatch_spec_separates_bash_from_sh() {
+            assert(is_bash_invocation_spec("bash"@));
+            assert(is_bash_invocation_spec("/bin/bash"@));
+            assert(is_bash_invocation_spec("/usr/bin/bash"@));
+            assert(!is_bash_invocation_spec("sh"@));
+            assert(!is_bash_invocation_spec("/bin/sh"@));
+            assert(!is_bash_invocation_spec("/bin/bash.gitrun-real"@));
         }
     }
 }

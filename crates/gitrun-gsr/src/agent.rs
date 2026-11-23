@@ -40,7 +40,17 @@ use vstd::prelude::*;
 #[cfg(verus)]
 verus! {
     pub open spec fn is_bash_invocation_spec(invocation: SpecString) -> bool {
-        invocation == "bash"@ || (invocation.len() >= 5 && "/bash"@.is_suffix_of(invocation))
+        (invocation.len() == 4
+            && invocation[0] == 'b'
+            && invocation[1] == 'a'
+            && invocation[2] == 's'
+            && invocation[3] == 'h')
+        || (invocation.len() >= 5
+            && invocation[invocation.len() - 5] == '/'
+            && invocation[invocation.len() - 4] == 'b'
+            && invocation[invocation.len() - 3] == 'a'
+            && invocation[invocation.len() - 2] == 's'
+            && invocation[invocation.len() - 1] == 'h')
     }
 }
 
@@ -63,11 +73,6 @@ fn is_bash_invocation(invocation: &str) -> bool {
 #[cfg(verus)]
 #[verus_spec(returns is_bash_invocation_spec(invocation@))]
 fn is_bash_invocation(invocation: &str) -> bool {
-    proof {
-        reveal_strlit("bash");
-        reveal_strlit("/bash");
-    }
-
     if invocation == "bash" {
         return true;
     }

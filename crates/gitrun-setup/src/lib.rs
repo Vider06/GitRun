@@ -358,10 +358,19 @@ fn setup_flag_contents_are_valid(content: Result<String, std::io::Error>) -> boo
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
-#[cfg_attr(verus, verus_spec(returns byte.is_ascii_hexdigit()))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns (byte >= b'0' && byte <= b'9')
+            || (byte >= b'a' && byte <= b'f')
+            || (byte >= b'A' && byte <= b'F')
+    )
+)]
 /// Returns whether `byte` is an ASCII hexadecimal digit.
 pub fn setup_nonce_byte_is_hex(byte: u8) -> bool {
-    byte.is_ascii_hexdigit()
+    (byte >= b'0' && byte <= b'9')
+        || (byte >= b'a' && byte <= b'f')
+        || (byte >= b'A' && byte <= b'F')
 }
 
 fn setup_nonce_is_valid(value: &str) -> bool {
@@ -4125,7 +4134,10 @@ mod verus_verification {
 
     verus! {
         proof fn setup_nonce_hex_alphabet_is_exact(byte: u8)
-            ensures setup_nonce_byte_is_hex(byte) == byte.is_ascii_hexdigit(),
+            ensures setup_nonce_byte_is_hex(byte)
+            == ((byte >= b'0' && byte <= b'9')
+                || (byte >= b'a' && byte <= b'f')
+                || (byte >= b'A' && byte <= b'F')),
         {
         }
     }

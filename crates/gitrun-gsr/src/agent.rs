@@ -36,30 +36,28 @@ const REAL_BASH_FALLBACK: &str = "/bin/bash.gitrun-real";
 use vstd::contrib::exec_spec::*;
 #[cfg(verus)]
 use vstd::prelude::*;
+#[cfg(verus)]
+use vstd::string::StringSliceAdditionalSpecFns;
 
 #[cfg(verus)]
 verus! {
-    pub open spec fn is_bash_invocation_spec(invocation: SpecString) -> bool {
+    pub open spec fn is_bash_invocation_spec(invocation: Seq<u8>) -> bool {
         (invocation.len() == 4
-            && invocation[0] == 'b'
-            && invocation[1] == 'a'
-            && invocation[2] == 's'
-            && invocation[3] == 'h')
+            && invocation[0] == b'b'
+            && invocation[1] == b'a'
+            && invocation[2] == b's'
+            && invocation[3] == b'h')
         || (invocation.len() >= 5
-            && invocation[invocation.len() - 5] == '/'
-            && invocation[invocation.len() - 4] == 'b'
-            && invocation[invocation.len() - 3] == 'a'
-            && invocation[invocation.len() - 2] == 's'
-            && invocation[invocation.len() - 1] == 'h')
+            && invocation[invocation.len() - 5] == b'/'
+            && invocation[invocation.len() - 4] == b'b'
+            && invocation[invocation.len() - 3] == b'a'
+            && invocation[invocation.len() - 2] == b's'
+            && invocation[invocation.len() - 1] == b'h')
     }
 }
 
 #[cfg(not(verus))]
 fn is_bash_invocation(invocation: &str) -> bool {
-    if invocation == "bash" {
-        return true;
-    }
-
     let bytes = invocation.as_bytes();
     let length = bytes.len();
     length >= 5
@@ -71,12 +69,8 @@ fn is_bash_invocation(invocation: &str) -> bool {
 }
 
 #[cfg(verus)]
-#[verus_spec(returns is_bash_invocation_spec(invocation@))]
+#[verus_spec(returns is_bash_invocation_spec(invocation.spec_bytes()))]
 fn is_bash_invocation(invocation: &str) -> bool {
-    if invocation == "bash" {
-        return true;
-    }
-
     let bytes = invocation.as_bytes();
     let length = bytes.len();
     length >= 5

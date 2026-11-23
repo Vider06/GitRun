@@ -76,9 +76,12 @@ pub enum SupervisorError {
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
-#[cfg_attr(verus, verus_spec(returns (status & 0xff) == 0x7f))]
+#[cfg_attr(
+    verus,
+    verus_spec(returns (status & 0x7f) == 0x7f && (status & 0x80) == 0)
+)]
 pub(crate) fn wait_status_is_stopped(status: i32) -> bool {
-    (status & 0xff) == 0x7f
+    (status & 0x7f) == 0x7f && (status & 0x80) == 0
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
@@ -90,11 +93,14 @@ pub(crate) fn wait_status_is_exited(status: i32) -> bool {
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(
     verus,
-    verus_spec(returns (status & 0x7f) != 0 && (status & 0xff) != 0x7f)
+    verus_spec(
+        returns (status & 0x7f) != 0
+            && ((status & 0x7f) != 0x7f || (status & 0x80) != 0)
+    )
 )]
 pub(crate) fn wait_status_is_signaled(status: i32) -> bool {
     let signal = status & 0x7f;
-    signal != 0 && (status & 0xff) != 0x7f
+    signal != 0 && (signal != 0x7f || (status & 0x80) != 0)
 }
 
 #[cfg(not(any(kani, verus)))]
@@ -1795,21 +1801,36 @@ mod verus_verification {
     verus! {
         proof fn wait_status_classification_is_exact_and_exclusive(status: i32)
             ensures
-                wait_status_is_stopped(status) == ((status & 0xff) == 0x7f),
+                wait_status_is_stopped(status)
+                    == ((status & 0x7f) == 0x7f && (status & 0x80) == 0),
                 wait_status_is_exited(status) == ((status & 0x7f) == 0),
                 wait_status_is_signaled(status)
-                    == ((status & 0x7f) != 0 && (status & 0xff) != 0x7f),
+                    == ((status & 0x7f) != 0
+                        && ((status & 0x7f) != 0x7f || (status & 0x80) != 0)),
                 wait_status_is_stopped(status) || wait_status_is_exited(status) || wait_status_is_signaled(status),
                 !(wait_status_is_stopped(status) && wait_status_is_exited(status)),
                 !(wait_status_is_stopped(status) && wait_status_is_signaled(status)),
                 !(wait_status_is_exited(status) && wait_status_is_signaled(status)),
         {
-            // A stopped status has all seven low bits set (0x7f), so it
-            // cannot simultaneously satisfy the exited predicate (zero
-            // low seven bits). Make that bit-mask relationship explicit
-            // for the SMT solver.
-            assert((status & 0xff) == 0x7f ==> (status & 0x7f) == 0x7f);
-            assert((status & 0x7f) == 0x7f ==> (status & 0x7f) != 0);
+            // Partition the decoded waitpid signal bits. This is equivalent
+            // to the original status-byte checks, but exposes disjoint cases
+            // directly instead of asking the solver to relate overlapping masks.
+            let signal = status & 0x7f;
+            let high_bit = status & 0x80;
+
+            assert(
+                signal == 0
+                    || (signal == 0x7f && high_bit == 0)
+                    || (signal != 0 && (signal != 0x7f || high_bit != 0))
+            );
+            assert(!(signal == 0x7f && high_bit == 0 && signal == 0));
+            assert(
+                !(signal == 0x7f
+                    && high_bit == 0
+                    && signal != 0
+                    && (signal != 0x7f || high_bit != 0))
+            );
+            assert(!(signal == 0 && signal != 0));
         }
     }
 }

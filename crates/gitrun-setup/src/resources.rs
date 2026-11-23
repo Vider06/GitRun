@@ -4,6 +4,37 @@ use super::SetupError;
 #[cfg(verus)]
 #[allow(unused_imports)]
 use vstd::prelude::*;
+#[cfg(verus)]
+use vstd::string::StringSliceAdditionalSpecFns;
+
+#[cfg(verus)]
+verus! {
+    /// Byte-level model of searching one valid UTF-8 string inside another.
+    /// A valid UTF-8 needle can only match at character boundaries.
+    pub open spec fn contains_utf8_subsequence(
+        haystack: Seq<u8>,
+        needle: Seq<u8>,
+    ) -> bool {
+        exists |start: int|
+            0 <= start
+                && start + needle.len() <= haystack.len()
+                && haystack.subrange(start, start + needle.len()) =~= needle
+    }
+}
+
+/// Rust's `str::contains` is not currently modeled by vstd. Keep the standard
+/// library operation behind one narrow trusted boundary with its exact byte
+/// substring contract. Kani and setup tests exercise the concrete body.
+#[cfg_attr(verus, verifier::external_body)]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns contains_utf8_subsequence(haystack.spec_bytes(), needle.spec_bytes())
+    )
+)]
+fn contains_literal(haystack: &str, needle: &str) -> bool {
+    haystack.contains(needle)
+}
 
 /// Build from the Dockerfile shipped in this signed GitRun release. The updater
 /// must not silently keep using an older independently pinned Premade file.
@@ -13,29 +44,47 @@ pub(crate) fn runner_dockerfile_for_bootstrap() -> Result<String, SetupError> {
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
-#[cfg_attr(verus, verus_spec(returns source.contains("COPY Cargo.toml Cargo.lock ./") && source.contains("COPY crates ./crates")))]
-pub(crate) fn dockerfile_has_full_workspace_copy(source: &str) -> bool {
-    source.contains("COPY Cargo.toml Cargo.lock ./") && source.contains("COPY crates ./crates")
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns contains_utf8_subsequence(
+            source.spec_bytes(),
+            "COPY Cargo.toml Cargo.lock ./".spec_bytes()
+        ) && contains_utf8_subsequence(
+            source.spec_bytes(),
+            "COPY crates ./crates".spec_bytes()
+        )
+    )
+)]
+pub fn dockerfile_has_full_workspace_copy(source: &str) -> bool {
+    contains_literal(source, "COPY Cargo.toml Cargo.lock ./")
+        && contains_literal(source, "COPY crates ./crates")
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(
     verus,
-    verus_spec(returns source.contains("/bin/bash.gitrun-real"))
+    verus_spec(returns contains_utf8_subsequence(
+        source.spec_bytes(),
+        "/bin/bash.gitrun-real".spec_bytes()
+    ))
 )]
-pub(crate) fn dockerfile_uses_safe_bash_entrypoint(source: &str) -> bool {
-    source.contains("/bin/bash.gitrun-real")
+pub fn dockerfile_uses_safe_bash_entrypoint(source: &str) -> bool {
+    contains_literal(source, "/bin/bash.gitrun-real")
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(
     verus,
     verus_spec(
-        returns !source.contains("COPY crates ./crates")
+        returns !contains_utf8_subsequence(
+            source.spec_bytes(),
+            "COPY crates ./crates".spec_bytes()
+        )
     )
 )]
-pub(crate) fn dockerfile_build_context_is_minimal(source: &str) -> bool {
-    !source.contains("COPY crates ./crates")
+pub fn dockerfile_build_context_is_minimal(source: &str) -> bool {
+    !contains_literal(source, "COPY crates ./crates")
 }
 
 #[cfg(not(any(kani, verus)))]
@@ -537,6 +586,12 @@ mod verus_verification {
 
     verus! {
         proof fn bootstrap_dockerfile_requires_minimal_build_context_and_safe_entrypoint() {
+            reveal_strlit("COPY Cargo.toml Cargo.lock ./ COPY crates ./crates");
+            reveal_strlit("COPY Cargo.toml Cargo.lock ./");
+            reveal_strlit("COPY crates ./crates");
+            reveal_strlit("COPY Cargo.toml Cargo.lock ./ COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real /entrypoint.sh");
+            reveal_strlit("/bin/bash.gitrun-real");
+
             let source = "COPY Cargo.toml Cargo.lock ./ COPY crates ./crates";
             let adapted = "COPY Cargo.toml Cargo.lock ./ COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real /entrypoint.sh";
             assert(dockerfile_has_full_workspace_copy(source));

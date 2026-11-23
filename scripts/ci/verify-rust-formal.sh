@@ -93,12 +93,35 @@ record_result() {
 
 proof_failures=0
 
+record_kani_diagnostic() {
+  local step="$1" command_text="$2" exit_code="$3" output="$4"
+  local log="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-ci/logs/kani-${step//[^A-Za-z0-9_.-]/_}.log"
+  mkdir -p "$(dirname "$log")"
+  printf '%s\n' "$output" > "$log"
+  python3 scripts/ci/ci-job-report.py diagnostic \
+    --step "$step" --command "$command_text" --exit-code "$exit_code" --log-file "$log"
+}
+
+run_kani_command() {
+  local label="$1"; shift
+  local output rc
+  if output="$("$@" 2>&1)"; then
+    printf '%s\n' "$output"
+    return 0
+  else
+    rc=$?
+    printf '%s\n' "$output"
+    record_kani_diagnostic "$label" "$*" "$rc" "$output"
+    return "$rc"
+  fi
+}
+
 run_kani_target() {
   local entrypoint="$1"
   shift
   local -a sources=("$@")
   local source
-  if kani --verbose --debug --keep-temps "$entrypoint"; then
+  if run_kani_command "kani-target-$entrypoint" kani --verbose --debug --keep-temps "$entrypoint"; then
     for source in "${sources[@]}"; do
       record_result "$source" PROVEN
     done
@@ -117,7 +140,7 @@ run_kani_binary() {
   local package="$1"
   local binary="$2"
   local source="$3"
-  if cargo --locked kani --verbose --debug --keep-temps -p "$package" --bin "$binary"; then
+  if run_kani_command "kani-binary-$package-$binary" cargo --locked kani --verbose --debug --keep-temps -p "$package" --bin "$binary"; then
     record_result "$source" PROVEN
   else
     local rc=$?
@@ -133,7 +156,7 @@ run_kani_package() {
   shift
   local -a sources=("$@")
   local source
-  if cargo --locked kani --verbose --debug --keep-temps -p "$package" --lib; then
+  if run_kani_command "kani-package-$package" cargo --locked kani --verbose --debug --keep-temps -p "$package" --lib; then
     for source in "${sources[@]}"; do
       record_result "$source" PROVEN
     done
@@ -315,6 +338,8 @@ if [[ "$proof_count" -lt "${#required_harnesses[@]}" ]]; then
 fi
 
 echo "Kani version: $kani_version"
+mkdir -p "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-ci"
+printf 'Kani\t%s\n' "$kani_version" >> "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-ci/tools.tsv"
 echo "Required production proof harnesses: ${required_harnesses[*]}"
 echo "Total source proof annotations: $proof_count"
 

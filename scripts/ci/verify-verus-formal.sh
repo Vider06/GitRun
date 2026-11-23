@@ -64,6 +64,15 @@ record_result() {
 
 proof_failures=0
 
+record_verus_diagnostic() {
+  local step="$1" command_text="$2" exit_code="$3" output="$4"
+  local log="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-ci/logs/verus-${step//[^A-Za-z0-9_.-]/_}.log"
+  mkdir -p "$(dirname "$log")"
+  printf '%s\n' "$output" > "$log"
+  python3 scripts/ci/ci-job-report.py diagnostic \
+    --step "$step" --command "$command_text" --exit-code "$exit_code" --log-file "$log"
+}
+
 verus_result_counts() {
   local output="$1"
   local result_line
@@ -93,6 +102,7 @@ record_successful_verus_results() {
     for source in "${sources[@]}"; do
       record_result "$source" UNVERIFIED
     done
+    record_verus_diagnostic "verus-result-summary-$target" "Verus result summary validation for $target" 1 "$output"
     echo "Verus returned success without a parseable verification summary for $target; refusing to mark its sources PROVEN." >&2
     return 1
   fi
@@ -102,6 +112,7 @@ record_successful_verus_results() {
     for source in "${sources[@]}"; do
       record_result "$source" UNVERIFIED
     done
+    record_verus_diagnostic "verus-result-counts-$target" "Verus verification summary for $target" 1 "$output"
     echo "Verus returned $verified_count verified and $error_count errors for $target (minimum expected: $minimum_expected); refusing to mark its sources PROVEN." >&2
     return 1
   fi
@@ -123,6 +134,7 @@ run_verus_target() {
   else
     rc=$?
     printf '%s\n' "$output"
+    record_verus_diagnostic "verus-target-$entrypoint" "$verus --expand-errors --time --time-expanded --triggers-mode verbose --log-all --multiple-errors 100 --cfg verus $entrypoint" "$rc" "$output"
     proof_failures=$((proof_failures + 1))
     for source in "${sources[@]}"; do
       record_result "$source" FAILED
@@ -149,6 +161,7 @@ run_verus_package() {
   else
     rc=$?
     printf '%s\n' "$output"
+    record_verus_diagnostic "verus-package-$package" "cargo -vv verus verify --locked -p $package --lib" "$rc" "$output"
     proof_failures=$((proof_failures + 1))
     for source in "${sources[@]}"; do
       record_result "$source" FAILED
@@ -173,6 +186,7 @@ run_verus_binary() {
   else
     rc=$?
     printf '%s\n' "$output"
+    record_verus_diagnostic "verus-binary-$package-$binary" "cargo -vv verus verify --locked -p $package --bin $binary" "$rc" "$output"
     proof_failures=$((proof_failures + 1))
     record_result "$source" FAILED
     echo "Verus Cargo binary verification failed: $package/$binary (exit $rc)." >&2
@@ -237,11 +251,15 @@ for source in "${production_sources[@]}"; do
 done
 
 echo "Verus executable: $verus"
+mkdir -p "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-ci"
+printf 'Verus\t%s\n' "$("$verus" --version 2>&1 | head -n 1)" >> "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-ci/tools.tsv"
+printf 'cargo-verus\t%s\n' "$(cargo verus --version 2>&1 | head -n 1 || true)" >> "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-ci/tools.tsv"
 phase=smoke
 echo "Verifying the pinned verifier smoke test."
 smoke_output="$("$verus" --expand-errors --time --time-expanded --triggers-mode verbose --log-all --multiple-errors 100 --cfg verus verification/verus/smoke.rs 2>&1)" || {
   smoke_rc=$?
   printf '%s\n' "$smoke_output"
+  record_verus_diagnostic "verus-smoke" "$verus verification/verus/smoke.rs" "$smoke_rc" "$smoke_output"
   echo "Verus smoke verification failed (exit $smoke_rc)." >&2
   exit "$smoke_rc"
 }

@@ -90,6 +90,10 @@ jobs:
       cache: ${{ steps.report.outputs.cache }}
       errors: ${{ steps.report.outputs.errors }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
       - name: Start report clock
         run: |
           echo "GITRUN_JOB_STARTED=$(date +%s)" >> "$GITHUB_ENV"
@@ -146,6 +150,7 @@ jobs:
           VERIFY_OUTCOME: ${{ steps.verify.outcome }}
           GITRUN_JOB_STATUS: ${{ job.status }}
         run: |
+          python3 scripts/ci/ci-job-report.py write
           started="${GITRUN_JOB_STARTED:-$(date +%s)}"
           started_utc="${GITRUN_JOB_STARTED_UTC:-unavailable}"
           generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
@@ -191,6 +196,15 @@ jobs:
             fi
             echo "GITRUN_EOF"
           } >> "$GITHUB_OUTPUT"
+      - &job_result
+        name: Upload canonical job result
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: gitrun-job-result-${{ github.job }}
+          path: ${{ runner.temp }}/gitrun-job-result.json
+          if-no-files-found: warn
+          retention-days: 7
   # ───────────────────────────────────────────────────────── environment ──
   environment:
     if: ${{ github.event_name != 'push' || github.ref == 'refs/heads/main' }}
@@ -235,6 +249,7 @@ jobs:
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
           ci_report
+      - *job_result
 
       - &logs
         name: Upload CI logs
@@ -336,6 +351,7 @@ jobs:
             echo
           } | ci_sum
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────────────────────── cargo-lock ──
@@ -448,6 +464,7 @@ jobs:
 
           [ "$fail" -eq 0 ] || exit 1
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────────────────────── ci-selftest ──
@@ -475,6 +492,7 @@ jobs:
       - name: Test log parsers and helpers
         run: bash scripts/ci/selftest.sh
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────────────────────── repository ──
@@ -645,6 +663,7 @@ jobs:
           ci_gate warn "relative Markdown links resolve" hy_links
           ci_checks_finish "Repository hygiene and syntax"
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────────────────────────── workflows ──
@@ -698,6 +717,7 @@ jobs:
           "$dir/bin/zizmor" --version
           ci_run "zizmor audit" "$dir/bin/zizmor" --min-severity=high --strict-collection --collect=workflows .github/workflows
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────────────────────────────── shell ──
@@ -726,6 +746,7 @@ jobs:
           ci_run "shellcheck (${#files[@]} files)" lint_run || rc=1
           exit "$rc"
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────────────────────────── powershell ──
@@ -788,6 +809,7 @@ jobs:
           Write-Host "$($files.Count) PowerShell files checked, $bad parse errors"
           if ($bad -gt 0) { exit 1 }
       - *report
+      - *job_result
       - *logs
 
   # ────────────────────────────────────────────────────────────── frontend ──
@@ -952,6 +974,7 @@ jobs:
             echo
           } | ci_sum
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────────────────────────── audit-node ──
@@ -991,6 +1014,7 @@ jobs:
           done
           exit "$rc"
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────────────────────────── rust-lint ──
@@ -1239,6 +1263,7 @@ jobs:
             echo
           } | ci_sum
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────────── security-hardening gate ──
@@ -1291,6 +1316,7 @@ jobs:
       - *s_tgt
       - *cache_save_report
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────────── GSR watchdog lifecycle ──
@@ -1328,6 +1354,7 @@ jobs:
       - *s_tgt
       - *cache_save_report
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────────── runtime contract gate ──
@@ -1428,6 +1455,7 @@ jobs:
       - *s_tgt
       - *cache_save_report
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────── standalone systemd unit gate ──
@@ -1494,6 +1522,7 @@ jobs:
           grep -Fq 'ExecStart=/usr/local/bin/gitrun control-manager' systemd/gitrun-control.service || { ci_err "Control Manager ExecStart contract changed"; rc=1; }
           exit "$rc"
       - *report
+      - *job_result
       - *logs
 
   # ─────────────────────────────── Linux product target build matrix ──
@@ -1637,6 +1666,7 @@ jobs:
             echo
           } | ci_sum
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────────── Linux platform contracts ──
@@ -1961,6 +1991,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - *report
+      - *job_result
       - *logs
 
 
@@ -2096,6 +2127,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - *report
+      - *job_result
       - *logs
 
 
@@ -2242,6 +2274,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - *report
+      - *job_result
       - *logs
 
 
@@ -2414,6 +2447,7 @@ jobs:
             .gitrun-npm-cache
           key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-musl-${{ matrix.cache_variant }}-${{ matrix.target }}-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json', '.github/workflows/release.yml', 'scripts/ci/check-dashboard-distro-dependencies.py') }}
       - *report
+      - *job_result
       - *logs
 
 
@@ -2561,6 +2595,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - *report
+      - *job_result
       - *logs
 
 
@@ -2643,6 +2678,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - *report
+      - *job_result
       - *logs
 
   release-asset-assembly-certification:
@@ -2775,6 +2811,7 @@ jobs:
           if-no-files-found: error
           retention-days: 3
       - *report
+      - *job_result
       - *logs
   platform-compatibility:
     name: Linux platform and updater target contracts
@@ -2834,6 +2871,7 @@ jobs:
       - *s_tgt
       - *cache_save_report
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────────── multi-distro contracts ──
@@ -2854,6 +2892,7 @@ jobs:
           set -euo pipefail
           python3 scripts/ci/check-native-service-managers.py
       - *report
+      - *job_result
       - *logs
 
   multi-distro-contracts:
@@ -2882,6 +2921,7 @@ jobs:
           ci_run "Audit repository-wide multi-distro boundaries" python3 scripts/check-multidistro-contracts.py || rc=1
           exit "$rc"
       - *report
+      - *job_result
       - *logs
 
   python-quality:
@@ -2911,6 +2951,7 @@ jobs:
           ci_run "Run Python unit tests" "$py" -m unittest discover -s scripts/tests -p 'test_*.py' || rc=1
           exit "$rc"
       - *report
+      - *job_result
       - *logs
 
   miri:
@@ -2941,6 +2982,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - *report
+      - *job_result
       - *logs
   rust-source-inventory:
     name: Rust source inventory
@@ -2969,6 +3011,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - *report
+      - *job_result
       - *logs
 
   kani-formal-verification:
@@ -3010,6 +3053,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - *report
+      - *job_result
       - *logs
 
   verus-formal-verification:
@@ -3041,6 +3085,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - *report
+      - *job_result
       - *logs
 
   formal-verification:
@@ -3088,6 +3133,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────────── release contracts ──
@@ -3111,6 +3157,7 @@ jobs:
           python3 scripts/ci/check-desktop-appimage-contracts.py
           python3 scripts/ci/check-release-workflow-contracts.py
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────────────────────────── rust-test ──
@@ -3163,6 +3210,7 @@ jobs:
       - *s_tgt
       - *cache_save_report
       - *report
+      - *job_result
       - *logs
 
   # ──────────────────────────────────────────────────────────── rust-build ──
@@ -3223,6 +3271,7 @@ jobs:
       - *s_tgt
       - *cache_save_report
       - *report
+      - *job_result
       - *logs
 
   # ─────────────────────────────────────────────────────────── audit-rust ──
@@ -3300,6 +3349,7 @@ jobs:
             echo
           } | ci_sum
       - *report
+      - *job_result
       - *logs
 
   # ─────────────────────────────────────────────────────────────── tauri ──
@@ -3421,6 +3471,7 @@ jobs:
       - *s_npm
       - *npm_cache_save_report
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────────── native ARM64 Dashboard ──
@@ -3430,6 +3481,7 @@ jobs:
     if: ${{ (github.event_name != 'push' || github.ref == 'refs/heads/main') && (needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success') }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
+    outputs: *job_outputs
     permissions:
       contents: read
     env:
@@ -3442,6 +3494,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - *boot
       - name: Install Tauri Linux dependencies
         run: |
           set -euo pipefail
@@ -3517,6 +3570,10 @@ jobs:
           key: gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-aarch64-gnu-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json') }}
 
   # ─────────────────────────────────────────────────────── tauri-recovery ──
+      - *report
+      - *job_result
+      - *logs
+
   tauri-recovery:
     name: Tauri GitRun Recovery GUI build and test
     needs: [cargo-lock, rust-lint, frontend]
@@ -3569,6 +3626,7 @@ jobs:
       - *s_npm
       - *npm_cache_save_report
       - *report
+      - *job_result
       - *logs
 
   # ────────────────────────────────────────────────────────────── docker ──
@@ -3850,6 +3908,7 @@ jobs:
           # Keep gitrun-ci alive until buildkit-cache-dance post steps finish.
           echo "removed CI images and build cache older than 72h"
       - *report
+      - *job_result
       - *logs
 
   # ───────────────────────────────────────────────────────────── summary ──
@@ -3918,6 +3977,7 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: python3 scripts/ci/render-ci-summary.py
       - *report
+      - *job_result
 
   # ──────────────────────────────────────────────────────────── cache-gc ──
   cache-gc:
@@ -3938,6 +3998,3 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DRY_RUN: ${{ env.CI_GC_DRY_RUN }}
           CACHE_BASE_EPOCH: ${{ env.CACHE_BASE_EPOCH }}
-          RUST_VERSION: ${{ env.RUST_VERSION }}
-        run: python3 scripts/ci/render-cache-gc-summary.py | ci_sum
-      - *report

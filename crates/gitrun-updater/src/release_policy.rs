@@ -39,12 +39,21 @@ pub(crate) fn release_type_marker_code(value: &str) -> Option<u8> {
     if bytes.len() == 3 && bytes[0] == b'p' && bytes[1] == b'r' && bytes[2] == b'e' {
         Some(0)
     } else if bytes.len() == 4
-        && bytes[0] == b'f' && bytes[1] == b'u' && bytes[2] == b'l' && bytes[3] == b'l'
+        && bytes[0] == b'f'
+        && bytes[1] == b'u'
+        && bytes[2] == b'l'
+        && bytes[3] == b'l'
     {
         Some(1)
     } else if bytes.len() == 8
-        && bytes[0] == b's' && bytes[1] == b'e' && bytes[2] == b'c' && bytes[3] == b'u'
-        && bytes[4] == b'r' && bytes[5] == b'i' && bytes[6] == b't' && bytes[7] == b'y'
+        && bytes[0] == b's'
+        && bytes[1] == b'e'
+        && bytes[2] == b'c'
+        && bytes[3] == b'u'
+        && bytes[4] == b'r'
+        && bytes[5] == b'i'
+        && bytes[6] == b't'
+        && bytes[7] == b'y'
     {
         Some(2)
     } else {

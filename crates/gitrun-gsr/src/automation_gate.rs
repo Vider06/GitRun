@@ -217,9 +217,9 @@ pub(crate) fn runner_floor_is_bounded(configured: u32, proposed: u32, maximum: u
     verus,
     verus_spec(
         returns
-            byte.is_ascii_lowercase()
-                || byte.is_ascii_uppercase()
-                || byte.is_ascii_digit()
+            (byte >= b'a' && byte <= b'z')
+                || (byte >= b'A' && byte <= b'Z')
+                || (byte >= b'0' && byte <= b'9')
                 || byte == b'-'
                 || byte == b'_'
                 || byte == b'.'
@@ -512,9 +512,9 @@ mod kani_verification {
     /// Proves all automation action names are stable and exhaustive.
     #[kani::proof]
     fn automation_action_wire_names_are_total() {
-        assert!(AutomationAction::PredictiveWarmPool.as_str()@ == "predictive_warm_pool"@);
-        assert!(AutomationAction::StopIdleRunner.as_str()@ == "stop_idle_runner"@);
-        assert!(AutomationAction::FastStopWorkflowRun.as_str()@ == "fast_stop_workflow_run"@);
+        assert_eq!(AutomationAction::PredictiveWarmPool.as_str(), "predictive_warm_pool");
+        assert_eq!(AutomationAction::StopIdleRunner.as_str(), "stop_idle_runner");
+        assert_eq!(AutomationAction::FastStopWorkflowRun.as_str(), "fast_stop_workflow_run");
     }
 }
 

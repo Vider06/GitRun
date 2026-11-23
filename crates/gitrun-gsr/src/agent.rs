@@ -46,7 +46,18 @@ verus! {
 
 #[cfg(not(verus))]
 fn is_bash_invocation(invocation: &str) -> bool {
-    invocation.ends_with("/bash") || invocation == "bash"
+    if invocation == "bash" {
+        return true;
+    }
+
+    let bytes = invocation.as_bytes();
+    let length = bytes.len();
+    length >= 5
+        && bytes[length - 5] == b'/'
+        && bytes[length - 4] == b'b'
+        && bytes[length - 3] == b'a'
+        && bytes[length - 2] == b's'
+        && bytes[length - 1] == b'h'
 }
 
 #[cfg(verus)]

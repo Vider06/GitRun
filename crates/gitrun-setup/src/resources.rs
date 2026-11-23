@@ -1,6 +1,10 @@
 #[cfg(not(any(kani, verus)))]
 use super::SetupError;
 
+#[cfg(verus)]
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 /// Build from the Dockerfile shipped in this signed GitRun release. The updater
 /// must not silently keep using an older independently pinned Premade file.
 #[cfg(not(any(kani, verus)))]

@@ -36,24 +36,24 @@ pub use super::policy_logic::{ReleaseType, UpdatePolicy};
 )]
 pub(crate) fn release_type_marker_code(value: &str) -> Option<u8> {
     let bytes = value.as_bytes();
-    if bytes.len() == 3 && bytes[0] == b'p' && bytes[1] == b'r' && bytes[2] == b'e' {
+    if bytes.len() == 3 && bytes.get(0) == Some(&b'p') && bytes.get(1) == Some(&b'r') && bytes.get(2) == Some(&b'e') {
         Some(0)
     } else if bytes.len() == 4
-        && bytes[0] == b'f'
-        && bytes[1] == b'u'
-        && bytes[2] == b'l'
-        && bytes[3] == b'l'
+        && bytes.get(0) == Some(&b'f')
+        && bytes.get(1) == Some(&b'u')
+        && bytes.get(2) == Some(&b'l')
+        && bytes.get(3) == Some(&b'l')
     {
         Some(1)
     } else if bytes.len() == 8
-        && bytes[0] == b's'
-        && bytes[1] == b'e'
-        && bytes[2] == b'c'
-        && bytes[3] == b'u'
-        && bytes[4] == b'r'
-        && bytes[5] == b'i'
-        && bytes[6] == b't'
-        && bytes[7] == b'y'
+        && bytes.get(0) == Some(&b's')
+        && bytes.get(1) == Some(&b'e')
+        && bytes.get(2) == Some(&b'c')
+        && bytes.get(3) == Some(&b'u')
+        && bytes.get(4) == Some(&b'r')
+        && bytes.get(5) == Some(&b'i')
+        && bytes.get(6) == Some(&b't')
+        && bytes.get(7) == Some(&b'y')
     {
         Some(2)
     } else {

@@ -252,8 +252,7 @@ pub struct UpdaterInfo {
     pub check: Option<UpdateCheckInfo>,
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn validate_privileged_state_path(directory: &Path) -> Result<(), String> {
     use std::path::Component;
     if !directory.is_absolute() {
@@ -1062,8 +1061,7 @@ pub fn record_cli_operation(
     let _ = record_operation(from_version, to_version, release_type, result, error);
 }
 
-#[cfg(test)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(test, not(any(kani, verus))))]
 mod tests {
     use super::*;
 

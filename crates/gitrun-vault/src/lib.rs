@@ -681,8 +681,7 @@ fn validate_scope(scope: &Scope) -> Result<()> {
     }
 }
 
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 fn write_secret_file(path: &Path, data: &VaultFile) -> Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
@@ -698,8 +697,7 @@ fn write_secret_file(path: &Path, data: &VaultFile) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(unix))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(unix), not(any(kani, verus))))]
 fn write_secret_file(path: &Path, data: &VaultFile) -> Result<()> {
     fs::write(path, serde_json::to_string_pretty(data)?)?;
     Ok(())
@@ -842,8 +840,7 @@ fn read_master_key(path: &Path) -> Result<[u8; 32]> {
 /// Writes the master key with 0600 permissions set atomically at creation —
 /// same fix already applied in `gitrun-setup` for `gitrun.env` (avoid the
 /// create-then-chmod window where sensitive material sits world-readable).
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 fn write_master_key(path: &Path, key: &[u8; 32]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
@@ -878,8 +875,7 @@ fn write_master_key(path: &Path, key: &[u8; 32]) -> std::io::Result<()> {
     result
 }
 
-#[cfg(not(unix))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(unix), not(any(kani, verus))))]
 fn write_master_key(path: &Path, key: &[u8; 32]) -> std::io::Result<()> {
     let parent = path
         .parent()
@@ -943,14 +939,12 @@ fn derive_data_key(master_key: &[u8]) -> [u8; 32] {
 #[cfg(not(any(kani, verus)))]
 static TEMP_FILE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 fn sync_parent_dir(path: &Path) -> std::io::Result<()> {
     fs::File::open(path)?.sync_all()
 }
 
-#[cfg(not(unix))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(unix), not(any(kani, verus))))]
 fn sync_parent_dir(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
@@ -980,8 +974,7 @@ fn base64_decode(input: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::STANDARD.decode(input).ok()
 }
 
-#[cfg(test)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(test, not(any(kani, verus))))]
 mod tests {
     use super::*;
 

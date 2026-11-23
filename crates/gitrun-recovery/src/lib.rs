@@ -2,8 +2,7 @@
 use vstd::prelude::*;
 
 pub mod json_recovery;
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 pub mod ui;
 #[cfg(not(any(kani, verus)))]
 pub use json_recovery::{
@@ -427,8 +426,7 @@ fn installed_gitrun_candidates() -> [PathBuf; 2] {
     ]
 }
 
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 fn is_trusted_root_executable(path: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
 
@@ -441,8 +439,7 @@ fn is_trusted_root_executable(path: &Path) -> bool {
         && metadata.mode() & 0o022 == 0
 }
 
-#[cfg(not(unix))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(unix), not(any(kani, verus))))]
 fn is_trusted_root_executable(_path: &Path) -> bool {
     false
 }
@@ -719,21 +716,18 @@ pub enum StartupTarget {
     Dashboard,
 }
 
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 fn set_file_mode(path: &Path, mode: u32) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|error| error.to_string())
 }
 
-#[cfg(not(unix))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(unix), not(any(kani, verus))))]
 fn set_file_mode(_path: &Path, _mode: u32) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(test)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(test, not(any(kani, verus))))]
 mod tests {
     use super::*;
 

@@ -122,8 +122,7 @@ fn main_library_restore_mode(
     }
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn restore_main_library_via_transient_unit() -> Result<JsonRecoveryReport, String> {
     let executable = super::find_trusted_installed_gitrun_binary()
         .ok_or("trusted installed GitRun executable was not found for Main Library restore")?;
@@ -164,8 +163,7 @@ fn restore_main_library_via_transient_unit() -> Result<JsonRecoveryReport, Strin
         .map_err(|error| format!("decode isolated Main Library restore report: {error}"))
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn main_library_restore_unit_properties() -> [&'static str; 6] {
     [
         "--property=Type=oneshot",
@@ -177,8 +175,7 @@ fn main_library_restore_unit_properties() -> [&'static str; 6] {
     ]
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn transient_unit_journal(unit_name: &str) -> Option<String> {
     let journalctl = Path::new("/usr/bin/journalctl");
     if !super::is_trusted_root_executable(journalctl) {
@@ -204,8 +201,7 @@ fn transient_unit_journal(unit_name: &str) -> Option<String> {
     Some(detail.chars().take(12_000).collect())
 }
 
-#[cfg(not(target_os = "linux"))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(target_os = "linux"), not(any(kani, verus))))]
 fn restore_main_library_via_transient_unit() -> Result<JsonRecoveryReport, String> {
     Err("Main Library restore through the system service is supported only on Linux".into())
 }

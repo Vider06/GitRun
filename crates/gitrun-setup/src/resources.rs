@@ -1,5 +1,3 @@
-use vstd::prelude::*;
-
 #[cfg(not(any(kani, verus)))]
 use super::SetupError;
 
@@ -318,8 +316,7 @@ pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
     ),
 ];
 
-#[cfg(test)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(test, not(any(kani, verus))))]
 mod tests {
     use super::*;
 

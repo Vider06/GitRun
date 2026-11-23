@@ -20,14 +20,11 @@ use crate::docker::{self, sanitize};
 use crate::github::GitHubClient;
 #[cfg(not(any(kani, verus)))]
 use std::fs;
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 use std::fs::OpenOptions;
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 use std::os::fd::AsRawFd;
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 use std::os::unix::fs::OpenOptionsExt;
 #[cfg(not(any(kani, verus)))]
 use std::path::{Path, PathBuf};
@@ -181,8 +178,7 @@ impl GtuuLock {
     }
 }
 
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 fn acquire_guard(state_dir: &Path) -> Result<fs::File> {
     let guard_path = state_dir.join("gtuu.lock.guard");
     let guard = OpenOptions::new()
@@ -244,8 +240,7 @@ fn lock_age_exceeded(lock_path: &Path) -> bool {
         .is_some_and(|age| age > STALE_LOCK_AGE)
 }
 
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 fn process_is_alive(pid: u32) -> bool {
     // PID 0 and values that cannot fit in kill(2)'s signed pid_t are not
     // valid process IDs here. In particular, casting u32::MAX would turn it

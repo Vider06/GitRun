@@ -960,8 +960,7 @@ fn generated_gitrun_job_sequence(code: &str) -> Option<u64> {
     (value > 0).then_some(value)
 }
 
-#[cfg(test)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(test, not(any(kani, verus))))]
 fn valid_generated_gitrun_job_id(code: &str) -> bool {
     generated_gitrun_job_sequence(code).is_some()
 }
@@ -3294,8 +3293,7 @@ fn read_system_json<T: for<'de> Deserialize<'de>>(
     Ok(Some(serde_json::from_slice(&bytes)?))
 }
 
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 fn read_system_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
     validate_system_parent(path)?;
@@ -3344,16 +3342,14 @@ fn read_system_checked(path: &Path, max_bytes: u64) -> Result<Option<Vec<u8>>> {
     Ok(Some(bytes))
 }
 
-#[cfg(not(unix))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(unix), not(any(kani, verus))))]
 fn read_system_checked(_path: &Path, _max_bytes: u64) -> Result<Option<Vec<u8>>> {
     Err(KittyError::Invalid(
         "system Kitty settings are supported only on Unix".into(),
     ))
 }
 
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 fn atomic_write_system_readable(path: &Path, bytes: &[u8], group: u32) -> Result<()> {
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
@@ -3407,8 +3403,7 @@ fn atomic_write_system_readable(path: &Path, bytes: &[u8], group: u32) -> Result
     result
 }
 
-#[cfg(not(unix))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(unix), not(any(kani, verus))))]
 fn atomic_write_system_readable(_path: &Path, _bytes: &[u8], _group: u32) -> Result<()> {
     Err(KittyError::Invalid(
         "system Kitty status persistence is supported only on Unix".into(),
@@ -3446,11 +3441,9 @@ fn utc_weekday_hour_slot(epoch: u64) -> usize {
     weekday * 24 + hour
 }
 
-#[cfg(all(unix, target_env = "musl"))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(all(unix, target_env = "musl"), not(any(kani, verus))))]
 type SchedulerTimeT = i64;
-#[cfg(all(unix, not(target_env = "musl")))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(all(unix, not(target_env = "musl")), not(any(kani, verus))))]
 type SchedulerTimeT = libc::time_t;
 
 #[cfg(not(any(kani, verus)))]
@@ -4017,8 +4010,7 @@ fn record_queued_job_occurrences(
     changed
 }
 
-#[cfg(test)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(test, not(any(kani, verus))))]
 fn record_started_job_occurrences(
     model: &mut WorkflowModel,
     jobs: &[QueuedJobOccurrence],
@@ -5071,8 +5063,7 @@ fn atomic_write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     result
 }
 
-#[cfg(test)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(test, not(any(kani, verus))))]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};

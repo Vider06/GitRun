@@ -355,8 +355,7 @@ pub fn serve() -> i32 {
     }
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn is_root() -> bool {
     std::fs::read_to_string("/proc/self/status")
         .ok()
@@ -369,8 +368,7 @@ fn is_root() -> bool {
         .is_some_and(|uid| uid == 0)
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn serve_client(mut stream: std::os::unix::net::UnixStream) {
     use std::time::Duration;
 
@@ -475,8 +473,7 @@ fn serve_client(mut stream: std::os::unix::net::UnixStream) {
 /// Start one fixed, allowlisted maintenance command in a transient system
 /// service. This deliberately does not forward caller-provided arguments,
 /// paths, or environment variables to a root process.
-#[cfg(target_os = "linux")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn schedule_maintenance_task(task: &str) -> Result<Value, String> {
     use std::process::Command;
 
@@ -550,14 +547,12 @@ fn schedule_maintenance_task(task: &str) -> Result<Value, String> {
     }))
 }
 
-#[cfg(not(target_os = "linux"))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(target_os = "linux"), not(any(kani, verus))))]
 fn schedule_maintenance_task(_task: &str) -> Result<Value, String> {
     Err("GitRun Control Manager maintenance tasks are Linux-only".into())
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn needs_confirmation(action: &str, args: &Value) -> bool {
     match action {
         "vault_delete" | "vm_delete" | "zizmor_install" | "zizmor_disable" => true,

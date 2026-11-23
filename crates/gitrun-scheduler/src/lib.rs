@@ -282,8 +282,7 @@ pub fn run() {
     println!("gitrun-autoscaler: stopped");
 }
 
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 fn open_protected_pid_file(
     path: &std::path::Path,
     read: bool,
@@ -313,8 +312,7 @@ fn open_protected_pid_file(
     Ok(file)
 }
 
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
     use std::io::{Error, ErrorKind, Read, Write};
     use std::os::fd::AsRawFd;
@@ -380,8 +378,7 @@ fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
     Ok(lock)
 }
 
-#[cfg(not(unix))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(unix), not(any(kani, verus))))]
 fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<Option<std::fs::File>> {
     use std::io::Write;
 
@@ -409,8 +406,7 @@ fn acquire_pid_file(path: &std::path::Path) -> std::io::Result<Option<std::fs::F
     Ok(None)
 }
 
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 fn process_is_alive(pid: u32) -> bool {
     // Never cast an untrusted oversized PID to i32: a negative value to
     // kill(2) targets a process group rather than one process.
@@ -425,8 +421,7 @@ fn process_is_alive(pid: u32) -> bool {
     result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
-#[cfg(not(unix))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(unix), not(any(kani, verus))))]
 fn process_is_alive(_pid: u32) -> bool {
     true
 }
@@ -2900,8 +2895,7 @@ fn exclusive_workload_routing_label(workload_id: &str) -> Result<String, std::io
     Ok(label)
 }
 
-#[cfg(test)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(test, not(any(kani, verus))))]
 mod workload_routing_label_tests {
     use super::*;
 
@@ -3186,14 +3180,12 @@ fn save_workflow_dock_requirements(
     sync_directory(&directory)
 }
 
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 fn sync_directory(path: &std::path::Path) -> std::io::Result<()> {
     std::fs::File::open(path)?.sync_all()
 }
 
-#[cfg(not(unix))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(unix), not(any(kani, verus))))]
 fn sync_directory(_path: &std::path::Path) -> std::io::Result<()> {
     Ok(())
 }
@@ -3418,8 +3410,7 @@ fn uuid_like_suffix() -> String {
     format!("{epoch_millis:x}-{pid:x}-{sequence:x}")
 }
 
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 fn unix_gid_of_docker_socket() -> String {
     use std::os::unix::fs::MetadataExt;
     std::fs::metadata("/var/run/docker.sock")
@@ -3427,8 +3418,7 @@ fn unix_gid_of_docker_socket() -> String {
         .unwrap_or_default()
 }
 
-#[cfg(not(unix))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(unix), not(any(kani, verus))))]
 fn unix_gid_of_docker_socket() -> String {
     String::new()
 }
@@ -3777,8 +3767,7 @@ fn utc_now() -> SimpleNow {
     }
 }
 
-#[cfg(test)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(test, not(any(kani, verus))))]
 mod tests {
     use super::*;
 
@@ -4064,8 +4053,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(test, not(any(kani, verus))))]
 mod resource_pressure_reconciliation_tests {
     use super::*;
     use crate::reconcile::Action;
@@ -4459,8 +4447,7 @@ mod resource_pressure_reconciliation_tests {
     }
 }
 
-#[cfg(test)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(test, not(any(kani, verus))))]
 mod reconcile_identity_pin_tests {
     use super::*;
 

@@ -189,8 +189,7 @@ pub const fn privilege_escalation_candidates() -> &'static [&'static str] {
     &["/usr/bin/sudo", "/usr/bin/doas", "/usr/bin/pkexec"]
 }
 
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 pub fn trusted_privilege_escalation_binary() -> Option<std::path::PathBuf> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -206,8 +205,7 @@ pub fn trusted_privilege_escalation_binary() -> Option<std::path::PathBuf> {
         .map(Path::to_path_buf)
 }
 
-#[cfg(not(unix))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(unix), not(any(kani, verus))))]
 pub fn trusted_privilege_escalation_binary() -> Option<std::path::PathBuf> {
     None
 }
@@ -266,8 +264,7 @@ fn trusted_service_mode_is_safe(mode: u32, require_executable: bool) -> bool {
     mode & 0o022 == 0 && (!require_executable || mode & 0o111 != 0)
 }
 
-#[cfg(unix)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(unix, not(any(kani, verus))))]
 fn trusted_service_definition(path: &Path, require_executable: bool) -> bool {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
@@ -298,8 +295,7 @@ fn trusted_service_definition(path: &Path, require_executable: bool) -> bool {
     true
 }
 
-#[cfg(not(unix))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(unix), not(any(kani, verus))))]
 fn trusted_service_definition(_path: &Path, _require_executable: bool) -> bool {
     false
 }

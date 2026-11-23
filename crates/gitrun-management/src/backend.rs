@@ -9,14 +9,11 @@
 //! Management operations use GitRun runtime crates and real host state; this
 //! crate contains no dashboard frontend or window lifecycle ownership.
 
-use vstd::prelude::*;
-
 #[cfg(not(any(kani, verus)))]
 use gitrun_core::{Config, GitRunApi, GitRunSettings};
 #[cfg(not(any(kani, verus)))]
 use gitrun_scheduler::gsr_bridge::VaultToGsrBridge;
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 use gitrun_setup::BootstrapAuth;
 #[cfg(not(any(kani, verus)))]
 use gitrun_smart_scheduler::{KittyDashboardStatus, KittyRuntime, KittySettings};
@@ -24,20 +21,17 @@ use gitrun_smart_scheduler::{KittyDashboardStatus, KittyRuntime, KittySettings};
 use gitrun_vault::{Scope, Vault};
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 use std::io::BufRead;
 #[cfg(not(any(kani, verus)))]
 use std::path::{Path, PathBuf};
 #[cfg(not(any(kani, verus)))]
 use std::process::Stdio;
-#[cfg(any(feature = "desktop", test))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(any(feature = "desktop", test), not(any(kani, verus))))]
 use std::sync::mpsc;
 #[cfg(not(any(kani, verus)))]
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 use tauri::{AppHandle, Emitter, Manager};
 
 #[path = "control_manager.rs"]
@@ -148,8 +142,7 @@ fn trusted_system_cli_path() -> Option<PathBuf> {
     .find_map(|path| trusted_privileged_binary(&path))
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn authorized_cli_command(cli: &Path) -> Result<std::process::Command, String> {
     let mut command = if current_process_is_root() {
         std::process::Command::new(cli)
@@ -165,8 +158,7 @@ fn authorized_cli_command(cli: &Path) -> Result<std::process::Command, String> {
     Ok(command)
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn persist_config_as_root(config: &Config) -> Result<(), String> {
     if control_manager_enabled() && !current_process_is_root() {
         control_manager_request(
@@ -234,14 +226,12 @@ fn persist_config_as_root(config: &Config) -> Result<(), String> {
     result
 }
 
-#[cfg(not(target_os = "linux"))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(target_os = "linux"), not(any(kani, verus))))]
 fn persist_config_as_root(_config: &Config) -> Result<(), String> {
     Err("administrator-authorized system settings persistence is Linux-only".into())
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn persist_gitrun_settings_as_root(
     settings: &GitRunSettings,
     confirm_socket_opt_out: bool,
@@ -318,8 +308,7 @@ fn persist_gitrun_settings_as_root(
     result
 }
 
-#[cfg(not(target_os = "linux"))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(target_os = "linux"), not(any(kani, verus))))]
 fn persist_gitrun_settings_as_root(
     _settings: &GitRunSettings,
     _confirm_socket_opt_out: bool,
@@ -327,8 +316,7 @@ fn persist_gitrun_settings_as_root(
     Err("administrator-authorized security-settings persistence is Linux-only".into())
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn persist_logic_rules_as_root(
     rules: &[gitrun_scheduler::logic_containers::LogicRule],
 ) -> Result<(), String> {
@@ -397,16 +385,14 @@ fn persist_logic_rules_as_root(
     result
 }
 
-#[cfg(not(target_os = "linux"))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(target_os = "linux"), not(any(kani, verus))))]
 fn persist_logic_rules_as_root(
     _rules: &[gitrun_scheduler::logic_containers::LogicRule],
 ) -> Result<(), String> {
     Err("administrator-authorized Logic Containers persistence is Linux-only".into())
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn persist_vm_configs_as_root(configs: &[gitrun_scheduler::vm::VmConfig]) -> Result<(), String> {
     if control_manager_enabled() && !current_process_is_root() {
         control_manager_request(
@@ -468,14 +454,12 @@ fn persist_vm_configs_as_root(configs: &[gitrun_scheduler::vm::VmConfig]) -> Res
     result
 }
 
-#[cfg(not(target_os = "linux"))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(target_os = "linux"), not(any(kani, verus))))]
 fn persist_vm_configs_as_root(_configs: &[gitrun_scheduler::vm::VmConfig]) -> Result<(), String> {
     Err("administrator-authorized VM configuration persistence is Linux-only".into())
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn respond_hypervisor_decision_as_root(
     vm_name: &str,
     choice: gitrun_core::hypervisor_decision::DecisionChoice,
@@ -499,8 +483,7 @@ fn respond_hypervisor_decision_as_root(
     Ok(())
 }
 
-#[cfg(not(target_os = "linux"))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(target_os = "linux"), not(any(kani, verus))))]
 fn respond_hypervisor_decision_as_root(
     _vm_name: &str,
     _choice: gitrun_core::hypervisor_decision::DecisionChoice,
@@ -508,8 +491,7 @@ fn respond_hypervisor_decision_as_root(
     Err("administrator-authorized hypervisor decisions are Linux-only".into())
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn persist_kitty_settings_as_root(settings: &KittySettings) -> Result<(), String> {
     if control_manager_enabled() && !current_process_is_root() {
         control_manager_request(
@@ -577,8 +559,7 @@ fn persist_kitty_settings_as_root(settings: &KittySettings) -> Result<(), String
     result
 }
 
-#[cfg(not(target_os = "linux"))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(not(target_os = "linux"), not(any(kani, verus))))]
 fn persist_kitty_settings_as_root(_settings: &KittySettings) -> Result<(), String> {
     Err("administrator-authorized Kitty settings persistence is Linux-only".into())
 }
@@ -683,8 +664,7 @@ fn trusted_privileged_binary(path: &std::path::Path) -> Option<PathBuf> {
     Some(canonical)
 }
 
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 fn dashboard_cli_path(app: &AppHandle) -> Option<PathBuf> {
     let mut candidates = Vec::new();
 
@@ -839,8 +819,7 @@ fn recent_event_cutoff() -> u64 {
         .unwrap_or(0)
 }
 
-#[cfg(any(feature = "desktop", test))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(any(feature = "desktop", test), not(any(kani, verus))))]
 fn validate_setup_value(value: &str, key: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty() {
@@ -852,8 +831,7 @@ fn validate_setup_value(value: &str, key: &str) -> Result<String, String> {
     Ok(value.to_owned())
 }
 
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 fn validate_numeric_setup_id(value: &str, key: &str) -> Result<String, String> {
     let value = validate_setup_value(value, key)?;
     if !value.chars().all(|c| c.is_ascii_digit()) {
@@ -862,8 +840,7 @@ fn validate_numeric_setup_id(value: &str, key: &str) -> Result<String, String> {
     Ok(value)
 }
 
-#[cfg(any(feature = "desktop", test))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(any(feature = "desktop", test), not(any(kani, verus))))]
 fn validate_private_key_path(value: &str) -> Result<String, String> {
     let path = validate_setup_value(value, "private key path")?;
     let path_buf = PathBuf::from(&path);
@@ -885,8 +862,7 @@ fn validate_private_key_path(value: &str) -> Result<String, String> {
 /// to 0600 rather than merely rejecting common download modes such as 0644 or
 /// 0664: the operator already owns the file, and root can still read a 0600
 /// file when the setup is elevated through pkexec.
-#[cfg(any(feature = "desktop", test))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(any(feature = "desktop", test), not(any(kani, verus))))]
 fn secure_private_key_file(path: &std::path::Path) -> Result<(), String> {
     gitrun_setup::secure_github_app_private_key(path)
         .map(|_| ())
@@ -900,8 +876,7 @@ pub(crate) fn trusted_executable_mode(mode: u32) -> bool {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 fn secure_private_key(private_key_path: String) -> Result<String, String> {
     let path = validate_setup_value(&private_key_path, "private key path")?;
     let path_buf = PathBuf::from(&path);
@@ -909,8 +884,7 @@ fn secure_private_key(private_key_path: String) -> Result<String, String> {
     Ok(path)
 }
 
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 fn build_first_setup_auth(
     auth_mode: &str,
     token: &str,
@@ -956,8 +930,7 @@ fn build_first_setup_auth(
     }
 }
 
-#[cfg(any(feature = "desktop", test))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(any(feature = "desktop", test), not(any(kani, verus))))]
 fn write_setup_request(path: &std::path::Path, payload: &str) -> Result<(), String> {
     let mut created_file = false;
     let result = (|| -> Result<(), String> {
@@ -996,8 +969,7 @@ fn write_setup_request(path: &std::path::Path, payload: &str) -> Result<(), Stri
 }
 
 #[derive(Debug, Clone, Serialize)]
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 struct FirstSetupEvent {
     phase: u8,
     total: u8,
@@ -1007,15 +979,12 @@ struct FirstSetupEvent {
     success: bool,
 }
 
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 const FIRST_SETUP_EVENT: &str = "gitrun-setup-progress";
-#[cfg(any(feature = "desktop", test))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(any(feature = "desktop", test), not(any(kani, verus))))]
 const FIRST_SETUP_TOTAL: u8 = 9;
 
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 fn emit_first_setup_event(
     app: &AppHandle,
     phase: u8,
@@ -1039,8 +1008,7 @@ fn emit_first_setup_event(
     }
 }
 
-#[cfg(any(feature = "desktop", test))]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(any(feature = "desktop", test), not(any(kani, verus))))]
 fn parse_setup_progress_line(line: &str) -> Option<(u8, String)> {
     let rest = line.strip_prefix("[GitRun setup] [")?;
     let (fraction, message) = rest.split_once("] ")?;
@@ -1052,15 +1020,13 @@ fn parse_setup_progress_line(line: &str) -> Option<(u8, String)> {
     Some((step.min(FIRST_SETUP_TOTAL), message.to_owned()))
 }
 
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 enum SetupChildOutput {
     Line { stream: &'static str, line: String },
     Done,
 }
 
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 fn spawn_setup_reader<R>(reader: R, stream: &'static str, sender: mpsc::Sender<SetupChildOutput>)
 where
     R: std::io::Read + Send + 'static,
@@ -1090,8 +1056,7 @@ where
     });
 }
 
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 fn stream_privileged_command(
     app: &AppHandle,
     pkexec: &std::path::Path,
@@ -1185,8 +1150,7 @@ fn stream_privileged_command(
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux")
         || !(cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64"))
@@ -1245,8 +1209,7 @@ async fn uninstall_gitrun(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 fn stream_unprivileged_command(
     app: &AppHandle,
     cli: &std::path::Path,
@@ -1322,8 +1285,7 @@ fn stream_unprivileged_command(
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux")
         || !(cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64"))
@@ -1387,8 +1349,7 @@ async fn reinstall_gitrun(app: AppHandle) -> Result<(), String> {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 struct FirstSetupRequest {
     auth_mode: String,
     token: String,
@@ -1401,8 +1362,7 @@ struct FirstSetupRequest {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(), String> {
     let FirstSetupRequest {
         auth_mode,
@@ -1563,8 +1523,7 @@ async fn run_first_setup(app: AppHandle, request: FirstSetupRequest) -> Result<(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn run_privileged_cli_helper(command_name: &str, arguments: &[String]) -> Result<String, String> {
     if control_manager_enabled() && !current_process_is_root() {
         let value = match command_name {
@@ -2887,8 +2846,7 @@ fn list_service_logs(source: String, limit: Option<usize>) -> Result<Vec<String>
     }
 }
 
-#[cfg(test)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(test, not(any(kani, verus))))]
 mod journal_log_tests {
     use super::journal_units;
 
@@ -4124,8 +4082,7 @@ fn check_gitrun_updates() -> UpdateCheckResult {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 async fn update_gitrun(app: AppHandle, line_transition: bool) -> Result<(), String> {
     if !cfg!(target_os = "linux")
         || !(cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64"))
@@ -4175,8 +4132,7 @@ async fn update_gitrun(app: AppHandle, line_transition: bool) -> Result<(), Stri
     Ok(())
 }
 #[cfg_attr(feature = "desktop", tauri::command)]
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 async fn update_permanent_runners(app: AppHandle) -> Result<(), String> {
     if !cfg!(target_os = "linux") || !cfg!(target_arch = "x86_64") {
         return Err("privileged runner-image update currently targets Linux x86_64".into());
@@ -4352,8 +4308,7 @@ fn management_value<T: serde::Serialize>(value: T) -> Result<serde_json::Value, 
         .map_err(|error| format!("could not encode management response: {error}"))
 }
 
-#[cfg(target_os = "linux")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn run_updater_payload_as_root(command_name: &str, payload: &[u8]) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
@@ -4708,8 +4663,7 @@ pub fn management_write(
 /// Build the single Tauri invoke handler from the backend-owned command registry.
 /// Keeping the command macro expansion in this module avoids leaking Tauri's
 /// generated command glue into the dashboard facade.
-#[cfg(feature = "desktop")]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(feature = "desktop", not(any(kani, verus))))]
 pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         is_first_run,
@@ -4761,8 +4715,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
     ]
 }
 
-#[cfg(test)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(test, not(any(kani, verus))))]
 mod tests {
     use super::*;
 
@@ -4943,8 +4896,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-#[cfg(not(any(kani, verus)))]
+#[cfg(all(test, not(any(kani, verus))))]
 mod dashboard_cpu_history_tests {
     use super::{append_dashboard_cpu_sample, DashboardCpuHistoryPoint};
 

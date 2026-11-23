@@ -4716,8 +4716,9 @@ mod mount_runtime_tests {
         let target = format!("/workspace/gitrun-mount-{suffix}");
         let image =
             std::env::var("GITRUN_MOUNT_TEST_IMAGE").unwrap_or_else(|_| "alpine:3.21".into());
-        ensure_mount_test_image_available(&image)
-            .unwrap_or_else(|error| panic!("could not prepare disposable mount-test image: {error}"));
+        ensure_mount_test_image_available(&image).unwrap_or_else(|error| {
+            panic!("could not prepare disposable mount-test image: {error}")
+        });
         let output = Command::new("docker")
             .args([
                 "run",

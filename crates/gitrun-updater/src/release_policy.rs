@@ -1,3 +1,5 @@
+#[cfg(verus)]
+use vstd::contrib::exec_spec::*;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
@@ -27,42 +29,37 @@ const MIN_CLASSIFIED_RELEASE_VERSION: &str = "1.9.1";
 #[cfg(not(any(kani, verus)))]
 pub use super::policy_logic::{ReleaseType, UpdatePolicy};
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
-#[cfg_attr(
-    verus,
-    verus_spec(
-        returns if value@ == "pre"@ { Some(0u8) } else if value@ == "full"@ { Some(1u8) } else if value@ == "security"@ { Some(2u8) } else { None }
-    )
-)]
-pub(crate) fn release_type_marker_code(value: &str) -> Option<u8> {
-    let bytes = value.as_bytes();
-    if bytes.len() == 3
-        && bytes.first() == Some(&b'p')
-        && bytes.get(1) == Some(&b'r')
-        && bytes.get(2) == Some(&b'e')
-    {
-        Some(0)
-    } else if bytes.len() == 4
-        && bytes.first() == Some(&b'f')
-        && bytes.get(1) == Some(&b'u')
-        && bytes.get(2) == Some(&b'l')
-        && bytes.get(3) == Some(&b'l')
-    {
-        Some(1)
-    } else if bytes.len() == 8
-        && bytes.first() == Some(&b's')
-        && bytes.get(1) == Some(&b'e')
-        && bytes.get(2) == Some(&b'c')
-        && bytes.get(3) == Some(&b'u')
-        && bytes.get(4) == Some(&b'r')
-        && bytes.get(5) == Some(&b'i')
-        && bytes.get(6) == Some(&b't')
-        && bytes.get(7) == Some(&b'y')
-    {
-        Some(2)
-    } else {
-        None
+#[cfg(verus)]
+verus! {
+    exec_spec_verified! {
+        pub open spec fn release_type_marker_code_spec(value: SpecString) -> Option<u8> {
+            if value == "pre" {
+                Some(0u8)
+            } else if value == "full" {
+                Some(1u8)
+            } else if value == "security" {
+                Some(2u8)
+            } else {
+                None
+            }
+        }
     }
+}
+
+#[cfg(not(verus))]
+pub(crate) fn release_type_marker_code(value: &str) -> Option<u8> {
+    match value {
+        "pre" => Some(0),
+        "full" => Some(1),
+        "security" => Some(2),
+        _ => None,
+    }
+}
+
+#[cfg(verus)]
+#[verus_spec(returns release_type_marker_code_spec(value@))]
+pub(crate) fn release_type_marker_code(value: &str) -> Option<u8> {
+    exec_release_type_marker_code_spec(value)
 }
 
 #[cfg(not(any(kani, verus)))]

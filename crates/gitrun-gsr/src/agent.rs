@@ -341,6 +341,7 @@ mod kani_verification {
 
 #[cfg(verus)]
 mod verus_verification {
+    use super::is_bash_invocation_spec;
     use vstd::prelude::*;
 
     verus! {

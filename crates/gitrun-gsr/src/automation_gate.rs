@@ -25,7 +25,7 @@ pub enum AutomationAction {
 
 impl AutomationAction {
     #[cfg_attr(verus, verus_verify(dual_spec, open))]
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::PredictiveWarmPool => "predictive_warm_pool",
             Self::StopIdleRunner => "stop_idle_runner",

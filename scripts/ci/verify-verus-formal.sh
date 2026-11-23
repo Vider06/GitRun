@@ -117,7 +117,7 @@ run_verus_target() {
   local -a sources=("$@")
   local output
   local rc
-  if output="$("\$verus" --expand-errors --time --time-expanded --triggers-mode verbose --log-all --multiple-errors 100 --cfg verus "$entrypoint" 2>&1)"; then
+  if output="$("$verus" --expand-errors --time --time-expanded --triggers-mode verbose --log-all --multiple-errors 100 --cfg verus "$entrypoint" 2>&1)"; then
     printf '%s\n' "$output"
     record_successful_verus_results "$output" "$entrypoint" "${sources[@]}" || true
   else
@@ -239,7 +239,7 @@ done
 echo "Verus executable: $verus"
 phase=smoke
 echo "Verifying the pinned verifier smoke test."
-smoke_output="$("\$verus" --expand-errors --time --time-expanded --triggers-mode verbose --log-all --multiple-errors 100 --cfg verus verification/verus/smoke.rs 2>&1)" || {
+smoke_output="$("$verus" --expand-errors --time --time-expanded --triggers-mode verbose --log-all --multiple-errors 100 --cfg verus verification/verus/smoke.rs 2>&1)" || {
   smoke_rc=$?
   printf '%s\n' "$smoke_output"
   echo "Verus smoke verification failed (exit $smoke_rc)." >&2

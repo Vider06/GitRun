@@ -138,55 +138,55 @@ impl UpdatePolicyChoice {
 pub(crate) fn update_policy_choice_code(value: &str) -> Option<u8> {
     let bytes = value.as_bytes();
     if bytes.len() == 13
-        && bytes[0] == b's'
-        && bytes[1] == b'e'
-        && bytes[2] == b'c'
-        && bytes[3] == b'u'
-        && bytes[4] == b'r'
-        && bytes[5] == b'i'
-        && bytes[6] == b't'
-        && bytes[7] == b'y'
-        && bytes[8] == b'_'
-        && bytes[9] == b'o'
-        && bytes[10] == b'n'
-        && bytes[11] == b'l'
-        && bytes[12] == b'y'
+        && bytes.get(0) == Some(&b's')
+        && bytes.get(1) == Some(&b'e')
+        && bytes.get(2) == Some(&b'c')
+        && bytes.get(3) == Some(&b'u')
+        && bytes.get(4) == Some(&b'r')
+        && bytes.get(5) == Some(&b'i')
+        && bytes.get(6) == Some(&b't')
+        && bytes.get(7) == Some(&b'y')
+        && bytes.get(8) == Some(&b'_')
+        && bytes.get(9) == Some(&b'o')
+        && bytes.get(10) == Some(&b'n')
+        && bytes.get(11) == Some(&b'l')
+        && bytes.get(12) == Some(&b'y')
     {
         Some(0)
     } else if bytes.len() == 13
-        && bytes[0] == b's'
-        && bytes[1] == b'e'
-        && bytes[2] == b'c'
-        && bytes[3] == b'u'
-        && bytes[4] == b'r'
-        && bytes[5] == b'i'
-        && bytes[6] == b't'
-        && bytes[7] == b'y'
-        && bytes[8] == b'_'
-        && bytes[9] == b'f'
-        && bytes[10] == b'u'
-        && bytes[11] == b'l'
-        && bytes[12] == b'l'
+        && bytes.get(0) == Some(&b's')
+        && bytes.get(1) == Some(&b'e')
+        && bytes.get(2) == Some(&b'c')
+        && bytes.get(3) == Some(&b'u')
+        && bytes.get(4) == Some(&b'r')
+        && bytes.get(5) == Some(&b'i')
+        && bytes.get(6) == Some(&b't')
+        && bytes.get(7) == Some(&b'y')
+        && bytes.get(8) == Some(&b'_')
+        && bytes.get(9) == Some(&b'f')
+        && bytes.get(10) == Some(&b'u')
+        && bytes.get(11) == Some(&b'l')
+        && bytes.get(12) == Some(&b'l')
     {
         Some(1)
     } else if bytes.len() == 17
-        && bytes[0] == b's'
-        && bytes[1] == b'e'
-        && bytes[2] == b'c'
-        && bytes[3] == b'u'
-        && bytes[4] == b'r'
-        && bytes[5] == b'i'
-        && bytes[6] == b't'
-        && bytes[7] == b'y'
-        && bytes[8] == b'_'
-        && bytes[9] == b'f'
-        && bytes[10] == b'u'
-        && bytes[11] == b'l'
-        && bytes[12] == b'l'
-        && bytes[13] == b'_'
-        && bytes[14] == b'p'
-        && bytes[15] == b'r'
-        && bytes[16] == b'e'
+        && bytes.get(0) == Some(&b's')
+        && bytes.get(1) == Some(&b'e')
+        && bytes.get(2) == Some(&b'c')
+        && bytes.get(3) == Some(&b'u')
+        && bytes.get(4) == Some(&b'r')
+        && bytes.get(5) == Some(&b'i')
+        && bytes.get(6) == Some(&b't')
+        && bytes.get(7) == Some(&b'y')
+        && bytes.get(8) == Some(&b'_')
+        && bytes.get(9) == Some(&b'f')
+        && bytes.get(10) == Some(&b'u')
+        && bytes.get(11) == Some(&b'l')
+        && bytes.get(12) == Some(&b'l')
+        && bytes.get(13) == Some(&b'_')
+        && bytes.get(14) == Some(&b'p')
+        && bytes.get(15) == Some(&b'r')
+        && bytes.get(16) == Some(&b'e')
     {
         Some(2)
     } else {

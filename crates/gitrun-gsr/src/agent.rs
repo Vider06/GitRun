@@ -330,21 +330,21 @@ mod kani_verification {
         assert!(!is_bash_invocation("/bin/sh"));
         assert!(!is_bash_invocation("/bin/bash.gitrun-real"));
 
-        assert!(real_shell_for_invocation("bash") == REAL_BASH_FALLBACK);
-        assert!(real_shell_for_invocation("/bin/bash") == REAL_BASH_FALLBACK);
-        assert!(real_shell_for_invocation("sh") == REAL_SHELL_FALLBACK);
-        assert!(real_shell_for_invocation("/bin/sh") == REAL_SHELL_FALLBACK);
+        assert!(real_shell_for_invocation("bash") == "/bin/bash.gitrun-real");
+        assert!(real_shell_for_invocation("/bin/bash") == "/bin/bash.gitrun-real");
+        assert!(real_shell_for_invocation("sh") == "/bin/sh.gitrun-real");
+        assert!(real_shell_for_invocation("/bin/sh") == "/bin/sh.gitrun-real");
     }
 }
 
 #[cfg(verus)]
 mod verus_verification {
-    use super::{
-        is_bash_invocation, real_shell_for_invocation, REAL_BASH_FALLBACK, REAL_SHELL_FALLBACK,
-    };
     use vstd::prelude::*;
 
     verus! {
+        assume_specification [crate::agent::is_bash_invocation] (invocation: &str) -> bool;
+        assume_specification [crate::agent::real_shell_for_invocation] (invocation: &str) -> &'static str;
+
         proof fn shell_dispatch_never_crosses_shell_families() {
             assert(is_bash_invocation("bash"));
             assert(is_bash_invocation("/bin/bash"));

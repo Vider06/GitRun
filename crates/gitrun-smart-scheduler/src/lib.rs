@@ -3441,9 +3441,9 @@ fn utc_weekday_hour_slot(epoch: u64) -> usize {
     weekday * 24 + hour
 }
 
-#[cfg(all(all(unix, target_env = "musl"), not(any(kani, verus))))]
+#[cfg(all(unix, target_env = "musl", not(any(kani, verus))))]
 type SchedulerTimeT = i64;
-#[cfg(all(all(unix, not(target_env = "musl")), not(any(kani, verus))))]
+#[cfg(all(unix, not(target_env = "musl"), not(any(kani, verus))))]
 type SchedulerTimeT = libc::time_t;
 
 #[cfg(not(any(kani, verus)))]

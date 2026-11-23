@@ -674,6 +674,13 @@ ci_report() {
     *) status_label="unavailable ($status)" ;;
   esac
   report="$CI_DIR/report.md"
+  # Every job emits the same machine-readable result artifact. The shared
+  # Python writer owns the schema so job-specific scripts only add data.
+  if [ -f "${GITHUB_WORKSPACE:-$PWD}/scripts/ci/ci-job-report.py" ]; then
+    python3 "${GITHUB_WORKSPACE:-$PWD}/scripts/ci/ci-job-report.py" write
+  else
+    ci_err "canonical job-result writer is missing; report artifact was not generated"
+  fi
   {
     echo "# GitRun CI job report"
     echo

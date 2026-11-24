@@ -186,7 +186,11 @@ pub(crate) fn bounded_runner_target(busy: u32, queued: u32, minimum: u32, maximu
     let total = busy.saturating_add(queued);
     let capped = if total < maximum { total } else { maximum };
     let lower = if minimum < maximum { minimum } else { maximum };
-    if capped > lower { capped } else { lower }
+    if capped > lower {
+        capped
+    } else {
+        lower
+    }
 }
 
 #[cfg(not(any(kani, verus)))]

@@ -183,9 +183,10 @@ fn job_needs_dedicated_runner(input: &ReconcileInput, index: usize, labels: &[St
 /// original (`min(max, max(min, busy + queued))`).
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
 pub(crate) fn bounded_runner_target(busy: u32, queued: u32, minimum: u32, maximum: u32) -> u32 {
-    busy.saturating_add(queued)
-        .min(maximum)
-        .max(minimum.min(maximum))
+    let total = busy.saturating_add(queued);
+    let capped = if total < maximum { total } else { maximum };
+    let lower = if minimum < maximum { minimum } else { maximum };
+    if capped > lower { capped } else { lower }
 }
 
 #[cfg(not(any(kani, verus)))]
@@ -1499,9 +1500,15 @@ mod verus_verification {
         )
             ensures
                 bounded_runner_target(busy, queued, minimum, maximum) <= maximum,
-                bounded_runner_target(busy, queued, minimum, maximum) >= minimum.min(maximum),
                 bounded_runner_target(busy, queued, minimum, maximum)
-                    == busy.saturating_add(queued).min(maximum).max(minimum.min(maximum)),
+                    >= if minimum < maximum { minimum } else { maximum },
+                bounded_runner_target(busy, queued, minimum, maximum)
+                    == {
+                        let total = busy.saturating_add(queued);
+                        let capped = if total < maximum { total } else { maximum };
+                        let lower = if minimum < maximum { minimum } else { maximum };
+                        if capped > lower { capped } else { lower }
+                    },
         {
         }
     }

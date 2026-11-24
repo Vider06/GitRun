@@ -12,8 +12,8 @@ mod linux {
         fs::{self, OpenOptions},
         io::{self, Read, Write},
         net::{TcpListener, TcpStream},
-        path::{Path, PathBuf},
-        process::{Child, Command, Stdio},
+        path::PathBuf,
+        process::{Command, Stdio},
         thread,
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
@@ -276,10 +276,10 @@ mod linux {
     }
 
     fn command_exists(program: &str) -> bool {
-        env::var_os("PATH")
-            .into_iter()
-            .flat_map(|paths| env::split_paths(&paths))
-            .any(|directory| directory.join(program).is_file())
+        let Some(paths) = env::var_os("PATH") else {
+            return false;
+        };
+        env::split_paths(&paths).any(|directory| directory.join(program).is_file())
     }
 
     fn save_payload(payload: &[u8]) -> io::Result<Option<PathBuf>> {
@@ -414,7 +414,7 @@ mod linux {
         let mut child = Command::new(&ssh)
             .args([
                 "-o",
-                "ExitOnForwardFailure=no",
+                "ExitOnForwardFailure=yes",
                 "-R",
                 &forward,
                 "-tt",
@@ -456,9 +456,8 @@ mod linux {
     }
 
     fn find_program(name: &str) -> Option<String> {
-        env::var_os("PATH")
-            .into_iter()
-            .flat_map(|paths| env::split_paths(&paths))
+        let paths = env::var_os("PATH")?;
+        env::split_paths(&paths)
             .map(|directory| directory.join(name))
             .find(|path| path.is_file())
             .map(|path| path.to_string_lossy().into_owned())

@@ -8,15 +8,13 @@ use super::SetupError;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 #[cfg(verus)]
-use vstd::string::StringSliceAdditionalSpecFns;
 
 #[cfg(verus)]
 verus! {
-    /// Byte-level model of searching one valid UTF-8 string inside another.
-    /// A valid UTF-8 needle can only match at character boundaries.
-    pub open spec fn contains_utf8_subsequence(
-        haystack: Seq<u8>,
-        needle: Seq<u8>,
+    /// Character-level model of searching one string inside another.
+    pub open spec fn contains_char_subsequence(
+        haystack: Seq<char>,
+        needle: Seq<char>,
     ) -> bool {
         exists |start: int|
             0 <= start
@@ -38,7 +36,7 @@ pub fn contains_literal(haystack: &str, needle: &str) -> bool {
 #[verifier::external_body]
 #[verus_verify(dual_spec, open)]
 #[verus_spec(
-    returns contains_utf8_subsequence(haystack.spec_bytes(), needle.spec_bytes())
+    returns contains_char_subsequence(haystack@, needle@)
 )]
 #[doc(hidden)]
 pub fn contains_literal(haystack: &str, needle: &str) -> bool {
@@ -58,12 +56,12 @@ pub(crate) fn runner_dockerfile_for_bootstrap() -> Result<String, SetupError> {
 #[cfg_attr(
     verus,
     verus_spec(
-        returns contains_utf8_subsequence(
-            source.spec_bytes(),
-            "COPY Cargo.toml Cargo.lock ./".spec_bytes()
-        ) && contains_utf8_subsequence(
-            source.spec_bytes(),
-            "COPY crates ./crates".spec_bytes()
+        returns contains_char_subsequence(
+            source@,
+            "COPY Cargo.toml Cargo.lock ./"@
+        ) && contains_char_subsequence(
+            source@,
+            "COPY crates ./crates"@
         )
     )
 )]
@@ -75,9 +73,9 @@ pub fn dockerfile_has_full_workspace_copy(source: &str) -> bool {
 #[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(
     verus,
-    verus_spec(returns contains_utf8_subsequence(
-        source.spec_bytes(),
-        "/bin/bash.gitrun-real".spec_bytes()
+    verus_spec(returns contains_char_subsequence(
+        source@,
+        "/bin/bash.gitrun-real"@
     ))
 )]
 pub fn dockerfile_uses_safe_bash_entrypoint(source: &str) -> bool {
@@ -88,9 +86,9 @@ pub fn dockerfile_uses_safe_bash_entrypoint(source: &str) -> bool {
 #[cfg_attr(
     verus,
     verus_spec(
-        returns !contains_utf8_subsequence(
-            source.spec_bytes(),
-            "COPY crates ./crates".spec_bytes()
+        returns !contains_char_subsequence(
+            source@,
+            "COPY crates ./crates"@
         )
     )
 )]
@@ -616,12 +614,12 @@ mod verus_verification {
             // its negation is required for this concrete Dockerfile literal.
             assert forall |start: int|
                 0 <= start
-                    && start + ("COPY crates ./crates".spec_bytes().len() as int)
-                    <= adapted.spec_bytes().len() as int
-                    ==> #[trigger] adapted.spec_bytes().subrange(
+                    && start + ("COPY crates ./crates"@.len() as int)
+                    <= adapted@.len() as int
+                    implies #[trigger] adapted@.subrange(
                         start,
-                        start + ("COPY crates ./crates".spec_bytes().len() as int),
-                    ) != "COPY crates ./crates".spec_bytes() by {
+                        start + ("COPY crates ./crates"@.len() as int),
+                    ) != "COPY crates ./crates"@ by {
                 reveal_strlit("COPY crates ./crates");
                 reveal_strlit("COPY Cargo.toml Cargo.lock ./ COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real /entrypoint.sh");
             }

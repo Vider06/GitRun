@@ -34,7 +34,6 @@ PROBES = (
     (
         "openSUSE (glibc)",
         "opensuse/tumbleweed:latest",
-        "sed -i 's|http://download.opensuse.org|https://download.opensuse.org|g' /etc/zypp/repos.d/*.repo; "
         "refreshed=0; "
         "for attempt in 1 2 3; do "
         "if zypper --non-interactive refresh --force; then refreshed=1; break; fi; "

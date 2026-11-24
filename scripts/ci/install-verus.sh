@@ -15,7 +15,8 @@ command -v rustup >/dev/null
 # toolchain is intentionally left unchanged.
 rustup toolchain install 1.99.1 --profile minimal --component rustc-dev --component llvm-tools
 rm -rf "$root" "$download"
-curl --fail --location --retry 3 --proto '=https' --tlsv1.2 "$url" --output "$download"
+# The URL is HTTPS; curl verifies the certificate and negotiates TLS securely by default.
+curl --fail --location --retry 3 "$url" --output "$download"
 mkdir -p "$root"
 unzip -q "$download" -d "$root"
 if [[ -d "$root/verus-x86-linux" ]]; then

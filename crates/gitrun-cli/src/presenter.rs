@@ -56,6 +56,7 @@ static ACTIVE_TERMINAL: OnceLock<Mutex<Option<SharedTerminal>>> = OnceLock::new(
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(not(verus))]
 pub(crate) enum ValidationState {
     Ready,
     Reading,
@@ -610,6 +611,7 @@ fn choose_cat_state(state: ValidationState) -> &'static str {
     }
 }
 
+#[cfg(not(verus))]
 fn live_state_sequence(state: ValidationState) -> &'static [&'static str] {
     match state {
         ValidationState::Ready => &["kitty", "seated", "cute"],

@@ -610,6 +610,19 @@ mod verus_verification {
             let adapted = "COPY Cargo.toml Cargo.lock ./ COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real /entrypoint.sh";
             assert(dockerfile_has_full_workspace_copy(source));
             assert(dockerfile_uses_safe_bash_entrypoint(adapted));
+            // Discharge the negative substring property explicitly. Verus
+            // otherwise leaves the existential sequence search opaque when
+            // its negation is required for this concrete Dockerfile literal.
+            assert forall |start: int|
+                0 <= start
+                    && start + "COPY crates ./crates".spec_bytes().len() <= adapted.spec_bytes().len()
+                    ==> #[trigger] adapted.spec_bytes().subrange(
+                        start,
+                        start + "COPY crates ./crates".spec_bytes().len(),
+                    ) != "COPY crates ./crates".spec_bytes() by {
+                reveal_strlit("COPY crates ./crates");
+                reveal_strlit("COPY Cargo.toml Cargo.lock ./ COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real /entrypoint.sh");
+            }
             assert(dockerfile_build_context_is_minimal(adapted));
             assert(!dockerfile_has_full_workspace_copy(adapted));
             assert(!dockerfile_uses_safe_bash_entrypoint(source));

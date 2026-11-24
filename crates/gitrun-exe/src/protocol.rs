@@ -4,6 +4,9 @@
 //! A transport can carry these envelopes over a Unix socket or another
 //! protected local channel, while the executor still verifies the GSR MAC.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
@@ -33,25 +36,25 @@ const DEFAULT_REPLAY_CACHE_SIZE: usize = 4096;
 
 const MIN_CHANNEL_KEY_LEN: usize = 32;
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns length >= 32))]
 pub(crate) fn channel_key_length_is_valid(length: usize) -> bool {
     length >= 32
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns length == 32))]
 pub(crate) fn nonce_length_is_valid(length: usize) -> bool {
     length == 32
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns length == 32))]
 pub(crate) fn mac_length_is_valid(length: usize) -> bool {
     length == 32
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns if current >= timestamp { current - timestamp <= maximum_skew } else { timestamp - current <= maximum_skew }))]
 pub(crate) fn timestamp_is_within_skew(current: u64, timestamp: u64, maximum_skew: u64) -> bool {
     if current >= timestamp {

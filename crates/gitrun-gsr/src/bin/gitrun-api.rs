@@ -5,6 +5,9 @@
 //! an ApiInvocation and sends it to the host-side GitRun service, where GSR
 //! authorizes the request before gitrun-exe sees it.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
@@ -26,13 +29,13 @@ use std::io::{BufRead, BufReader, Write};
 #[cfg(not(any(kani, verus)))]
 use std::os::unix::net::UnixStream;
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns !key_present))]
 pub(crate) fn argument_key_is_available(key_present: bool) -> bool {
     !key_present
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns !operation_already_selected))]
 pub(crate) fn operation_slot_is_available(operation_already_selected: bool) -> bool {
     !operation_already_selected

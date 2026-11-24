@@ -5,6 +5,9 @@
 //! resource policy, and (for Dock execute) the existing GSR command policy
 //! before it can be converted into an AuthorizedOperation for gitrun-exe.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(any(kani, verus)))]
 use gitrun_core::{
     api_policy::{parse_boolean_argument, validate_arguments, GitRunApi, GitRunOperation},
@@ -162,7 +165,7 @@ pub fn authorize(
     )
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(
     verus,
     verus_spec(returns api_enabled && operation_supported && policy_enabled)

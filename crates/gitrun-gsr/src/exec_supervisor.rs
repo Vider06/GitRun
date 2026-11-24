@@ -25,6 +25,9 @@
 //! deliberately fail closed instead of silently falling back to the weaker
 //! shell-only implementation.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(any(kani, verus)))]
 use gitrun_core::command_policy::CommandPolicy;
 #[cfg(all(
@@ -75,7 +78,7 @@ pub enum SupervisorError {
     InspectFailed(i32),
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(
     verus,
     verus_spec(returns (status & 0x7f) == 0x7f && (status & 0x80) == 0)
@@ -84,13 +87,13 @@ pub(crate) fn wait_status_is_stopped(status: i32) -> bool {
     (status & 0x7f) == 0x7f && (status & 0x80) == 0
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns (status & 0x7f) == 0))]
 pub(crate) fn wait_status_is_exited(status: i32) -> bool {
     (status & 0x7f) == 0
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(
     verus,
     verus_spec(

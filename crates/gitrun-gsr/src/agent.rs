@@ -16,6 +16,9 @@
 //! for the shell layer, while the kernel layer guarantees that directly
 //! invoking those paths does not bypass the policy.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(any(kani, verus)))]
 use crate::events::{self, SecurityEvent, Severity};
 #[cfg(not(any(kani, verus)))]

@@ -6,6 +6,9 @@
 //! a permit can be returned. The permit is intentionally not constructible by
 //! callers outside this module.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(any(kani, verus)))]
 use crate::events::{self, SecurityEvent, Severity};
 #[cfg(not(any(kani, verus)))]
@@ -203,7 +206,7 @@ pub fn authorize_action(
     })
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(
     verus,
     verus_spec(returns proposed >= configured && proposed <= maximum)
@@ -212,7 +215,7 @@ pub(crate) fn runner_floor_is_bounded(configured: u32, proposed: u32, maximum: u
     proposed >= configured && proposed <= maximum
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(
     verus,
     verus_spec(

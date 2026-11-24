@@ -5,6 +5,9 @@
 //! and authorized by GSR before they reach this layer. There is deliberately
 //! no variant for arbitrary shell/Docker commands.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
@@ -149,6 +152,7 @@ pub(crate) fn noop_backend_unsupported_pair(
     (api, operation)
 }
 
+#[cfg(not(verus))]
 pub fn noop_backend_unsupported_error(
     api: GitRunApi,
     operation: GitRunOperation,

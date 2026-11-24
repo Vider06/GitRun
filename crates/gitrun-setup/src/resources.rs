@@ -586,8 +586,8 @@ mod kani_verification {
 #[cfg(verus)]
 mod verus_verification {
     use super::{
-        dockerfile_build_context_is_minimal, dockerfile_has_full_workspace_copy,
-        dockerfile_uses_safe_bash_entrypoint,
+        contains_char_subsequence, dockerfile_build_context_is_minimal,
+        dockerfile_has_full_workspace_copy, dockerfile_uses_safe_bash_entrypoint,
     };
     use vstd::prelude::*;
 

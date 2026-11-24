@@ -28,17 +28,23 @@ verus! {
 /// Rust's `str::contains` is not currently modeled by vstd. Keep the standard
 /// library operation behind one narrow trusted boundary with its exact byte
 /// substring contract. Kani and setup tests exercise the concrete body.
-#[cfg_attr(verus, verifier::external_body)]
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
-#[cfg_attr(
-    verus,
-    verus_spec(
-        returns contains_utf8_subsequence(haystack.spec_bytes(), needle.spec_bytes())
-    )
-)]
+#[cfg(not(verus))]
 #[doc(hidden)]
 pub fn contains_literal(haystack: &str, needle: &str) -> bool {
     haystack.contains(needle)
+}
+
+#[cfg(verus)]
+#[verifier::external_body]
+#[verus_verify(dual_spec, open)]
+#[verus_spec(
+    returns contains_utf8_subsequence(haystack.spec_bytes(), needle.spec_bytes())
+)]
+#[doc(hidden)]
+pub fn contains_literal(haystack: &str, needle: &str) -> bool {
+    // The concrete implementation is compiled only in non-Verus builds.
+    // Verus reasons from the exact byte-subsequence contract above.
+    true
 }
 
 /// Build from the Dockerfile shipped in this signed GitRun release. The updater

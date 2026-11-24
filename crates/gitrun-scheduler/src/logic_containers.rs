@@ -66,6 +66,7 @@ pub struct LogicRule {
         }
     )
 )]
+#[allow(clippy::manual_range_contains)] // Explicit bounds are used in the Verus-compatible implementation.
 pub(crate) fn ascii_lowercase_label_byte(byte: u8) -> u8 {
     if byte >= b'A' && byte <= b'Z' {
         byte + 32

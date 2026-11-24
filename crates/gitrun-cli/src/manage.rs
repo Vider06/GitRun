@@ -3954,6 +3954,39 @@ mod kani_verification {
     }
 }
 
+#[cfg(verus)]
+mod verus_verification {
+    use vstd::prelude::*;
+
+    verus! {
+        // This is the formal contract for the executable predicate checked
+        // exhaustively by Kani in the same source module.
+        open spec fn repo_component_byte_allowed_spec(byte: u8) -> bool {
+            (b'A' <= byte && byte <= b'Z')
+                || (b'a' <= byte && byte <= b'z')
+                || (b'0' <= byte && byte <= b'9')
+                || byte == b'-'
+                || byte == b'_'
+                || byte == b'.'
+        }
+
+        proof fn repository_component_contract_rejects_separators(byte: u8)
+            ensures
+                !repo_component_byte_allowed_spec(b'/'),
+                !repo_component_byte_allowed_spec(b' '),
+                !repo_component_byte_allowed_spec(b'@'),
+                !repo_component_byte_allowed_spec(0),
+                repo_component_byte_allowed_spec(b'A'),
+                repo_component_byte_allowed_spec(b'Z'),
+                repo_component_byte_allowed_spec(b'a'),
+                repo_component_byte_allowed_spec(b'z'),
+                repo_component_byte_allowed_spec(b'0'),
+                repo_component_byte_allowed_spec(b'9'),
+        {
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

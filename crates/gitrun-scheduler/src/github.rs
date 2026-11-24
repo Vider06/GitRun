@@ -17,7 +17,7 @@
 //!    header until exhausted.
 
 #[cfg(verus)]
-use vstd::prelude::{int, verus_spec, verus_verify};
+use vstd::prelude::{int, verus_spec, verus_verify, SpecOrd, SpecSub};
 
 #[cfg(not(any(kani, verus)))]
 use gitrun_core::AppAuth;

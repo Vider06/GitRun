@@ -428,7 +428,13 @@ const MAX_API_ATTEMPTS: usize = 10;
 pub(crate) fn clamp_api_attempts(attempts: usize) -> usize {
     #[cfg(verus)]
     {
-        if attempts < 1 { 1 } else if attempts > 10 { 10 } else { attempts }
+        if attempts < 1 {
+            1
+        } else if attempts > 10 {
+            10
+        } else {
+            attempts
+        }
     }
     #[cfg(not(verus))]
     {

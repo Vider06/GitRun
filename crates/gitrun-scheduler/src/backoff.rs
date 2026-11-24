@@ -225,7 +225,7 @@ mod kani_verification {
 
 #[cfg(verus)]
 mod verus_verification {
-    use super::{cap_cooldown_seconds, 86_400};
+    use super::cap_cooldown_seconds;
     use vstd::prelude::*;
 
     verus! {

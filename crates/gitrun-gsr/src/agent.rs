@@ -40,8 +40,6 @@ use vstd::contrib::exec_spec::*;
 #[cfg(verus)]
 use vstd::prelude::*;
 #[cfg(verus)]
-
-#[cfg(verus)]
 verus! {
     pub open spec fn is_bash_invocation_spec(invocation: Seq<char>) -> bool {
         invocation =~= "bash"@

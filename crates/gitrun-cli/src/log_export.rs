@@ -50,7 +50,7 @@ mod linux {
     fn remove_remote_token(ssh: &str, target: &str, path: &str) {
         let command = format!("rm -f {path}");
         let _ = Command::new(ssh)
-            .args(["-T", target, &command])
+            .args(["-T", target, command.as_str()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
@@ -59,7 +59,7 @@ mod linux {
     fn remote_token(ssh: &str, target: &str, token: &str, path: &str) -> io::Result<()> {
         let command = format!("umask 077; cat > {path} && chmod 600 {path}");
         let mut child = Command::new(ssh)
-            .args(["-T", target, &command])
+            .args(["-T", target, command.as_str()])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -206,7 +206,6 @@ mod linux {
                         if status.success() && !write_done {
                             let remaining = deadline.saturating_duration_since(Instant::now());
                             if let Ok(result) = rx.recv_timeout(remaining) {
-                                write_done = true;
                                 write_ok = result.is_ok();
                             }
                         }
@@ -450,10 +449,10 @@ mod linux {
                 "-o",
                 "ExitOnForwardFailure=yes",
                 "-R",
-                &forward,
+                forward.as_str(),
                 "-tt",
                 target,
-                &remote,
+                remote.as_str(),
             ])
             .spawn()
         {

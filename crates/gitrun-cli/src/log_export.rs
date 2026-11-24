@@ -174,7 +174,7 @@ mod linux {
             };
             let bytes = payload.to_vec();
             let (tx, rx) = std::sync::mpsc::channel();
-            thread::spawn(move || {
+            let _writer = thread::spawn(move || {
                 let result = stdin.write_all(&bytes);
                 drop(stdin);
                 let _ = tx.send(result);
@@ -311,10 +311,9 @@ mod linux {
         } else {
             path
         };
-        let parent = path.parent().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "save path has no parent")
-        })?;
-        fs::create_dir_all(parent)?;
+        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+            fs::create_dir_all(parent)?;
+        }
         let mut options = OpenOptions::new();
         options.write(true).create(true).truncate(true);
         #[cfg(unix)]

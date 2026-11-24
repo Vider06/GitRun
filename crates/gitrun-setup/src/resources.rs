@@ -8,8 +8,6 @@ use super::SetupError;
 #[allow(unused_imports)]
 use vstd::prelude::*;
 #[cfg(verus)]
-
-#[cfg(verus)]
 verus! {
     /// Character-level model of searching one string inside another.
     pub open spec fn contains_char_subsequence(
@@ -24,7 +22,7 @@ verus! {
 }
 
 /// Rust's `str::contains` is not currently modeled by vstd. Keep the standard
-/// library operation behind one narrow trusted boundary with its exact byte
+/// library operation behind one narrow trusted boundary with its exact character
 /// substring contract. Kani and setup tests exercise the concrete body.
 #[cfg(not(verus))]
 #[doc(hidden)]
@@ -41,7 +39,7 @@ pub fn contains_literal(haystack: &str, needle: &str) -> bool {
 #[doc(hidden)]
 pub fn contains_literal(haystack: &str, needle: &str) -> bool {
     // The concrete implementation is compiled only in non-Verus builds.
-    // Verus reasons from the exact byte-subsequence contract above.
+    // Verus reasons from the exact character-subsequence contract above.
     true
 }
 

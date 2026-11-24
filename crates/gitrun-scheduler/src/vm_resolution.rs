@@ -27,6 +27,8 @@
 
 #[cfg(verus)]
 use vstd::prelude::{verus_spec, verus_verify};
+#[cfg(verus)]
+use vstd::array::ArrayAdditionalSpecFns;
 
 #[cfg(not(any(kani, verus)))]
 use crate::docker::{self, DockerHost};

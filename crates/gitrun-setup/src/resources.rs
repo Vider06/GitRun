@@ -33,7 +33,6 @@ pub fn contains_literal(haystack: &str, needle: &str) -> bool {
 #[cfg(verus)]
 #[verifier::external_body]
 #[verifier::allow_in_spec]
-#[verus_verify(dual_spec, open)]
 #[verus_spec(
     returns contains_char_subsequence(haystack@, needle@)
 )]

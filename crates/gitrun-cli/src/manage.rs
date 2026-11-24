@@ -3914,7 +3914,10 @@ fn restore_redacted(edited: &mut Value, original: &Value) {
 // Keep repository-component policy byte-oriented and dependency-free so the
 // exact predicate used by CLI validation can be checked by both formal tools.
 fn repo_component_byte_allowed(byte: u8) -> bool {
-    (b'A' <= byte && byte <= b'Z') || (b'a' <= byte && byte <= b'z') || (b'0' <= byte && byte <= b'9') || matches!(byte, b'-' | b'_' | b'.')
+    (b'A' <= byte && byte <= b'Z')
+        || (b'a' <= byte && byte <= b'z')
+        || (b'0' <= byte && byte <= b'9')
+        || matches!(byte, b'-' | b'_' | b'.')
 }
 
 fn valid_repo(repo: &str) -> bool {

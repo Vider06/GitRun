@@ -378,20 +378,19 @@ mod verus_verification {
 
     verus! {
         proof fn shell_dispatch_spec_separates_bash_from_sh() {
+            reveal_strlit("bash");
+            reveal_strlit("/bin/bash");
+            reveal_strlit("/usr/bin/bash");
+            reveal_strlit("sh");
+            reveal_strlit("/bin/sh");
+            reveal_strlit("/bin/bash.gitrun-real");
 
-
-
-
-
-
-
-
-            assert(is_bash_invocation_spec(b"bash"@));
-            assert(is_bash_invocation_spec(b"/bin/bash"@));
-            assert(is_bash_invocation_spec(b"/usr/bin/bash"@));
-            assert(!is_bash_invocation_spec(b"sh"@));
-            assert(!is_bash_invocation_spec(b"/bin/sh"@));
-            assert(!is_bash_invocation_spec(b"/bin/bash.gitrun-real"@));
+            assert(is_bash_invocation_spec("bash".spec_bytes()));
+            assert(is_bash_invocation_spec("/bin/bash".spec_bytes()));
+            assert(is_bash_invocation_spec("/usr/bin/bash".spec_bytes()));
+            assert(!is_bash_invocation_spec("sh".spec_bytes()));
+            assert(!is_bash_invocation_spec("/bin/sh".spec_bytes()));
+            assert(!is_bash_invocation_spec("/bin/bash.gitrun-real".spec_bytes()));
         }
     }
 }

@@ -613,7 +613,7 @@ mod verus_verification {
             // there the candidate differs at index 11 ('/' versus ' ').
             assert forall |index: int|
                 0 <= index < adapted@.len() && index != 0
-                implies adapted@[index] != 'C' by {
+                implies #[trigger] adapted@[index] != 'C' by {
                 reveal_strlit("COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real");
             }
             assert forall |start: int|

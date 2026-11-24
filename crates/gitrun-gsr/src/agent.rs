@@ -371,13 +371,6 @@ mod verus_verification {
 
     verus! {
         proof fn shell_dispatch_spec_separates_bash_from_sh() {
-            broadcast use vstd::string::is_ascii_spec_bytes;
-            assert(vstd::string::is_ascii("bash"));
-            assert(vstd::string::is_ascii("/bin/bash"));
-            assert(vstd::string::is_ascii("/usr/bin/bash"));
-            assert(vstd::string::is_ascii("sh"));
-            assert(vstd::string::is_ascii("/bin/sh"));
-            assert(vstd::string::is_ascii("/bin/bash.gitrun-real"));
             reveal_strlit("bash");
             reveal_strlit("/bash");
             reveal_strlit("/bin/bash");
@@ -385,6 +378,13 @@ mod verus_verification {
             reveal_strlit("sh");
             reveal_strlit("/bin/sh");
             reveal_strlit("/bin/bash.gitrun-real");
+            assert(vstd::string::is_ascii("bash"));
+            assert(vstd::string::is_ascii("/bin/bash"));
+            assert(vstd::string::is_ascii("/usr/bin/bash"));
+            assert(vstd::string::is_ascii("sh"));
+            assert(vstd::string::is_ascii("/bin/sh"));
+            assert(vstd::string::is_ascii("/bin/bash.gitrun-real"));
+            broadcast use vstd::string::is_ascii_spec_bytes;
 
             assert(is_bash_invocation_spec("bash".spec_bytes()));
             assert(is_bash_invocation_spec("/bin/bash".spec_bytes()));

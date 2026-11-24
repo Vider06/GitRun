@@ -3970,7 +3970,7 @@ mod verus_verification {
                 || byte == b'.'
         }
 
-        proof fn repository_component_contract_rejects_separators(byte: u8)
+        proof fn repository_component_contract_rejects_separators()
             ensures
                 !repo_component_byte_allowed_spec(b'/'),
                 !repo_component_byte_allowed_spec(b' '),

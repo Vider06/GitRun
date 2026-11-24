@@ -174,6 +174,7 @@ fn read_state_file(path: &Path) -> Result<Option<StateFile>, StateError> {
             || matches!(byte, b'.' | b'_' | b'-')
     )
 )]
+#[allow(clippy::manual_range_contains)] // Keep the byte predicate compatible with Verus specifications.
 pub(crate) fn repository_identity_byte_is_valid(byte: u8) -> bool {
     (byte >= b'0' && byte <= b'9')
         || (byte >= b'A' && byte <= b'Z')

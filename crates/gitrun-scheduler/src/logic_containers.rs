@@ -17,7 +17,7 @@
 //! inside that VM, exactly like Linux containers run on the bare host.
 
 #[cfg(verus)]
-use vstd::prelude::{int, verus_spec, verus_verify, SpecAdd};
+use vstd::prelude::{int, verus_spec, verus_verify, SpecAdd, SpecOrd};
 
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};

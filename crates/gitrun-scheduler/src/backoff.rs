@@ -51,7 +51,7 @@ pub(crate) fn cap_cooldown_seconds(seconds: u64) -> u64 {
     {
         // Keep the verifier-visible bound literal: Verus does not import
         // Rust constants declared outside its verification context.
-        seconds.min(86_400)
+        if seconds < 86_400 { seconds } else { 86_400 }
     }
     #[cfg(not(verus))]
     {

@@ -167,10 +167,18 @@ fn read_state_file(path: &Path) -> Result<Option<StateFile>, StateError> {
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(
     verus,
-    verus_spec(returns byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    verus_spec(
+        returns (byte >= 48 && byte <= 57)
+            || (byte >= 65 && byte <= 90)
+            || (byte >= 97 && byte <= 122)
+            || matches!(byte, b'.' | b'_' | b'-')
+    )
 )]
 pub(crate) fn repository_identity_byte_is_valid(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
+    (byte >= b'0' && byte <= b'9')
+        || (byte >= b'A' && byte <= b'Z')
+        || (byte >= b'a' && byte <= b'z')
+        || matches!(byte, b'.' | b'_' | b'-')
 }
 
 fn repository_identity_segment_is_valid(segment: &str) -> bool {
@@ -895,7 +903,10 @@ mod verus_verification {
         proof fn repository_identity_byte_alphabet_is_exact(byte: u8)
             ensures
                 repository_identity_byte_is_valid(byte)
-                    == (byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')),
+                    == ((byte >= 48 && byte <= 57)
+                        || (byte >= 65 && byte <= 90)
+                        || (byte >= 97 && byte <= 122)
+                        || matches!(byte, b'.' | b'_' | b'-')),
         {
         }
     }

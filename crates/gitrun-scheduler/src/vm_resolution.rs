@@ -476,7 +476,7 @@ pub fn load_vm_definitions(state_dir: &Path) -> vm::Result<Vec<VmConfig>> {
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
 pub(crate) fn ipv4_octets_are_private(octets: [u8; 4]) -> bool {
     let [first, second, _, _] = octets;
-    first == 10 || (first == 172 && (16..=31).contains(&second)) || (first == 192 && second == 168)
+    first == 10 || (first == 172 && second >= 16 && second <= 31) || (first == 192 && second == 168)
 }
 
 #[cfg(not(any(kani, verus)))]

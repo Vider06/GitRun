@@ -1,6 +1,6 @@
 //! Host-wide scheduler backpressure based on CPU utilization, available memory and critical filesystem usage.
 #[cfg(verus)]
-use vstd::prelude::{verus_spec, verus_verify};
+use vstd::prelude::{verus_spec, verus_verify, SpecOrd};
 
 #[cfg(not(any(kani, verus)))]
 use gitrun_core::Config;

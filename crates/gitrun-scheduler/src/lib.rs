@@ -3379,15 +3379,15 @@ fn vault_env_for_repo(
 #[cfg_attr(
     verus,
     verus_spec(
-        returns if first { byte.is_ascii_uppercase() || byte == b'_' }
-        else { byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_' }
+        returns if first { (byte >= 65 && byte <= 90) || byte == 95 }
+        else { (byte >= 65 && byte <= 90) || (byte >= 48 && byte <= 57) || byte == 95 }
     )
 )]
 pub(crate) fn env_var_name_byte_is_valid(byte: u8, first: bool) -> bool {
     if first {
-        byte.is_ascii_uppercase() || byte == b'_'
+        (byte >= b'A' && byte <= b'Z') || byte == b'_'
     } else {
-        byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
+        (byte >= b'A' && byte <= b'Z') || (byte >= b'0' && byte <= b'9') || byte == b'_'
     }
 }
 
@@ -4619,9 +4619,9 @@ mod verus_verification {
             ensures
                 env_var_name_byte_is_valid(byte, first)
                     == if first {
-                        byte.is_ascii_uppercase() || byte == b'_'
+                        (byte >= 65 && byte <= 90) || byte == 95
                     } else {
-                        byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_'
+                        (byte >= 65 && byte <= 90) || (byte >= 48 && byte <= 57) || byte == 95
                     },
         {
         }

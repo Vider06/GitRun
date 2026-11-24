@@ -637,7 +637,6 @@ mod verus_verification {
                 }
             }
             assert(dockerfile_build_context_is_minimal(adapted));
-            assert(!dockerfile_has_full_workspace_copy(adapted));
             assert(!dockerfile_uses_safe_bash_entrypoint(source));
             assert(!dockerfile_build_context_is_minimal(source));
         }

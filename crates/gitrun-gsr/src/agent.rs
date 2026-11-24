@@ -372,13 +372,13 @@ mod verus_verification {
 
     verus! {
         proof fn shell_dispatch_spec_separates_bash_from_sh() {
-            
-            
-            
-            
-            
-            
-            
+
+
+
+
+
+
+
 
             assert(is_bash_invocation_spec(b"bash"@));
             assert(is_bash_invocation_spec(b"/bin/bash"@));

@@ -1,3 +1,6 @@
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
@@ -38,7 +41,7 @@ pub enum Severity {
     Critical,
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns severity == Severity::Critical))]
 pub(crate) fn recovery_severity_is_critical(severity: Severity) -> bool {
     matches!(severity, Severity::Critical)

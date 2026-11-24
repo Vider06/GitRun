@@ -8,6 +8,9 @@
 //! a `DockerRunner`-shaped snapshot as plain data instead of calling this module
 //! directly, so it stays testable without Docker installed.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(any(kani, verus)))]
 use serde_json::Value;
 #[cfg(not(any(kani, verus)))]
@@ -366,7 +369,7 @@ pub fn sanitize(value: &str, replacement: char) -> String {
 /// Collision-resistant, URL-safe repository prefix for runner container names.
 /// The short readable prefix is cosmetic; the full unpadded Base64URL encoding
 /// makes distinct repository identifiers map to distinct prefixes.
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(
     verus,
     verus_spec(returns matches!(byte, b'0'..=b'9' | b'a'..=b'f'))

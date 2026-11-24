@@ -5,6 +5,9 @@
 //! for every API operation. Atomic replacement makes scheduler/API concurrent
 //! readers safe without introducing another database dependency.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 #[cfg(not(any(kani, verus)))]
@@ -58,7 +61,7 @@ pub struct DockRegistry {
     pub bindings: Vec<DockBinding>,
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(
     verus,
     verus_spec(

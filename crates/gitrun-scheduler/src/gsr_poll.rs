@@ -29,6 +29,9 @@
 //! who keeps retrying) can go unnoticed, not to guarantee catching
 //! everything a stream-based tool would.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(any(kani, verus)))]
 use crate::docker::{self, DockerHost};
 #[cfg(not(any(kani, verus)))]
@@ -235,13 +238,13 @@ impl BanStore {
     }
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns now.saturating_add(duration_seconds)))]
 pub(crate) fn ban_expiry_timestamp(now: u64, duration_seconds: u64) -> u64 {
     now.saturating_add(duration_seconds)
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns until > now))]
 pub(crate) fn ban_is_active(until: u64, now: u64) -> bool {
     until > now

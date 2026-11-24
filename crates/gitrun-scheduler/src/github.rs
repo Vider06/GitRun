@@ -16,6 +16,9 @@
 //!    queued workflow runs. This client follows the `Link: rel="next"`
 //!    header until exhausted.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(any(kani, verus)))]
 use gitrun_core::AppAuth;
 #[cfg(not(any(kani, verus)))]
@@ -420,19 +423,19 @@ pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const DEFAULT_API_ATTEMPTS: usize = 3;
 const MAX_API_ATTEMPTS: usize = 10;
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns attempts.clamp(1, MAX_API_ATTEMPTS)))]
 pub(crate) fn clamp_api_attempts(attempts: usize) -> usize {
     attempts.clamp(1, MAX_API_ATTEMPTS)
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns matches!(status, 408 | 500 | 502 | 503 | 504)))]
 pub(crate) fn retryable_http_status(status: u16) -> bool {
     matches!(status, 408 | 500 | 502 | 503 | 504)
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns 2u64.saturating_pow(attempt.saturating_sub(1) as u32).min(8)))]
 pub(crate) fn retry_delay_seconds(attempt: usize) -> u64 {
     2_u64
@@ -440,7 +443,7 @@ pub(crate) fn retry_delay_seconds(attempt: usize) -> u64 {
         .min(8)
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(
     verus,
     verus_spec(returns reset_epoch.saturating_sub(now_epoch).max(1) as u64)

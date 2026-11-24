@@ -5,6 +5,9 @@
 //! PID-file reads fail explicitly on malformed, symlinked, non-regular or
 //! hard-linked files so a corrupted file cannot be mistaken for clean shutdown.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(any(kani, verus)))]
 use crate::events::{self, Severity};
 #[cfg(not(any(kani, verus)))]

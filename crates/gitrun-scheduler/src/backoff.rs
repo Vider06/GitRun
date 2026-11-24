@@ -15,6 +15,9 @@
 //! even *attempts* any GitHub call, so a limited repo is skipped outright
 //! instead of generating another doomed request.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(verus))]
 use std::collections::HashMap;
 #[cfg(not(verus))]
@@ -37,7 +40,7 @@ const MAX_COOLDOWN_SECONDS: u64 = 24 * 60 * 60;
 const MAX_COOLDOWN: Duration = Duration::from_secs(MAX_COOLDOWN_SECONDS);
 
 /// Clamp an untrusted Retry-After value to the repository cooldown ceiling.
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(
     verus,
     verus_spec(returns cap_cooldown_seconds(seconds))

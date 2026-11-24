@@ -29,6 +29,7 @@ verus! {
 /// library operation behind one narrow trusted boundary with its exact byte
 /// substring contract. Kani and setup tests exercise the concrete body.
 #[cfg_attr(verus, verifier::external_body)]
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
 #[cfg_attr(
     verus,
     verus_spec(

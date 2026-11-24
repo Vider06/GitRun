@@ -37,6 +37,7 @@ readonly -a production_sources=(
   "crates/gitrun-updater/src/release_policy.rs"
   "crates/gitrun-scheduler/src/vm.rs"
   "crates/gitrun-cli/src/presenter.rs"
+  "crates/gitrun-cli/src/manage.rs"
   "crates/gitrun-platform/src/lib.rs"
   "crates/gitrun-scheduler/src/github.rs"
   "crates/gitrun-scheduler/src/gtuu.rs"
@@ -311,7 +312,7 @@ run_verus_target "verification/kani/updater_policy.rs" \
 declare -a package_order=()
 declare -A package_seen=()
 for source in "${production_sources[@]}"; do
-  if [[ "$source" == "crates/gitrun-cli/src/presenter.rs" || "$source" == "crates/gitrun-gsr/src/bin/gitrun-api.rs" ]]; then
+  if [[ "$source" == "crates/gitrun-cli/src/presenter.rs" || "$source" == "crates/gitrun-cli/src/manage.rs" || "$source" == "crates/gitrun-gsr/src/bin/gitrun-api.rs" ]]; then
     continue
   fi
   package="${source#crates/}"
@@ -333,6 +334,7 @@ for package in "${package_order[@]}"; do
   run_verus_package "$package" "${package_sources[@]}"
 done
 
+run_verus_binary "gitrun-cli" "gitrun" "crates/gitrun-cli/src/manage.rs"
 run_verus_binary "gitrun-gsr" "gitrun-api" "crates/gitrun-gsr/src/bin/gitrun-api.rs"
 
 if [ "$proof_failures" -ne 0 ]; then

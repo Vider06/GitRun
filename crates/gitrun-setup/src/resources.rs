@@ -21,7 +21,7 @@ verus! {
         exists |start: int|
             0 <= start
                 && start + needle.len() <= haystack.len()
-                && haystack.subrange(start, start + needle.len()) =~= needle
+                && #[trigger] haystack.subrange(start, start + needle.len()) =~= needle
     }
 }
 
@@ -604,6 +604,9 @@ mod verus_verification {
             reveal_strlit("/bin/bash.gitrun-real");
 
             let source = "COPY Cargo.toml Cargo.lock ./ COPY crates ./crates";
+            // Keep this literal identical to the one exposed to Verus above:
+            // the proof must establish absence of the broad workspace COPY,
+            // not merely rely on an unrevealed string literal.
             let adapted = "COPY Cargo.toml Cargo.lock ./ COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real /entrypoint.sh";
             assert(dockerfile_has_full_workspace_copy(source));
             assert(dockerfile_uses_safe_bash_entrypoint(adapted));

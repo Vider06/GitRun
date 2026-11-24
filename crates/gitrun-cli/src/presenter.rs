@@ -56,6 +56,7 @@ static ACTIVE_TERMINAL: OnceLock<Mutex<Option<SharedTerminal>>> = OnceLock::new(
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(kani, derive(kani::Arbitrary))]
 #[cfg(not(verus))]
 pub(crate) enum ValidationState {
     Ready,

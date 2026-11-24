@@ -213,7 +213,9 @@ mod linux {
                         if status.success() && write_ok {
                             return Ok(program);
                         }
-                        reasons.push(format!("{program} exited {status} before accepting all log data"));
+                        reasons.push(format!(
+                            "{program} exited {status} before accepting all log data"
+                        ));
                         break;
                     }
                     Ok(None) if Instant::now() < deadline => {

@@ -251,6 +251,37 @@ for source in "${production_sources[@]}"; do
   fi
 done
 
+# Keep the executable runner and authoritative proof map in lockstep.
+# A manifest row marked IMPLEMENTED is not coverage unless this script
+# actually schedules its Verus target. This catches omissions before Verus runs.
+python3 - "$0" verification/source-proof-map.tsv <<'PY'
+import csv
+import re
+import sys
+from pathlib import Path
+
+runner_path, manifest_path = map(Path, sys.argv[1:])
+runner = runner_path.read_text(encoding="utf-8")
+array = re.search(r"readonly -a production_sources=\(\s*(.*?)\s*\)", runner, re.DOTALL)
+if array is None:
+    raise SystemExit("Could not locate production_sources in the Verus runner.")
+
+scheduled = set(re.findall(r'"((?:crates|verification)/[^"]+\.rs)"', array.group(1)))
+scheduled.update(re.findall(r'run_verus_target\s+"((?:crates|verification)/[^"]+\.rs)"', runner))
+with manifest_path.open(encoding="utf-8", newline="") as source:
+    rows = csv.DictReader(source, delimiter="\t")
+    missing = sorted(
+        row["SOURCE_FILE"]
+        for row in rows
+        if row["STATUS"] == "IMPLEMENTED" and row["SOURCE_FILE"] not in scheduled
+    )
+if missing:
+    for path in missing:
+        print(f"::error::IMPLEMENTED Verus source is not scheduled: {path}", file=sys.stderr)
+    raise SystemExit(f"{len(missing)} IMPLEMENTED source(s) are absent from the Verus runner.")
+print(f"Verus runner map: all IMPLEMENTED sources are scheduled ({len(scheduled)} targets).")
+PY
+
 echo "Verus executable: $verus"
 mkdir -p "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-ci"
 printf 'Verus\t%s\n' "$("$verus" --version 2>&1 | head -n 1)" >> "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-ci/tools.tsv"

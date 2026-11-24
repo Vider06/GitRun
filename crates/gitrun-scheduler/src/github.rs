@@ -446,10 +446,10 @@ pub(crate) fn retryable_http_status(status: u16) -> bool {
 #[cfg_attr(
     verus,
     verus_spec(returns match attempt.saturating_sub(1) as u32 {
-        0 => 1,
-        1 => 2,
-        2 => 4,
-        _ => 8,
+        0 => 1u64,
+        1 => 2u64,
+        2 => 4u64,
+        _ => 8u64,
     })
 )]
 pub(crate) fn retry_delay_seconds(attempt: usize) -> u64 {
@@ -457,10 +457,10 @@ pub(crate) fn retry_delay_seconds(attempt: usize) -> u64 {
     // exponent avoids an unsupported saturating_pow call without changing
     // the u32 exponent-cast semantics of the original implementation.
     match attempt.saturating_sub(1) as u32 {
-        0 => 1,
-        1 => 2,
-        2 => 4,
-        _ => 8,
+        0 => 1u64,
+        1 => 2u64,
+        2 => 4u64,
+        _ => 8u64,
     }
 }
 

@@ -3436,11 +3436,20 @@ unsafe extern "C" {
 #[cfg(not(any(kani, verus)))]
 impl Drop for UpdateLock {
     fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+
+            // Explicitly unlock before closing the descriptor. This keeps the
+            // release operation visible and deterministic for subsequent
+            // updater attempts in the same process as well as other processes.
+            // SAFETY: the descriptor is owned by this live UpdateLock.
+            let _ = unsafe { native_flock(self._file.as_raw_fd(), 8) };
+        }
         #[cfg(not(unix))]
         {
             let _ = fs::remove_file(&self.path);
         }
-        // On Unix, dropping the open file releases flock in the kernel.
     }
 }
 

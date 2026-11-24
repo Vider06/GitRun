@@ -49,28 +49,38 @@ mod linux {
 
     fn remote_token(ssh: &str, target: &str, token: &str, path: &str) -> io::Result<()> {
         let command = format!("umask 077; cat > {path} && chmod 600 {path}");
-        let status = Command::new(ssh)
+        let mut child = Command::new(ssh)
             .args(["-T", target, &command])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .spawn()
-            .and_then(|mut child| {
-                child
-                    .stdin
-                    .take()
-                    .ok_or_else(|| {
-                        io::Error::new(io::ErrorKind::BrokenPipe, "SSH stdin unavailable")
-                    })?
-                    .write_all(format!("{token}\n").as_bytes())?;
-                child.wait()
-            })?;
-        if !status.success() {
-            return Err(io::Error::other(format!(
-                "could not create private SSH token file (exit {status})"
-            )));
+            .spawn()?;
+        let mut input = child.stdin.take().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::BrokenPipe, "SSH stdin unavailable")
+        })?;
+        input.write_all(format!("{token}\n").as_bytes())?;
+        drop(input);
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            match child.try_wait()? {
+                Some(status) if status.success() => return Ok(()),
+                Some(status) => {
+                    return Err(io::Error::other(format!(
+                        "could not create private SSH token file (exit {status})"
+                    )));
+                }
+                None if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
+                None => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "creating the private SSH token file timed out after 30 seconds",
+                    ));
+                }
+            }
         }
-        Ok(())
     }
 
     fn read_line(stream: &mut TcpStream, limit: usize) -> io::Result<String> {
@@ -402,13 +412,13 @@ mod linux {
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "OpenSSH client is required"))?;
         let token = random_hex(16)?;
         let token_path = format!("{TOKEN_PREFIX}{}.txt", random_hex(16)?);
-        remote_token(&ssh, target, &token, &token_path)?;
         let random_port = u16::from_str_radix(&random_hex(2)?, 16)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let remote_port = 41000_u16 + (random_port % 16000);
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         listener.set_nonblocking(true)?;
         let local_port = listener.local_addr()?.port();
+        remote_token(&ssh, target, &token, &token_path)?;
         let forward = format!("127.0.0.1:{remote_port}:127.0.0.1:{local_port}");
         let remote = format!("trap 'rm -f {token_path}' EXIT; GITRUN_LOG_EXPORT_PORT={remote_port} GITRUN_LOG_EXPORT_TOKEN_FILE={token_path} gitrun manage");
         let mut child = Command::new(&ssh)
@@ -424,9 +434,14 @@ mod linux {
             .spawn()?;
         let mut saved = Vec::new();
         let result = loop {
-            match child.try_wait()? {
-                Some(status) => break status.code().unwrap_or(1),
-                None => {}
+            match child.try_wait() {
+                Ok(Some(status)) => break status.code().unwrap_or(1),
+                Ok(None) => {}
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(error);
+                }
             }
             match listener.accept() {
                 Ok((stream, _)) => {

@@ -592,7 +592,6 @@ mod verus_verification {
         dockerfile_uses_safe_bash_entrypoint,
     };
     use vstd::prelude::*;
-    use vstd::string::StringSliceAdditionalSpecFns;
 
     verus! {
         proof fn bootstrap_dockerfile_requires_minimal_build_context_and_safe_entrypoint() {

@@ -197,6 +197,8 @@ mod linux {
                         write_done = true;
                         write_ok = result.is_ok();
                         if !write_ok {
+                            let _ = child.kill();
+                            let _ = child.wait();
                             break;
                         }
                     }

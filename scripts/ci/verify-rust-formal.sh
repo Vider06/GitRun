@@ -104,16 +104,28 @@ record_kani_diagnostic() {
 
 run_kani_command() {
   local label="$1"; shift
-  local output rc
-  if output="$("$@" 2>&1)"; then
-    printf '%s\n' "$output"
+  local rc=0
+  local log="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-ci/logs/kani-live-${label//[^A-Za-z0-9_.-]/_}.log"
+  local -a pipeline_status
+  mkdir -p "$(dirname "$log")"
+
+  # Stream Kani output as it runs instead of buffering an entire package for
+  # an hour or more in a shell variable. This preserves live harness progress
+  # and leaves a recoverable log if a runner is interrupted.
+  set +e
+  "$@" 2>&1 | tee "$log"
+  pipeline_status=("${PIPESTATUS[@]}")
+  set -e
+
+  if (( pipeline_status[0] == 0 && pipeline_status[1] == 0 )); then
     return 0
-  else
-    rc=$?
-    printf '%s\n' "$output"
-    record_kani_diagnostic "$label" "$*" "$rc" "$output"
-    return "$rc"
   fi
+  rc="${pipeline_status[0]}"
+  if (( rc == 0 )); then
+    rc="${pipeline_status[1]}"
+  fi
+  record_kani_diagnostic "$label" "$*" "$rc" "$(cat "$log")"
+  return "$rc"
 }
 
 run_kani_target() {
@@ -156,6 +168,7 @@ run_kani_package() {
   shift
   local -a sources=("$@")
   local source
+  echo "Starting Kani production package: $package"
   if run_kani_command "kani-package-$package" cargo --locked kani -p "$package" --lib; then
     for source in "${sources[@]}"; do
       record_result "$source" PROVEN

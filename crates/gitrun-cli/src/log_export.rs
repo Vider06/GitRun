@@ -13,7 +13,7 @@ mod linux {
         env,
         fs::{self, OpenOptions},
         io::{self, Read, Write},
-        net::{TcpListener, TcpStream},
+        net::{Ipv4Addr, TcpListener, TcpStream},
         path::PathBuf,
         process::{Command, Stdio},
         thread,
@@ -439,14 +439,17 @@ mod linux {
         let random_port = u16::from_str_radix(&random_hex(2)?, 16)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
         let remote_port = 41000_u16 + (random_port % 16000);
-        let listener = TcpListener::bind(("127.0.0.1", 0))?;
+        // Keep the temporary receiver private to this host; never expose it on a
+        // network interface. The SSH reverse forward uses the same loopback address.
+        let loopback = Ipv4Addr::LOCALHOST;
+        let listener = TcpListener::bind((loopback, 0))?;
         listener.set_nonblocking(true)?;
         let local_port = listener.local_addr()?.port();
         if let Err(error) = remote_token(&ssh, target, &token, &token_path) {
             remove_remote_token(&ssh, target, &token_path);
             return Err(error);
         }
-        let forward = format!("127.0.0.1:{remote_port}:127.0.0.1:{local_port}");
+        let forward = format!("{loopback}:{remote_port}:{loopback}:{local_port}");
         let remote = format!("trap 'rm -f {token_path}' EXIT; GITRUN_LOG_EXPORT_PORT={remote_port} GITRUN_LOG_EXPORT_TOKEN_FILE={token_path} gitrun manage");
         let mut child = match Command::new(&ssh)
             .args([

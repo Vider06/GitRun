@@ -378,6 +378,7 @@ pub(crate) fn valid_workload_routing_byte(byte: u8) -> bool {
     matches!(byte, b'0'..=b'9' | b'a'..=b'f')
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 fn valid_workload_routing_id(code: &str) -> bool {
     let Some(digest) = code.strip_prefix("wk-") else {
         return false;
@@ -385,6 +386,7 @@ fn valid_workload_routing_id(code: &str) -> bool {
     digest.len() == 16 && digest.bytes().all(valid_workload_routing_byte)
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 fn valid_prewarm_workload_id(code: &str) -> bool {
     valid_workload_routing_id(code)
 }

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Verus emits package-local AIR logs into a shared workspace directory. Keep
+# Cargo's verifier builds serial so parallel rustc jobs cannot race on them.
+export CARGO_BUILD_JOBS=1
+
 readonly verus="${VERUS_PATH:-${RUNNER_TEMP:-/tmp}/verus/installed/verus}"
 readonly results="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-verus-proof-results.tsv"
 readonly verus_multiple_errors="${VERUS_MULTIPLE_ERRORS:-500}"

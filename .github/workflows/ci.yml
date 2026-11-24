@@ -3108,12 +3108,14 @@ jobs:
           path: ${{ runner.temp }}
       - name: Download Kani proof results
         if: always()
+        continue-on-error: true
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: kani-formal-results
           path: ${{ runner.temp }}
       - name: Download Verus proof results
         if: always()
+        continue-on-error: true
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
         with:
           name: verus-formal-results

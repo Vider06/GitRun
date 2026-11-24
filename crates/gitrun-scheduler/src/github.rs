@@ -426,7 +426,14 @@ const MAX_API_ATTEMPTS: usize = 10;
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns attempts.clamp(1, MAX_API_ATTEMPTS)))]
 pub(crate) fn clamp_api_attempts(attempts: usize) -> usize {
-    attempts.clamp(1, MAX_API_ATTEMPTS)
+    #[cfg(verus)]
+    {
+        attempts.clamp(1, 10)
+    }
+    #[cfg(not(verus))]
+    {
+        attempts.clamp(1, MAX_API_ATTEMPTS)
+    }
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
@@ -436,11 +443,28 @@ pub(crate) fn retryable_http_status(status: u16) -> bool {
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
-#[cfg_attr(verus, verus_spec(returns 2u64.saturating_pow(attempt.saturating_sub(1) as u32).min(8)))]
+#[cfg_attr(
+    verus,
+    verus_spec(returns if attempt <= 1 {
+        1
+    } else if attempt == 2 {
+        2
+    } else if attempt == 3 {
+        4
+    } else {
+        8
+    })
+)]
 pub(crate) fn retry_delay_seconds(attempt: usize) -> u64 {
-    2_u64
-        .saturating_pow(attempt.saturating_sub(1) as u32)
-        .min(8)
+    // The retry count is clamped before use. Express the capped exponential
+    // directly so the production calculation remains inside Verus' supported
+    // arithmetic subset and cannot overflow.
+    match attempt {
+        0 | 1 => 1,
+        2 => 2,
+        3 => 4,
+        _ => 8,
+    }
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]

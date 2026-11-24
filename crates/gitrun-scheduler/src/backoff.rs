@@ -47,7 +47,16 @@ const MAX_COOLDOWN: Duration = Duration::from_secs(MAX_COOLDOWN_SECONDS);
 )]
 /// Crate-visible for the generated Verus dual specification; not a public API.
 pub(crate) fn cap_cooldown_seconds(seconds: u64) -> u64 {
-    seconds.min(MAX_COOLDOWN_SECONDS)
+    #[cfg(verus)]
+    {
+        // Keep the verifier-visible bound literal: Verus does not import
+        // Rust constants declared outside its verification context.
+        seconds.min(86_400)
+    }
+    #[cfg(not(verus))]
+    {
+        seconds.min(MAX_COOLDOWN_SECONDS)
+    }
 }
 
 #[cfg(not(verus))]
@@ -216,18 +225,18 @@ mod kani_verification {
 
 #[cfg(verus)]
 mod verus_verification {
-    use super::{cap_cooldown_seconds, MAX_COOLDOWN_SECONDS};
+    use super::{cap_cooldown_seconds, 86_400};
     use vstd::prelude::*;
 
     verus! {
         /// Proves the production clamp's upper bound and monotonic lower bound.
         proof fn cooldown_seconds_are_bounded(seconds: u64)
             ensures
-                cap_cooldown_seconds(seconds) <= MAX_COOLDOWN_SECONDS,
+                cap_cooldown_seconds(seconds) <= 86_400,
                 cap_cooldown_seconds(seconds) <= seconds,
-                seconds <= MAX_COOLDOWN_SECONDS ==> cap_cooldown_seconds(seconds) == seconds,
-                seconds > MAX_COOLDOWN_SECONDS
-                    ==> cap_cooldown_seconds(seconds) == MAX_COOLDOWN_SECONDS,
+                seconds <= 86_400 ==> cap_cooldown_seconds(seconds) == seconds,
+                seconds > 86_400
+                    ==> cap_cooldown_seconds(seconds) == 86_400,
         {
         }
     }

@@ -387,22 +387,54 @@ fn valid_workload_routing_id(code: &str) -> bool {
         && bytes.get(0) == Some(&b'w')
         && bytes.get(1) == Some(&b'k')
         && bytes.get(2) == Some(&b'-')
-        && bytes.get(3).map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes.get(4).map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes.get(5).map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes.get(6).map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes.get(7).map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes.get(8).map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes.get(9).map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes.get(10).map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes.get(11).map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes.get(12).map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes.get(13).map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes.get(14).map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes.get(15).map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes.get(16).map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes.get(17).map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes.get(18).map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes
+            .get(3)
+            .map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes
+            .get(4)
+            .map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes
+            .get(5)
+            .map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes
+            .get(6)
+            .map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes
+            .get(7)
+            .map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes
+            .get(8)
+            .map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes
+            .get(9)
+            .map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes
+            .get(10)
+            .map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes
+            .get(11)
+            .map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes
+            .get(12)
+            .map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes
+            .get(13)
+            .map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes
+            .get(14)
+            .map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes
+            .get(15)
+            .map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes
+            .get(16)
+            .map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes
+            .get(17)
+            .map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes
+            .get(18)
+            .map_or(false, |byte| valid_workload_routing_byte(*byte))
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]

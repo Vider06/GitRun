@@ -519,7 +519,12 @@ mod linux {
         let (login_host, path) = source.split_once(':')?;
         let (user, host) = login_host.split_once('@')?;
         let safe_user = |s: &str| {
-            !s.is_empty()
+            // The assembled scp remote spec is passed as a positional argument.
+            // Require an alphanumeric first byte so it can never be parsed as
+            // an scp option (for example, "-oProxyCommand@host:/path").
+            s.bytes()
+                .next()
+                .is_some_and(|first| first.is_ascii_alphanumeric())
                 && s.bytes()
                     .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
         };

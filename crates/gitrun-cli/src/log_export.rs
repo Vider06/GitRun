@@ -5,6 +5,8 @@
 //! one-use token, and transported through an SSH reverse tunnel bound to
 //! loopback on both machines.
 
+use std::io;
+
 #[cfg(target_os = "linux")]
 mod linux {
     use std::{

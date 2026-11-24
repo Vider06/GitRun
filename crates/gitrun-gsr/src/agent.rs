@@ -48,8 +48,8 @@ verus! {
         invocation =~= "bash".spec_bytes()
             || (invocation.len() >= 5
                 && invocation.subrange(
-                    invocation.len() - 5,
-                    invocation.len(),
+                    invocation.len() as int - 5,
+                    invocation.len() as int,
                 ) =~= "/bash".spec_bytes())
     }
 }

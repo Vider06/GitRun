@@ -131,6 +131,19 @@ workload IDs, runner artifact digests, updater settings and Vault identifiers:
 The standalone updater-policy entrypoint also checks representative policy
 outcomes through its imported production module.
 
+The runner currently executes Cargo/Verus package targets for the 11 crates
+that contain implemented package-level proof scopes. The CLI's only
+independent pure production contract is its terminal-output visibility
+predicate in `crates/gitrun-cli/src/presenter.rs`; that target is verified
+standalone because the rest of the CLI is terminal/process integration and
+pulling its TUI dependency graph into Verus would not add a meaningful
+production invariant. The dashboard crate is intentionally not given a
+synthetic Verus proof: its library is a thin Tauri window/command adapter and
+its binary is process startup. Those three dashboard Rust files are explicitly
+`NOT_APPLICABLE` in the source map, with Tauri build and shared-management
+integration checks as their applicable assurance. The CLI and dashboard are
+therefore accounted for, not silently omitted.
+
 These are authored proof targets, not a claim that the pinned verifier has
 already discharged them. Their actual result is recorded only when the dual
 gate executes Kani and Verus.

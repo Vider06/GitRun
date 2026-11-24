@@ -39,7 +39,7 @@
 //!   `docker_port`.
 
 #[cfg(verus)]
-use vstd::prelude::{verus_spec, verus_verify};
+use vstd::prelude::{verus_spec, verus_verify, SpecOrd};
 
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};

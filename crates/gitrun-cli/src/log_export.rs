@@ -278,7 +278,9 @@ mod linux {
         let token = random_hex(16)?;
         let token_path = format!("{TOKEN_PREFIX}{}.txt", random_hex(16)?);
         remote_token(&ssh, target, &token, &token_path)?;
-        let remote_port = 41000_u16 + (u16::from_str_radix(&random_hex(2)?[..4], 16)? % 16000);
+        let random_port = u16::from_str_radix(&random_hex(2)?, 16)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        let remote_port = 41000_u16 + (random_port % 16000);
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         listener.set_nonblocking(true)?;
         let local_port = listener.local_addr()?.port();
@@ -371,4 +373,26 @@ pub(crate) fn run(target: Option<&str>, source: Option<&str>) -> io::Result<i32>
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn run(_target: Option<&str>, _source: Option<&str>) -> io::Result<i32> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "the SSH log-export wrapper is currently available on Linux"))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::linux::{valid_source, valid_target};
+
+    #[test]
+    fn ssh_targets_reject_options_and_shell_metacharacters() {
+        assert!(valid_target("operator@MainNode"));
+        assert!(valid_target("100.64.0.12"));
+        assert!(!valid_target("-oProxyCommand=sh"));
+        assert!(!valid_target("host;touch /tmp/pwned"));
+        assert!(!valid_target(""));
+    }
+
+    #[test]
+    fn source_accepts_only_generated_log_file_paths() {
+        assert!(valid_source("operator@100.64.0.12:/tmp/GitRun-logs-0123456789abcdef0123456789abcdef.txt").is_some());
+        assert!(valid_source("operator@host:/etc/passwd").is_none());
+        assert!(valid_source("operator@host:/tmp/GitRun-logs-0123456789abcdef0123456789abcdeg.txt").is_none());
+        assert!(valid_source("-oProxyCommand@host:/tmp/GitRun-logs-0123456789abcdef0123456789abcdef.txt").is_none());
+    }
 }

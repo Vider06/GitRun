@@ -615,10 +615,11 @@ mod verus_verification {
             // its negation is required for this concrete Dockerfile literal.
             assert forall |start: int|
                 0 <= start
-                    && start + "COPY crates ./crates".spec_bytes().len() <= adapted.spec_bytes().len()
+                    && start + ("COPY crates ./crates".spec_bytes().len() as int)
+                    <= adapted.spec_bytes().len() as int
                     ==> #[trigger] adapted.spec_bytes().subrange(
                         start,
-                        start + "COPY crates ./crates".spec_bytes().len(),
+                        start + ("COPY crates ./crates".spec_bytes().len() as int),
                     ) != "COPY crates ./crates".spec_bytes() by {
                 reveal_strlit("COPY crates ./crates");
                 reveal_strlit("COPY Cargo.toml Cargo.lock ./ COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real /entrypoint.sh");

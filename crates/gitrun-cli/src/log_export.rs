@@ -203,10 +203,17 @@ mod linux {
                 }
                 match child.try_wait() {
                     Ok(Some(status)) => {
+                        if status.success() && !write_done {
+                            let remaining = deadline.saturating_duration_since(Instant::now());
+                            if let Ok(result) = rx.recv_timeout(remaining) {
+                                write_done = true;
+                                write_ok = result.is_ok();
+                            }
+                        }
                         if status.success() && write_ok {
                             return Ok(program);
                         }
-                        reasons.push(format!("{program} exited {status}"));
+                        reasons.push(format!("{program} exited {status} before accepting all log data"));
                         break;
                     }
                     Ok(None) if Instant::now() < deadline => {

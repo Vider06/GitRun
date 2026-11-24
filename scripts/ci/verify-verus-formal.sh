@@ -3,6 +3,7 @@ set -euo pipefail
 
 readonly verus="${VERUS_PATH:-${RUNNER_TEMP:-/tmp}/verus/installed/verus}"
 readonly results="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-verus-proof-results.tsv"
+readonly verus_multiple_errors="${VERUS_MULTIPLE_ERRORS:-500}"
 readonly -a production_sources=(
   "crates/gitrun-core/src/api_policy.rs"
   "crates/gitrun-core/src/runner.rs"
@@ -128,13 +129,13 @@ run_verus_target() {
   local -a sources=("$@")
   local output
   local rc
-  if output="$("$verus" --expand-errors --time --time-expanded --log-all --multiple-errors 100 --cfg verus "$entrypoint" 2>&1)"; then
+  if output="$("$verus" --expand-errors --time --time-expanded --log-all --multiple-errors "$verus_multiple_errors" --cfg verus "$entrypoint" 2>&1)"; then
     printf '%s\n' "$output"
     record_successful_verus_results "$output" "$entrypoint" "${sources[@]}" || true
   else
     rc=$?
     printf '%s\n' "$output"
-    record_verus_diagnostic "verus-target-$entrypoint" "$verus --expand-errors --time --time-expanded --log-all --multiple-errors 100 --cfg verus $entrypoint" "$rc" "$output"
+    record_verus_diagnostic "verus-target-$entrypoint" "$verus --expand-errors --time --time-expanded --log-all --multiple-errors ${verus_multiple_errors} --cfg verus $entrypoint" "$rc" "$output"
     proof_failures=$((proof_failures + 1))
     for source in "${sources[@]}"; do
       record_result "$source" FAILED
@@ -155,7 +156,7 @@ run_verus_package() {
   # Remove only this package's artifacts so every certification unit executes
   # Verus now; dependencies remain cached.
   cargo clean -p "$package"
-  if output="$(cargo -vv verus verify --locked -p "$package" --lib -- --expand-errors --time --time-expanded --log-all --multiple-errors 100 --cfg verus 2>&1)"; then
+  if output="$(cargo -vv verus verify --locked -p "$package" --lib -- --expand-errors --time --time-expanded --log-all --multiple-errors "$verus_multiple_errors" --cfg verus 2>&1)"; then
     printf '%s\n' "$output"
     record_successful_verus_results "$output" "Cargo package $package" "${sources[@]}" || true
   else
@@ -180,7 +181,7 @@ run_verus_binary() {
   # Force a fresh package build for the binary target as well. An old cached
   # artifact is not evidence that this binary's current sources were verified.
   cargo clean -p "$package"
-  if output="$(cargo -vv verus verify --locked -p "$package" --bin "$binary" -- --expand-errors --time --time-expanded --log-all --multiple-errors 100 --cfg verus 2>&1)"; then
+  if output="$(cargo -vv verus verify --locked -p "$package" --bin "$binary" -- --expand-errors --time --time-expanded --log-all --multiple-errors "$verus_multiple_errors" --cfg verus 2>&1)"; then
     printf '%s\n' "$output"
     record_successful_verus_results "$output" "Cargo binary $package/$binary" "$source" || true
   else
@@ -256,7 +257,7 @@ printf 'Verus\t%s\n' "$("$verus" --version 2>&1 | head -n 1)" >> "${RUNNER_TEMP:
 printf 'cargo-verus\t%s\n' "$(cargo verus --version 2>&1 | head -n 1 || true)" >> "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gitrun-ci/tools.tsv"
 phase=smoke
 echo "Verifying the pinned verifier smoke test."
-smoke_output="$("$verus" --expand-errors --time --time-expanded --log-all --multiple-errors 100 --cfg verus verification/verus/smoke.rs 2>&1)" || {
+smoke_output="$("$verus" --expand-errors --time --time-expanded --log-all --multiple-errors "$verus_multiple_errors" --cfg verus verification/verus/smoke.rs 2>&1)" || {
   smoke_rc=$?
   printf '%s\n' "$smoke_output"
   record_verus_diagnostic "verus-smoke" "$verus verification/verus/smoke.rs" "$smoke_rc" "$smoke_output"

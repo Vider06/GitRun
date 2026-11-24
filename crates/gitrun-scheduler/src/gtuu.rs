@@ -14,6 +14,9 @@
 //! token as an explicit constructor argument instead, so it can't be
 //! silently dropped again.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(any(kani, verus)))]
 use crate::docker::{self, sanitize};
 #[cfg(not(any(kani, verus)))]
@@ -410,7 +413,7 @@ pub fn check_permanent_containers(
     Ok(report)
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns byte == b'/'))]
 pub(crate) fn registry_image_separator_byte(byte: u8) -> bool {
     byte == b'/'

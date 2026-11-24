@@ -9,6 +9,9 @@
 //! Management operations use GitRun runtime crates and real host state; this
 //! crate contains no dashboard frontend or window lifecycle ownership.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(any(kani, verus)))]
 use gitrun_core::{Config, GitRunApi, GitRunSettings};
 #[cfg(not(any(kani, verus)))]
@@ -869,7 +872,7 @@ fn secure_private_key_file(path: &std::path::Path) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns mode & 0o022 == 0 && mode & 0o111 != 0))]
 pub(crate) fn trusted_executable_mode(mode: u32) -> bool {
     mode & 0o022 == 0 && mode & 0o111 != 0

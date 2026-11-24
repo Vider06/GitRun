@@ -17,6 +17,9 @@
 //! satisfies `desired` in the normal case). Here it's a single step in the
 //! plan, computed once from the post-recovery state.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(any(kani, verus)))]
 use std::time::Duration;
 
@@ -178,7 +181,7 @@ fn job_needs_dedicated_runner(input: &ReconcileInput, index: usize, labels: &[St
 /// Computes the desired runner count: enough to cover currently busy runners
 /// plus what's queued, clamped to [min, max]. Same formula as the Python
 /// original (`min(max, max(min, busy + queued))`).
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 pub(crate) fn bounded_runner_target(busy: u32, queued: u32, minimum: u32, maximum: u32) -> u32 {
     busy.saturating_add(queued)
         .min(maximum)

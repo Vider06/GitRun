@@ -1,4 +1,7 @@
 //! Host-wide scheduler backpressure based on CPU utilization, available memory and critical filesystem usage.
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(any(kani, verus)))]
 use gitrun_core::Config;
 #[cfg(not(any(kani, verus)))]
@@ -21,13 +24,13 @@ pub enum ResourcePressureError {
     Disk { path: String, detail: String },
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns total > 0 && available <= total))]
 pub(crate) fn memory_measurement_is_valid(total: u64, available: u64) -> bool {
     total > 0 && available <= total
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns available.saturating_sub(reserve)))]
 pub(crate) fn memory_after_host_reserve(available: u64, reserve: u64) -> u64 {
     available.saturating_sub(reserve)

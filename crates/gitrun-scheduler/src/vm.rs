@@ -38,6 +38,9 @@
 //!   a `base_disk_image` that already has Docker configured and listening on
 //!   `docker_port`.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 #[cfg(not(any(kani, verus)))]
@@ -309,7 +312,7 @@ fn validate_vm_configs(configs: &[VmConfig]) -> Result<()> {
 /// Validates one VM definition before it enters an asynchronous lifecycle
 /// operation. Kept crate-visible so the resolver can reject bad dashboard
 /// configuration before creating background state or waiting for operator input.
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(
     verus,
     verus_spec(
@@ -325,7 +328,7 @@ pub(crate) fn vm_name_shape_is_valid(
     nonempty && already_trimmed && !has_control && !has_path_separator
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(verus, verus_spec(returns length > 0 && length <= 128))]
 pub(crate) fn snapshot_name_length_is_valid(length: usize) -> bool {
     length > 0 && length <= 128

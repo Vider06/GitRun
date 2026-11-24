@@ -9,6 +9,9 @@
 //! write to a temp file, then atomically rename over the target, so a crash
 //! mid-write never leaves a half-written `scheduler-state.json` behind.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 #[cfg(not(any(kani, verus)))]
@@ -161,7 +164,7 @@ fn read_state_file(path: &Path) -> Result<Option<StateFile>, StateError> {
     Ok(Some(serde_json::from_str(&raw)?))
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(
     verus,
     verus_spec(returns byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))

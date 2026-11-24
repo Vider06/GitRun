@@ -16,6 +16,9 @@
 //! Containers are still the unit of scaling: many Windows *containers* run
 //! inside that VM, exactly like Linux containers run on the bare host.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 #[cfg(not(any(kani, verus)))]
@@ -52,7 +55,7 @@ pub struct LogicRule {
     pub image: String,
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(
     verus,
     verus_spec(

@@ -25,6 +25,9 @@
 //! result immediately and defers creation of the VM-targeted runner for
 //! that cycle. It never redirects the job to the local Docker host.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[cfg(not(any(kani, verus)))]
 use crate::docker::{self, DockerHost};
 #[cfg(not(any(kani, verus)))]
@@ -468,7 +471,7 @@ pub fn load_vm_definitions(state_dir: &Path) -> vm::Result<Vec<VmConfig>> {
     vm::load_vm_configs(state_dir)
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(
     verus,
     verus_spec(

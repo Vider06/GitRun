@@ -357,28 +357,27 @@ fn setup_flag_contents_are_valid(content: Result<String, std::io::Error>) -> boo
     }
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
-#[cfg_attr(
-    verus,
-    verus_spec(
-        returns (byte >= b'0' && byte <= b'9')
-            || (byte >= b'a' && byte <= b'f')
-            || (byte >= b'A' && byte <= b'F')
-    )
-)]
 /// Returns whether `byte` is an ASCII hexadecimal digit.
 #[cfg(not(verus))]
 pub fn setup_nonce_byte_is_hex(byte: u8) -> bool {
     byte.is_ascii_hexdigit()
 }
 
-// Verus verifies the equivalent scalar comparisons directly; the standard
-// RangeInclusive::contains implementation is not part of its verified surface.
+// Keep the Verus implementation inside its verification macro. A function
+// declared outside verus! is treated as external by Verus and cannot be used
+// as a proved postcondition by downstream proof targets.
 #[cfg(verus)]
-pub fn setup_nonce_byte_is_hex(byte: u8) -> bool {
-    (byte >= b'0' && byte <= b'9')
-        || (byte >= b'a' && byte <= b'f')
-        || (byte >= b'A' && byte <= b'F')
+verus! {
+    pub fn setup_nonce_byte_is_hex(byte: u8) -> (result: bool)
+        ensures result
+            == ((byte >= b'0' && byte <= b'9')
+                || (byte >= b'a' && byte <= b'f')
+                || (byte >= b'A' && byte <= b'F')),
+    {
+        (byte >= b'0' && byte <= b'9')
+            || (byte >= b'a' && byte <= b'f')
+            || (byte >= b'A' && byte <= b'F')
+    }
 }
 
 fn setup_nonce_is_valid(value: &str) -> bool {

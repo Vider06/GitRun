@@ -45,20 +45,12 @@ use vstd::string::StringSliceAdditionalSpecFns;
 #[cfg(verus)]
 verus! {
     pub open spec fn is_bash_invocation_spec(invocation: Seq<u8>) -> bool {
-        if invocation.len() == 4 {
-            invocation[0] == b'b'
-                && invocation[1] == b'a'
-                && invocation[2] == b's'
-                && invocation[3] == b'h'
-        } else if invocation.len() >= 5 {
-            invocation[invocation.len() - 5] == b'/'
-                && invocation[invocation.len() - 4] == b'b'
-                && invocation[invocation.len() - 3] == b'a'
-                && invocation[invocation.len() - 2] == b's'
-                && invocation[invocation.len() - 1] == b'h'
-        } else {
-            false
-        }
+        invocation =~= "bash".spec_bytes()
+            || (invocation.len() >= 5
+                && invocation.subrange(
+                    invocation.len() - 5,
+                    invocation.len(),
+                ) =~= "/bash".spec_bytes())
     }
 }
 

@@ -3914,9 +3914,9 @@ fn restore_redacted(edited: &mut Value, original: &Value) {
 // Keep repository-component policy byte-oriented and dependency-free so the
 // exact predicate used by CLI validation can be checked exhaustively by Kani.
 fn repo_component_byte_allowed(byte: u8) -> bool {
-    (b'A'..=b'Z').contains(&byte)
-        || (b'a'..=b'z').contains(&byte)
-        || (b'0'..=b'9').contains(&byte)
+    byte.is_ascii_uppercase()
+        || byte.is_ascii_lowercase()
+        || byte.is_ascii_digit()
         || matches!(byte, b'-' | b'_' | b'.')
 }
 

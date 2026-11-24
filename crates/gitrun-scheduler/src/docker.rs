@@ -378,67 +378,82 @@ pub(crate) fn valid_workload_routing_byte(byte: u8) -> bool {
     matches!(byte, b'0'..=b'9' | b'a'..=b'f')
 }
 
-// Keep checked slice access in this dual-spec function: Verus cannot lower
-// slice indexing here, while Clippy prefers indexing/Option helpers that Verus
-// does not currently support. Scope the exceptions to this verifier boundary.
+// Keep checked slice access and explicit Option matching here: Verus cannot
+// lower slice indexing or Option::map_or in this dual-spec function. Scope the
+// Clippy exception to this verifier boundary.
 #[allow(clippy::get_first, clippy::unnecessary_map_or)]
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
 fn valid_workload_routing_id(code: &str) -> bool {
-    // Use checked slice access: Verus cannot lower Rust's slice index
-    // operator in this dual-spec function.
+    // The exact length check above guarantees every subsequent byte position.
     let bytes = code.as_bytes();
     bytes.len() == 19
         && bytes.get(0) == Some(&b'w')
         && bytes.get(1) == Some(&b'k')
         && bytes.get(2) == Some(&b'-')
-        && bytes
-            .get(3)
-            .map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes
-            .get(4)
-            .map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes
-            .get(5)
-            .map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes
-            .get(6)
-            .map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes
-            .get(7)
-            .map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes
-            .get(8)
-            .map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes
-            .get(9)
-            .map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes
-            .get(10)
-            .map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes
-            .get(11)
-            .map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes
-            .get(12)
-            .map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes
-            .get(13)
-            .map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes
-            .get(14)
-            .map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes
-            .get(15)
-            .map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes
-            .get(16)
-            .map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes
-            .get(17)
-            .map_or(false, |byte| valid_workload_routing_byte(*byte))
-        && bytes
-            .get(18)
-            .map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && match bytes.get(3) {
+            Some(byte) => valid_workload_routing_byte(*byte),
+            None => false,
+        }
+        && match bytes.get(4) {
+            Some(byte) => valid_workload_routing_byte(*byte),
+            None => false,
+        }
+        && match bytes.get(5) {
+            Some(byte) => valid_workload_routing_byte(*byte),
+            None => false,
+        }
+        && match bytes.get(6) {
+            Some(byte) => valid_workload_routing_byte(*byte),
+            None => false,
+        }
+        && match bytes.get(7) {
+            Some(byte) => valid_workload_routing_byte(*byte),
+            None => false,
+        }
+        && match bytes.get(8) {
+            Some(byte) => valid_workload_routing_byte(*byte),
+            None => false,
+        }
+        && match bytes.get(9) {
+            Some(byte) => valid_workload_routing_byte(*byte),
+            None => false,
+        }
+        && match bytes.get(10) {
+            Some(byte) => valid_workload_routing_byte(*byte),
+            None => false,
+        }
+        && match bytes.get(11) {
+            Some(byte) => valid_workload_routing_byte(*byte),
+            None => false,
+        }
+        && match bytes.get(12) {
+            Some(byte) => valid_workload_routing_byte(*byte),
+            None => false,
+        }
+        && match bytes.get(13) {
+            Some(byte) => valid_workload_routing_byte(*byte),
+            None => false,
+        }
+        && match bytes.get(14) {
+            Some(byte) => valid_workload_routing_byte(*byte),
+            None => false,
+        }
+        && match bytes.get(15) {
+            Some(byte) => valid_workload_routing_byte(*byte),
+            None => false,
+        }
+        && match bytes.get(16) {
+            Some(byte) => valid_workload_routing_byte(*byte),
+            None => false,
+        }
+        && match bytes.get(17) {
+            Some(byte) => valid_workload_routing_byte(*byte),
+            None => false,
+        }
+        && match bytes.get(18) {
+            Some(byte) => valid_workload_routing_byte(*byte),
+            None => false,
+        }
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]

@@ -39,7 +39,7 @@ mod linux {
         Ok(data.iter().map(|byte| format!("{byte:02x}")).collect())
     }
 
-    fn valid_target(target: &str) -> bool {
+    pub(super) fn valid_target(target: &str) -> bool {
         !target.is_empty()
             && !target.starts_with('-')
             && target.bytes().all(|byte| {
@@ -464,7 +464,7 @@ mod linux {
             .map(|path| path.to_string_lossy().into_owned())
     }
 
-    fn valid_source(source: &str) -> Option<(String, String, String)> {
+    pub(super) fn valid_source(source: &str) -> Option<(String, String, String)> {
         let (login_host, path) = source.split_once(':')?;
         let (user, host) = login_host.split_once('@')?;
         let safe_user = |s: &str| {

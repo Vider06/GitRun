@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)]
+
 //! Local IPC for the persistent, system-managed GitRun control service.
 //!
 //! The GUI and terminal UI remain unprivileged. The service exposes only the
@@ -6,7 +8,6 @@
 
 // Verus compiles this production module as a standalone verification crate and
 // supplies synthetic cfg values outside Cargo's normal check-cfg registry.
-#![allow(unexpected_cfgs)]
 
 #[cfg(verus)]
 use vstd::prelude::{verus_spec, verus_verify};

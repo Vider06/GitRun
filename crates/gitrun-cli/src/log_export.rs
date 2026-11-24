@@ -55,9 +55,10 @@ mod linux {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()?;
-        let mut input = child.stdin.take().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::BrokenPipe, "SSH stdin unavailable")
-        })?;
+        let mut input = child
+            .stdin
+            .take()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "SSH stdin unavailable"))?;
         input.write_all(format!("{token}\n").as_bytes())?;
         drop(input);
 

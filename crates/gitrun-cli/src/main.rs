@@ -6272,9 +6272,14 @@ mod internal_lifecycle_command_tests {
             Some(Command::Manage { target: None, source: Some(source) }) if source.starts_with("operator@host:")
         ));
         assert!(Cli::try_parse_from([
-            "gitrun", "manage", "--target", "operator@MainNode", "--source",
+            "gitrun",
+            "manage",
+            "--target",
+            "operator@MainNode",
+            "--source",
             "operator@host:/tmp/GitRun-logs-0123456789abcdef0123456789abcdef.txt"
-        ]).is_err());
+        ])
+        .is_err());
         assert!(matches!(
             Cli::try_parse_from(["gitrun", "cat"]).unwrap().command,
             Some(Command::Cat)

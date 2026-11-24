@@ -56,7 +56,6 @@ static ACTIVE_TERMINAL: OnceLock<Mutex<Option<SharedTerminal>>> = OnceLock::new(
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg(not(any(kani, verus)))]
 pub(crate) enum ValidationState {
     Ready,
     Reading,
@@ -611,9 +610,8 @@ fn choose_cat_state(state: ValidationState) -> &'static str {
     }
 }
 
-#[cfg(not(any(kani, verus)))]
-fn live_state_name(state: ValidationState, tick: usize) -> &'static str {
-    let sequence: &'static [&'static str] = match state {
+fn live_state_sequence(state: ValidationState) -> &'static [&'static str] {
+    match state {
         ValidationState::Ready => &["kitty", "seated", "cute"],
         ValidationState::Reading => &["reading", "thinking"],
         ValidationState::Working => &["working", "typing", "coding"],
@@ -634,7 +632,12 @@ fn live_state_name(state: ValidationState, tick: usize) -> &'static str {
         ValidationState::Success => &["success"],
         ValidationState::Failure => &["failed", "sad"],
         ValidationState::Unknown => &["seated", "unknown", "curious"],
-    };
+    }
+}
+
+#[cfg(not(any(kani, verus)))]
+fn live_state_name(state: ValidationState, tick: usize) -> &'static str {
+    let sequence = live_state_sequence(state);
     sequence[tick % sequence.len()]
 }
 
@@ -859,6 +862,21 @@ mod kani_verification {
         assert!(!cat_is_allowed(true, true, false, true, false));
         assert!(!cat_is_allowed(true, true, false, false, true));
         assert!(cat_is_allowed(true, true, false, false, false));
+    }
+}
+
+#[cfg(kani)]
+mod live_state_kani_verification {
+    use super::{live_state_sequence, ValidationState};
+
+    #[kani::proof]
+    fn every_validation_state_has_a_nonempty_animation_sequence() {
+        let state: ValidationState = kani::any();
+        let tick: usize = kani::any();
+        let sequence = live_state_sequence(state);
+        assert!(!sequence.is_empty());
+        let selected = sequence[tick % sequence.len()];
+        assert!(sequence.iter().any(|candidate| *candidate == selected));
     }
 }
 

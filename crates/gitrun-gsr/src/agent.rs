@@ -375,6 +375,7 @@ mod kani_verification {
 mod verus_verification {
     use super::is_bash_invocation_spec;
     use vstd::prelude::*;
+    use vstd::string::StringSliceAdditionalSpecFns;
 
     verus! {
         proof fn shell_dispatch_spec_separates_bash_from_sh() {

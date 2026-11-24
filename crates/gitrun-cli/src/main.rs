@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod cat;
-mod manage;
 mod log_export;
+mod manage;
 mod presenter;
 
 include!(concat!(env!("OUT_DIR"), "/gitrun_crate_versions.rs"));
@@ -6254,7 +6254,10 @@ mod internal_lifecycle_command_tests {
     fn manage_is_public_and_cat_remains_a_separate_command() {
         assert!(matches!(
             Cli::try_parse_from(["gitrun", "manage"]).unwrap().command,
-            Some(Command::Manage { target: None, source: None })
+            Some(Command::Manage {
+                target: None,
+                source: None
+            })
         ));
         assert!(matches!(
             Cli::try_parse_from(["gitrun", "cat"]).unwrap().command,

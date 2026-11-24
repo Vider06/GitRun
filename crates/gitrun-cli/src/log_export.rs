@@ -31,7 +31,10 @@ mod linux {
         }
         #[cfg(not(unix))]
         {
-            return Err(io::Error::new(io::ErrorKind::Unsupported, "secure random source unavailable"));
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "secure random source unavailable",
+            ));
         }
         Ok(data.iter().map(|byte| format!("{byte:02x}")).collect())
     }
@@ -53,12 +56,19 @@ mod linux {
             .stderr(Stdio::null())
             .spawn()
             .and_then(|mut child| {
-                child.stdin.take().ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "SSH stdin unavailable"))?
+                child
+                    .stdin
+                    .take()
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::BrokenPipe, "SSH stdin unavailable")
+                    })?
                     .write_all(format!("{token}\n").as_bytes())?;
                 child.wait()
             })?;
         if !status.success() {
-            return Err(io::Error::other(format!("could not create private SSH token file (exit {status})")));
+            return Err(io::Error::other(format!(
+                "could not create private SSH token file (exit {status})"
+            )));
         }
         Ok(())
     }
@@ -72,7 +82,12 @@ mod linux {
                 b'\n' => break,
                 b'\r' => {}
                 value if bytes.len() < limit => bytes.push(value),
-                _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "protocol line is too long")),
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "protocol line is too long",
+                    ))
+                }
             }
         }
         String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
@@ -85,15 +100,28 @@ mod linux {
 
     fn read_payload(stream: &mut TcpStream, header: &str) -> io::Result<Vec<u8>> {
         let Some(length_text) = header.strip_prefix("LOGS ") else {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid log payload header"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid log payload header",
+            ));
         };
-        if length_text.is_empty() || length_text.len() > 8 || !length_text.bytes().all(|b| b.is_ascii_digit()) {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid log payload length"));
+        if length_text.is_empty()
+            || length_text.len() > 8
+            || !length_text.bytes().all(|b| b.is_ascii_digit())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid log payload length",
+            ));
         }
-        let length = length_text.parse::<usize>()
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid log payload length"))?;
+        let length = length_text.parse::<usize>().map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "invalid log payload length")
+        })?;
         if length > MAX_LOG_BYTES {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "log payload exceeds 32 MiB"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "log payload exceeds 32 MiB",
+            ));
         }
         let mut data = vec![0_u8; length];
         stream.read_exact(&mut data)?;
@@ -115,10 +143,18 @@ mod linux {
         }
         let mut reasons = Vec::new();
         for (program, args) in candidates {
-            let mut child = match Command::new(program).args(args).stdin(Stdio::piped())
-                .stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+            let mut child = match Command::new(program)
+                .args(args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
                 Ok(child) => child,
-                Err(error) => { reasons.push(format!("{program}: {error}")); continue; }
+                Err(error) => {
+                    reasons.push(format!("{program}: {error}"));
+                    continue;
+                }
             };
             let Some(mut stdin) = child.stdin.take() else {
                 reasons.push(format!("{program}: stdin unavailable"));
@@ -127,7 +163,11 @@ mod linux {
             };
             let bytes = payload.to_vec();
             let (tx, rx) = std::sync::mpsc::channel();
-            thread::spawn(move || { let result = stdin.write_all(&bytes); drop(stdin); let _ = tx.send(result); });
+            thread::spawn(move || {
+                let result = stdin.write_all(&bytes);
+                drop(stdin);
+                let _ = tx.send(result);
+            });
             let deadline = Instant::now() + Duration::from_secs(2);
             let mut write_done = false;
             let mut write_ok = false;
@@ -136,23 +176,41 @@ mod linux {
                     if let Ok(result) = rx.try_recv() {
                         write_done = true;
                         write_ok = result.is_ok();
-                        if !write_ok { break; }
+                        if !write_ok {
+                            break;
+                        }
                     }
                 }
                 match child.try_wait() {
                     Ok(Some(status)) => {
-                        if status.success() && write_ok { return Ok(program); }
+                        if status.success() && write_ok {
+                            return Ok(program);
+                        }
                         reasons.push(format!("{program} exited {status}"));
                         break;
                     }
-                    Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+                    Ok(None) if Instant::now() < deadline => {
+                        thread::sleep(Duration::from_millis(10))
+                    }
                     Ok(None) if write_ok => return Ok(program),
-                    Ok(None) => { reasons.push(format!("{program} did not accept logs in time")); let _ = child.kill(); break; }
-                    Err(error) => { reasons.push(format!("{program}: {error}")); let _ = child.kill(); break; }
+                    Ok(None) => {
+                        reasons.push(format!("{program} did not accept logs in time"));
+                        let _ = child.kill();
+                        break;
+                    }
+                    Err(error) => {
+                        reasons.push(format!("{program}: {error}"));
+                        let _ = child.kill();
+                        break;
+                    }
                 }
             }
         }
-        Err(if reasons.is_empty() { "no local desktop clipboard helper".into() } else { reasons.join("; ") })
+        Err(if reasons.is_empty() {
+            "no local desktop clipboard helper".into()
+        } else {
+            reasons.join("; ")
+        })
     }
 
     fn save_dialog(default_name: &str) -> (Option<PathBuf>, bool) {
@@ -160,13 +218,22 @@ mod linux {
             let proposed = dirs_downloads().join(default_name);
             if command_exists("zenity") {
                 let result = Command::new("zenity")
-                    .args(["--file-selection", "--save", "--confirm-overwrite", "--title=Save GitRun logs"])
+                    .args([
+                        "--file-selection",
+                        "--save",
+                        "--confirm-overwrite",
+                        "--title=Save GitRun logs",
+                    ])
                     .arg(format!("--filename={}", proposed.display()))
                     .output();
                 return match result {
                     Ok(output) if output.status.success() => {
                         let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-                        if value.is_empty() { (None, true) } else { (Some(PathBuf::from(value)), false) }
+                        if value.is_empty() {
+                            (None, true)
+                        } else {
+                            (Some(PathBuf::from(value)), false)
+                        }
                     }
                     _ => (None, true),
                 };
@@ -180,38 +247,62 @@ mod linux {
                 return match result {
                     Ok(output) if output.status.success() => {
                         let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-                        if value.is_empty() { (None, true) } else { (Some(PathBuf::from(value)), false) }
+                        if value.is_empty() {
+                            (None, true)
+                        } else {
+                            (Some(PathBuf::from(value)), false)
+                        }
                     }
                     _ => (None, true),
                 };
             }
         }
         let downloads = dirs_downloads();
-        if fs::create_dir_all(&downloads).is_ok() { (Some(downloads.join(default_name)), false) }
-        else { (Some(home_dir().join(default_name)), false) }
+        if fs::create_dir_all(&downloads).is_ok() {
+            (Some(downloads.join(default_name)), false)
+        } else {
+            (Some(home_dir().join(default_name)), false)
+        }
     }
 
     fn home_dir() -> PathBuf {
-        env::var_os("HOME").map(PathBuf::from).unwrap_or_else(env::temp_dir)
+        env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(env::temp_dir)
     }
 
-    fn dirs_downloads() -> PathBuf { home_dir().join("Downloads") }
+    fn dirs_downloads() -> PathBuf {
+        home_dir().join("Downloads")
+    }
 
     fn command_exists(program: &str) -> bool {
-        env::var_os("PATH").into_iter().flat_map(|paths| env::split_paths(&paths))
+        env::var_os("PATH")
+            .into_iter()
+            .flat_map(|paths| env::split_paths(&paths))
             .any(|directory| directory.join(program).is_file())
     }
 
     fn save_payload(payload: &[u8]) -> io::Result<Option<PathBuf>> {
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let default_name = format!("GitRun-logs-{stamp}.txt");
         let (selected, cancelled) = save_dialog(&default_name);
-        if cancelled { return Ok(None); }
-        let Some(path) = selected else { return Ok(None); };
+        if cancelled {
+            return Ok(None);
+        }
+        let Some(path) = selected else {
+            return Ok(None);
+        };
         let path = if path.to_string_lossy().starts_with('~') {
             home_dir().join(path.to_string_lossy().trim_start_matches("~/"))
-        } else { path };
-        let parent = path.parent().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "save path has no parent"))?;
+        } else {
+            path
+        };
+        let parent = path.parent().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "save path has no parent")
+        })?;
         fs::create_dir_all(parent)?;
         let mut options = OpenOptions::new();
         options.write(true).create(true).truncate(true);
@@ -225,24 +316,45 @@ mod linux {
         file.sync_all()?;
         if desktop_available() {
             if command_exists("xdg-open") {
-                let _ = Command::new("xdg-open").arg(&path).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+                let _ = Command::new("xdg-open")
+                    .arg(&path)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn();
             } else if command_exists("gio") {
-                let _ = Command::new("gio").arg("open").arg(&path).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+                let _ = Command::new("gio")
+                    .arg("open")
+                    .arg(&path)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn();
             }
         }
         Ok(Some(path))
     }
 
     fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {
-        if left.len() != right.len() { return false; }
-        left.iter().zip(right).fold(0_u8, |diff, (a, b)| diff | (a ^ b)) == 0
+        if left.len() != right.len() {
+            return false;
+        }
+        left.iter()
+            .zip(right)
+            .fold(0_u8, |diff, (a, b)| diff | (a ^ b))
+            == 0
     }
 
-    fn handle_client(mut stream: TcpStream, token: &str, saved: &mut Vec<PathBuf>) -> io::Result<()> {
+    fn handle_client(
+        mut stream: TcpStream,
+        token: &str,
+        saved: &mut Vec<PathBuf>,
+    ) -> io::Result<()> {
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
         let hello = read_line(&mut stream, 512)?;
-        if !constant_time_equal(hello.as_bytes(), format!("GITRUN_LOGS_V1 {token}").as_bytes()) {
+        if !constant_time_equal(
+            hello.as_bytes(),
+            format!("GITRUN_LOGS_V1 {token}").as_bytes(),
+        ) {
             let _ = write_line(&mut stream, "DENIED");
             return Ok(());
         }
@@ -250,7 +362,10 @@ mod linux {
         let first = read_line(&mut stream, 512)?;
         let payload = match read_payload(&mut stream, &first) {
             Ok(payload) => payload,
-            Err(error) => { let _ = write_line(&mut stream, "ERROR invalid log header"); return Err(error); }
+            Err(error) => {
+                let _ = write_line(&mut stream, "ERROR invalid log header");
+                return Err(error);
+            }
         };
         match clipboard(&payload) {
             Ok(_) => write_line(&mut stream, "COPIED")?,
@@ -261,9 +376,15 @@ mod linux {
                 let header = read_line(&mut stream, 512)?;
                 let fallback = read_payload(&mut stream, &header)?;
                 match save_payload(&fallback) {
-                    Ok(Some(path)) => { saved.push(path); write_line(&mut stream, "SAVED")?; }
+                    Ok(Some(path)) => {
+                        saved.push(path);
+                        write_line(&mut stream, "SAVED")?;
+                    }
                     Ok(None) => write_line(&mut stream, "CANCELLED")?,
-                    Err(error) => { let _ = write_line(&mut stream, "ERROR local save failed"); return Err(error); }
+                    Err(error) => {
+                        let _ = write_line(&mut stream, "ERROR local save failed");
+                        return Err(error);
+                    }
                 }
             }
         }
@@ -272,9 +393,13 @@ mod linux {
 
     fn run_target(target: &str) -> io::Result<i32> {
         if !valid_target(target) {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "target must be user@MainNode or a Tailscale address"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target must be user@MainNode or a Tailscale address",
+            ));
         }
-        let ssh = find_program("ssh").ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "OpenSSH client is required"))?;
+        let ssh = find_program("ssh")
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "OpenSSH client is required"))?;
         let token = random_hex(16)?;
         let token_path = format!("{TOKEN_PREFIX}{}.txt", random_hex(16)?);
         remote_token(&ssh, target, &token, &token_path)?;
@@ -287,7 +412,15 @@ mod linux {
         let forward = format!("127.0.0.1:{remote_port}:127.0.0.1:{local_port}");
         let remote = format!("trap 'rm -f {token_path}' EXIT; GITRUN_LOG_EXPORT_PORT={remote_port} GITRUN_LOG_EXPORT_TOKEN_FILE={token_path} gitrun manage");
         let mut child = Command::new(&ssh)
-            .args(["-o", "ExitOnForwardFailure=no", "-R", &forward, "-tt", target, &remote])
+            .args([
+                "-o",
+                "ExitOnForwardFailure=no",
+                "-R",
+                &forward,
+                "-tt",
+                target,
+                &remote,
+            ])
             .spawn()?;
         let mut saved = Vec::new();
         let result = loop {
@@ -301,21 +434,31 @@ mod linux {
                         eprintln!("GitRun local log export: {error}");
                     }
                 }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => thread::sleep(Duration::from_millis(100)),
-                Err(error) => { let _ = child.kill(); let _ = child.wait(); return Err(error); }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(100))
+                }
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(error);
+                }
             }
         };
         drop(listener);
         if !saved.is_empty() {
             println!("\nGitRun logs saved locally:");
-            for path in saved { println!("  {}", path.display()); }
+            for path in saved {
+                println!("  {}", path.display());
+            }
             println!("The file was opened with the default text editor when a graphical session was available.");
         }
         Ok(result)
     }
 
     fn find_program(name: &str) -> Option<String> {
-        env::var_os("PATH").into_iter().flat_map(|paths| env::split_paths(&paths))
+        env::var_os("PATH")
+            .into_iter()
+            .flat_map(|paths| env::split_paths(&paths))
             .map(|directory| directory.join(name))
             .find(|path| path.is_file())
             .map(|path| path.to_string_lossy().into_owned())
@@ -324,32 +467,68 @@ mod linux {
     fn valid_source(source: &str) -> Option<(String, String, String)> {
         let (login_host, path) = source.split_once(':')?;
         let (user, host) = login_host.split_once('@')?;
-        let safe_user = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
-        let safe_host = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'));
-        let suffix = path.strip_prefix("/tmp/GitRun-logs-")?.strip_suffix(".txt")?;
-        if !safe_user(user) || !safe_host(host) || suffix.len() != 32 || !suffix.bytes().all(|b| b.is_ascii_hexdigit()) {
+        let safe_user = |s: &str| {
+            !s.is_empty()
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        };
+        let safe_host = |s: &str| {
+            !s.is_empty()
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-'))
+        };
+        let suffix = path
+            .strip_prefix("/tmp/GitRun-logs-")?
+            .strip_suffix(".txt")?;
+        if !safe_user(user)
+            || !safe_host(host)
+            || suffix.len() != 32
+            || !suffix.bytes().all(|b| b.is_ascii_hexdigit())
+        {
             return None;
         }
         Some((user.to_owned(), host.to_owned(), path.to_owned()))
     }
 
     fn receive_source(source: &str) -> io::Result<i32> {
-        let (user, host, path) = valid_source(source)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "source must be user@host:/tmp/GitRun-logs-<32 hex characters>.txt"))?;
-        let scp = find_program("scp").ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "OpenSSH scp client is required"))?;
-        let destination = env::temp_dir().join(format!("gitrun-logs-{}-{}.tmp", std::process::id(), random_hex(8)?));
+        let (user, host, path) = valid_source(source).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "source must be user@host:/tmp/GitRun-logs-<32 hex characters>.txt",
+            )
+        })?;
+        let scp = find_program("scp").ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "OpenSSH scp client is required")
+        })?;
+        let destination = env::temp_dir().join(format!(
+            "gitrun-logs-{}-{}.tmp",
+            std::process::id(),
+            random_hex(8)?
+        ));
         let remote = format!("{user}@{host}:{path}");
         let status = Command::new(scp).arg(remote).arg(&destination).status()?;
-        if !status.success() { let _ = fs::remove_file(&destination); return Ok(status.code().unwrap_or(1)); }
+        if !status.success() {
+            let _ = fs::remove_file(&destination);
+            return Ok(status.code().unwrap_or(1));
+        }
         let result = (|| {
             let metadata = fs::metadata(&destination)?;
             if metadata.len() > MAX_LOG_BYTES as u64 {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "downloaded logs exceed 32 MiB"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "downloaded logs exceed 32 MiB",
+                ));
             }
             let data = fs::read(&destination)?;
             match save_payload(&data)? {
-                Some(path) => { println!("Saved GitRun logs to {}", path.display()); Ok(0) }
-                None => { println!("Save cancelled; no local file was written."); Ok(1) }
+                Some(path) => {
+                    println!("Saved GitRun logs to {}", path.display());
+                    Ok(0)
+                }
+                None => {
+                    println!("Save cancelled; no local file was written.");
+                    Ok(1)
+                }
             }
         })();
         let _ = fs::remove_file(&destination);
@@ -360,7 +539,10 @@ mod linux {
         match (target, source) {
             (Some(target), None) => run_target(target),
             (None, Some(source)) => receive_source(source),
-            _ => Err(io::Error::new(io::ErrorKind::InvalidInput, "specify exactly one of --target or --source")),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "specify exactly one of --target or --source",
+            )),
         }
     }
 }
@@ -372,7 +554,10 @@ pub(crate) fn run(target: Option<&str>, source: Option<&str>) -> io::Result<i32>
 
 #[cfg(not(target_os = "linux"))]
 pub(crate) fn run(_target: Option<&str>, _source: Option<&str>) -> io::Result<i32> {
-    Err(io::Error::new(io::ErrorKind::Unsupported, "the SSH log-export wrapper is currently available on Linux"))
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "the SSH log-export wrapper is currently available on Linux",
+    ))
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -390,9 +575,18 @@ mod tests {
 
     #[test]
     fn source_accepts_only_generated_log_file_paths() {
-        assert!(valid_source("operator@100.64.0.12:/tmp/GitRun-logs-0123456789abcdef0123456789abcdef.txt").is_some());
+        assert!(valid_source(
+            "operator@100.64.0.12:/tmp/GitRun-logs-0123456789abcdef0123456789abcdef.txt"
+        )
+        .is_some());
         assert!(valid_source("operator@host:/etc/passwd").is_none());
-        assert!(valid_source("operator@host:/tmp/GitRun-logs-0123456789abcdef0123456789abcdeg.txt").is_none());
-        assert!(valid_source("-oProxyCommand@host:/tmp/GitRun-logs-0123456789abcdef0123456789abcdef.txt").is_none());
+        assert!(valid_source(
+            "operator@host:/tmp/GitRun-logs-0123456789abcdef0123456789abcdeg.txt"
+        )
+        .is_none());
+        assert!(valid_source(
+            "-oProxyCommand@host:/tmp/GitRun-logs-0123456789abcdef0123456789abcdef.txt"
+        )
+        .is_none());
     }
 }

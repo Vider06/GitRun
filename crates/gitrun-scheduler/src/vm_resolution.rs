@@ -26,9 +26,9 @@
 //! that cycle. It never redirects the job to the local Docker host.
 
 #[cfg(verus)]
-use vstd::prelude::{verus_spec, verus_verify};
-#[cfg(verus)]
 use vstd::array::ArrayAdditionalSpecFns;
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
 
 #[cfg(not(any(kani, verus)))]
 use crate::docker::{self, DockerHost};

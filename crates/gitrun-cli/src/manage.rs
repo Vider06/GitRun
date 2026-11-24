@@ -1972,7 +1972,7 @@ fn fallback_receive_command(path: &Path) -> Option<String> {
     }
     let source = format!("{username}@{server_address}:{}", path.display());
     Some(format!(
-        "Windows: powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\gitrun-manage.ps1 -Source '{source}'\nLinux: bash scripts/gitrun-manage.sh --source '{source}'"
+        "Windows: powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\gitrun-manage.ps1 -Source '{source}'\nLinux: gitrun manage --source '{source}'"
     ))
 }
 

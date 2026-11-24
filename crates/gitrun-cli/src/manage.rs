@@ -3913,6 +3913,17 @@ fn restore_redacted(edited: &mut Value, original: &Value) {
 
 // Keep repository-component policy byte-oriented and dependency-free so the
 // exact predicate used by CLI validation can be checked by both formal tools.
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns (b'A' <= byte && byte <= b'Z')
+            || (b'a' <= byte && byte <= b'z')
+            || (b'0' <= byte && byte <= b'9')
+            || byte == b'-'
+            || byte == b'_'
+            || byte == b'.'
+    )
+)]
 fn repo_component_byte_allowed(byte: u8) -> bool {
     (b'A' <= byte && byte <= b'Z')
         || (b'a' <= byte && byte <= b'z')
@@ -3942,7 +3953,7 @@ mod kani_verification {
     #[kani::proof]
     fn repository_component_byte_policy_is_exact() {
         let byte: u8 = kani::any();
-        let expected = byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.');
+        let expected = (b'A' <= byte && byte <= b'Z') || (b'a' <= byte && byte <= b'z') || (b'0' <= byte && byte <= b'9') || matches!(byte, b'-' | b'_' | b'.');
         assert_eq!(repo_component_byte_allowed(byte), expected);
         assert!(!repo_component_byte_allowed(b'/'));
         assert!(!repo_component_byte_allowed(b' '));

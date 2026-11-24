@@ -446,10 +446,18 @@ pub(crate) fn retry_delay_seconds(attempt: usize) -> u64 {
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(
     verus,
-    verus_spec(returns reset_epoch.saturating_sub(now_epoch).max(1) as u64)
+    verus_spec(returns if reset_epoch > now_epoch {
+        (reset_epoch as int - now_epoch as int) as u64
+    } else {
+        1
+    })
 )]
 pub(crate) fn rate_limit_reset_seconds(reset_epoch: i64, now_epoch: i64) -> u64 {
-    reset_epoch.saturating_sub(now_epoch).max(1) as u64
+    if reset_epoch > now_epoch {
+        (reset_epoch as i128 - now_epoch as i128) as u64
+    } else {
+        1
+    }
 }
 
 #[cfg(not(any(kani, verus)))]
@@ -1754,7 +1762,6 @@ mod tests {
 mod kani_verification {
     use super::{
         clamp_api_attempts, rate_limit_reset_seconds, retry_delay_seconds, retryable_http_status,
-        MAX_API_ATTEMPTS,
     };
 
     #[kani::proof]
@@ -1809,7 +1816,7 @@ mod verus_verification {
         proof fn api_retry_count_is_clamped_for_all_usize_inputs(attempts: usize)
             ensures
                 clamp_api_attempts(attempts) >= 1,
-                clamp_api_attempts(attempts) <= MAX_API_ATTEMPTS,
+                clamp_api_attempts(attempts) <= 10,
         {
         }
 
@@ -1830,7 +1837,7 @@ mod verus_verification {
             ensures
                 rate_limit_reset_seconds(reset, now) >= 1,
                 rate_limit_reset_seconds(reset, now)
-                    == reset.saturating_sub(now).max(1) as u64,
+                    == if reset > now { (reset as int - now as int) as u64 } else { 1 },
         {
         }
     }

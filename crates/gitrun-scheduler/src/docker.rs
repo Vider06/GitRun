@@ -378,6 +378,10 @@ pub(crate) fn valid_workload_routing_byte(byte: u8) -> bool {
     matches!(byte, b'0'..=b'9' | b'a'..=b'f')
 }
 
+// Keep checked slice access in this dual-spec function: Verus cannot lower
+// slice indexing here, while Clippy prefers indexing/Option helpers that Verus
+// does not currently support. Scope the exceptions to this verifier boundary.
+#[allow(clippy::get_first, clippy::unnecessary_map_or)]
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
 fn valid_workload_routing_id(code: &str) -> bool {
     // Use checked slice access: Verus cannot lower Rust's slice index

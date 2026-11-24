@@ -58,6 +58,20 @@ verus! {
 fn is_bash_invocation(invocation: &str) -> bool {
     let bytes = invocation.as_bytes();
     let length = bytes.len();
+    (length == 4 && bytes[0] == b'b' && bytes[1] == b'a' && bytes[2] == b's' && bytes[3] == b'h')
+        || (length >= 5
+            && bytes[length - 5] == b'/'
+            && bytes[length - 4] == b'b'
+            && bytes[length - 3] == b'a'
+            && bytes[length - 2] == b's'
+            && bytes[length - 1] == b'h')
+}
+
+#[cfg(verus)]
+#[verus_spec(returns is_bash_invocation_spec(invocation.spec_bytes()))]
+fn is_bash_invocation(invocation: &str) -> bool {
+    let bytes = invocation.as_bytes();
+    let length = bytes.len();
     let result =
         (length == 4 && bytes[0] == b'b' && bytes[1] == b'a' && bytes[2] == b's' && bytes[3] == b'h')
             || (length >= 5
@@ -74,20 +88,6 @@ fn is_bash_invocation(invocation: &str) -> bool {
         assert(result == is_bash_invocation_spec(invocation.spec_bytes()));
     }
     result
-}
-
-#[cfg(verus)]
-#[verus_spec(returns is_bash_invocation_spec(invocation.spec_bytes()))]
-fn is_bash_invocation(invocation: &str) -> bool {
-    let bytes = invocation.as_bytes();
-    let length = bytes.len();
-    (length == 4 && bytes[0] == b'b' && bytes[1] == b'a' && bytes[2] == b's' && bytes[3] == b'h')
-        || (length >= 5
-            && bytes[length - 5] == b'/'
-            && bytes[length - 4] == b'b'
-            && bytes[length - 3] == b'a'
-            && bytes[length - 2] == b's'
-            && bytes[length - 1] == b'h')
 }
 
 fn real_shell_for_invocation(invocation: &str) -> &'static str {

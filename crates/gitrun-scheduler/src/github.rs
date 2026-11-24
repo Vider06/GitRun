@@ -17,7 +17,7 @@
 //!    header until exhausted.
 
 #[cfg(verus)]
-use vstd::prelude::{verus_spec, verus_verify};
+use vstd::prelude::{int, verus_spec, verus_verify};
 
 #[cfg(not(any(kani, verus)))]
 use gitrun_core::AppAuth;
@@ -1762,6 +1762,7 @@ mod tests {
 mod kani_verification {
     use super::{
         clamp_api_attempts, rate_limit_reset_seconds, retry_delay_seconds, retryable_http_status,
+        MAX_API_ATTEMPTS,
     };
 
     #[kani::proof]

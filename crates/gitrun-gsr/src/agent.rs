@@ -372,6 +372,7 @@ mod verus_verification {
     verus! {
         proof fn shell_dispatch_spec_separates_bash_from_sh() {
             reveal_strlit("bash");
+            reveal_strlit("/bash");
             reveal_strlit("/bin/bash");
             reveal_strlit("/usr/bin/bash");
             reveal_strlit("sh");

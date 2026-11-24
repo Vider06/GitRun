@@ -367,10 +367,20 @@ fn setup_flag_contents_are_valid(content: Result<String, std::io::Error>) -> boo
     )
 )]
 /// Returns whether `byte` is an ASCII hexadecimal digit.
+#[cfg(not(verus))]
 pub fn setup_nonce_byte_is_hex(byte: u8) -> bool {
     (b'0'..=b'9').contains(&byte)
         || (b'a'..=b'f').contains(&byte)
         || (b'A'..=b'F').contains(&byte)
+}
+
+// Verus verifies the equivalent scalar comparisons directly; the standard
+// RangeInclusive::contains implementation is not part of its verified surface.
+#[cfg(verus)]
+pub fn setup_nonce_byte_is_hex(byte: u8) -> bool {
+    (byte >= b'0' && byte <= b'9')
+        || (byte >= b'a' && byte <= b'f')
+        || (byte >= b'A' && byte <= b'F')
 }
 
 fn setup_nonce_is_valid(value: &str) -> bool {

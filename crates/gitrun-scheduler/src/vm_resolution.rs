@@ -474,15 +474,6 @@ pub fn load_vm_definitions(state_dir: &Path) -> vm::Result<Vec<VmConfig>> {
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
-#[cfg_attr(
-    verus,
-    verus_spec(
-        returns
-            octets[0] == 10
-                || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
-                || (octets[0] == 192 && octets[1] == 168)
-    )
-)]
 pub(crate) fn ipv4_octets_are_private(octets: [u8; 4]) -> bool {
     octets[0] == 10
         || (octets[0] == 172 && (16..=31).contains(&octets[1]))

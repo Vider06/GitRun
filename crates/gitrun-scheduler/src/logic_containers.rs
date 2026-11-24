@@ -17,7 +17,7 @@
 //! inside that VM, exactly like Linux containers run on the bare host.
 
 #[cfg(verus)]
-use vstd::prelude::{verus_spec, verus_verify};
+use vstd::prelude::{verus_spec, verus_verify, SpecAdd};
 
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
@@ -60,7 +60,7 @@ pub struct LogicRule {
     verus,
     verus_spec(
         returns if byte.is_ascii_uppercase() {
-            byte + 32
+            (byte as int + 32) as u8
         } else {
             byte
         }
@@ -508,7 +508,7 @@ mod verus_verification {
         proof fn ascii_lowercase_label_byte_is_exact_over_all_u8_values(byte: u8)
             ensures
                 ascii_lowercase_label_byte(byte)
-                    == if byte.is_ascii_uppercase() { byte + 32 } else { byte },
+                    == if byte.is_ascii_uppercase() { (byte as int + 32) as u8 } else { byte },
         {
         }
     }

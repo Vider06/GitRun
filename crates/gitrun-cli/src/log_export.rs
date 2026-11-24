@@ -1,4 +1,4 @@
-//! Native Linux client-side log export helper for \`gitrun manage\`.
+//! Native Linux client-side log export helper for `gitrun manage`.
 //!
 //! This module replaces the former Python helper. It deliberately uses only
 //! the standard library: the remote protocol is bounded, authenticated by a
@@ -45,6 +45,15 @@ mod linux {
             && target.bytes().all(|byte| {
                 byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'@' | b':' | b'-')
             })
+    }
+
+    fn remove_remote_token(ssh: &str, target: &str, path: &str) {
+        let command = format!("rm -f {path}");
+        let _ = Command::new(ssh)
+            .args(["-T", target, &command])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
 
     fn remote_token(ssh: &str, target: &str, token: &str, path: &str) -> io::Result<()> {

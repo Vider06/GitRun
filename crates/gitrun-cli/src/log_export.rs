@@ -430,10 +430,13 @@ mod linux {
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         listener.set_nonblocking(true)?;
         let local_port = listener.local_addr()?.port();
-        remote_token(&ssh, target, &token, &token_path)?;
+        if let Err(error) = remote_token(&ssh, target, &token, &token_path) {
+            remove_remote_token(&ssh, target, &token_path);
+            return Err(error);
+        }
         let forward = format!("127.0.0.1:{remote_port}:127.0.0.1:{local_port}");
         let remote = format!("trap 'rm -f {token_path}' EXIT; GITRUN_LOG_EXPORT_PORT={remote_port} GITRUN_LOG_EXPORT_TOKEN_FILE={token_path} gitrun manage");
-        let mut child = Command::new(&ssh)
+        let mut child = match Command::new(&ssh)
             .args([
                 "-o",
                 "ExitOnForwardFailure=yes",
@@ -443,7 +446,14 @@ mod linux {
                 target,
                 &remote,
             ])
-            .spawn()?;
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) => {
+                remove_remote_token(&ssh, target, &token_path);
+                return Err(error);
+            }
+        };
         let mut saved = Vec::new();
         let result = loop {
             match child.try_wait() {

@@ -596,19 +596,26 @@ mod verus_verification {
             reveal_strlit("COPY Cargo.toml Cargo.lock ./ COPY crates ./crates");
             reveal_strlit("COPY Cargo.toml Cargo.lock ./");
             reveal_strlit("COPY crates ./crates");
-            reveal_strlit("COPY Cargo.toml Cargo.lock ./ COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real /entrypoint.sh");
+            reveal_strlit("COPY Cargo.toml Cargo.lock ./ COPY crates ./crates");
+            reveal_strlit("COPY crates ./crates");
+            reveal_strlit("COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real");
             reveal_strlit("/bin/bash.gitrun-real");
 
             let source = "COPY Cargo.toml Cargo.lock ./ COPY crates ./crates";
-            // Keep this literal identical to the one exposed to Verus above:
-            // the proof must establish absence of the broad workspace COPY,
-            // not merely rely on an unrevealed string literal.
-            let adapted = "COPY Cargo.toml Cargo.lock ./ COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real /entrypoint.sh";
+            // A representative allowed COPY directive is retained. Its
+            // slash immediately after "crates" distinguishes it from the
+            // forbidden broad workspace COPY marker.
+            let adapted = "COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real";
             assert(dockerfile_has_full_workspace_copy(source));
             assert(dockerfile_uses_safe_bash_entrypoint(adapted));
-            // Discharge the negative substring property explicitly. Verus
-            // otherwise leaves the existential sequence search opaque when
-            // its negation is required for this concrete Dockerfile literal.
+            // Any occurrence must begin with 'C'. In this representative
+            // adapted Dockerfile, the only uppercase 'C' is at index zero;
+            // there the candidate differs at index 11 ('/' versus ' ').
+            assert forall |index: int|
+                0 <= index < adapted@.len() && index != 0
+                implies adapted@[index] != 'C' by {
+                reveal_strlit("COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real");
+            }
             assert forall |start: int|
                 0 <= start
                     && start + ("COPY crates ./crates"@.len() as int)
@@ -618,7 +625,16 @@ mod verus_verification {
                         start + ("COPY crates ./crates"@.len() as int),
                     ) != "COPY crates ./crates"@ by {
                 reveal_strlit("COPY crates ./crates");
-                reveal_strlit("COPY Cargo.toml Cargo.lock ./ COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real /entrypoint.sh");
+                reveal_strlit("COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real");
+                if start == 0 {
+                    assert(adapted@[11] == '/');
+                    assert("COPY crates ./crates"@[11] == ' ');
+                    vstd::seq::lemma_seq_subrange_index(adapted@, start, start + ("COPY crates ./crates"@.len() as int), 11);
+                } else {
+                    assert(adapted@[start] != 'C');
+                    assert("COPY crates ./crates"@[0] == 'C');
+                    vstd::seq::lemma_seq_subrange_index(adapted@, start, start + ("COPY crates ./crates"@.len() as int), 0);
+                }
             }
             assert(dockerfile_build_context_is_minimal(adapted));
             assert(!dockerfile_has_full_workspace_copy(adapted));

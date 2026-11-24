@@ -3911,6 +3911,12 @@ fn restore_redacted(edited: &mut Value, original: &Value) {
     }
 }
 
+// Keep repository-component policy byte-oriented and dependency-free so the
+// exact predicate used by CLI validation can be checked by both formal tools.
+fn repo_component_byte_allowed(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
+}
+
 fn valid_repo(repo: &str) -> bool {
     let mut parts = repo.split('/');
     let Some(owner) = parts.next() else {
@@ -3922,12 +3928,39 @@ fn valid_repo(repo: &str) -> bool {
     parts.next().is_none()
         && !owner.is_empty()
         && !name.is_empty()
-        && owner
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && owner.bytes().all(repo_component_byte_allowed)
+        && name.bytes().all(repo_component_byte_allowed)
+}
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::repo_component_byte_allowed;
+
+    #[kani::proof]
+    fn repository_component_byte_policy_is_exact() {
+        let byte: u8 = kani::any();
+        let expected = byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.');
+        assert_eq!(repo_component_byte_allowed(byte), expected);
+        assert!(!repo_component_byte_allowed(b'/'));
+        assert!(!repo_component_byte_allowed(b' '));
+        assert!(!repo_component_byte_allowed(b'@'));
+        assert!(!repo_component_byte_allowed(0));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::repo_component_byte_allowed;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn repository_component_byte_policy_is_exact(byte: u8)
+            ensures
+                repo_component_byte_allowed(byte)
+                    == (byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_' || byte == b'.'),
+        {
+        }
+    }
 }
 
 #[cfg(test)]

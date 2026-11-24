@@ -59,7 +59,7 @@ pub struct LogicRule {
 #[cfg_attr(
     verus,
     verus_spec(
-        returns if byte.is_ascii_uppercase() {
+        returns if byte >= 65 && byte <= 90 {
             (byte as int + 32) as u8
         } else {
             byte
@@ -67,7 +67,7 @@ pub struct LogicRule {
     )
 )]
 pub(crate) fn ascii_lowercase_label_byte(byte: u8) -> u8 {
-    if byte.is_ascii_uppercase() {
+    if byte >= b'A' && byte <= b'Z' {
         byte + 32
     } else {
         byte
@@ -508,7 +508,7 @@ mod verus_verification {
         proof fn ascii_lowercase_label_byte_is_exact_over_all_u8_values(byte: u8)
             ensures
                 ascii_lowercase_label_byte(byte)
-                    == if byte.is_ascii_uppercase() { (byte as int + 32) as u8 } else { byte },
+                    == if byte >= 65 && byte <= 90 { (byte as int + 32) as u8 } else { byte },
         {
         }
     }

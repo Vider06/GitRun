@@ -380,10 +380,29 @@ pub(crate) fn valid_workload_routing_byte(byte: u8) -> bool {
 
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
 fn valid_workload_routing_id(code: &str) -> bool {
-    let Some(digest) = code.strip_prefix("wk-") else {
-        return false;
-    };
-    digest.len() == 16 && digest.bytes().all(valid_workload_routing_byte)
+    // Inspect the canonical byte representation directly. This avoids
+    // iterator and prefix helpers that are not available in Verus' exec mode.
+    let bytes = code.as_bytes();
+    bytes.len() == 19
+        && bytes[0] == b'w'
+        && bytes[1] == b'k'
+        && bytes[2] == b'-'
+        && valid_workload_routing_byte(bytes[3])
+        && valid_workload_routing_byte(bytes[4])
+        && valid_workload_routing_byte(bytes[5])
+        && valid_workload_routing_byte(bytes[6])
+        && valid_workload_routing_byte(bytes[7])
+        && valid_workload_routing_byte(bytes[8])
+        && valid_workload_routing_byte(bytes[9])
+        && valid_workload_routing_byte(bytes[10])
+        && valid_workload_routing_byte(bytes[11])
+        && valid_workload_routing_byte(bytes[12])
+        && valid_workload_routing_byte(bytes[13])
+        && valid_workload_routing_byte(bytes[14])
+        && valid_workload_routing_byte(bytes[15])
+        && valid_workload_routing_byte(bytes[16])
+        && valid_workload_routing_byte(bytes[17])
+        && valid_workload_routing_byte(bytes[18])
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]

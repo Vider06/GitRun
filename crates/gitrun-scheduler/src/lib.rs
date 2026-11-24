@@ -1,3 +1,6 @@
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[allow(unused_imports)]
 use vstd::prelude::*;
 
@@ -3372,7 +3375,7 @@ fn vault_env_for_repo(
 /// technically requires, but there's no reason a secret's env var name
 /// should need anything looser, and being strict here is cheap insurance
 /// against shell-metacharacter or injection surprises downstream.
-#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(
     verus,
     verus_spec(

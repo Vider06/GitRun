@@ -4,6 +4,9 @@
 //! typed operations already implemented by the dashboard backend; it does not
 //! provide a shell, arbitrary executable launch, or arbitrary file access.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 // Verus compiles this production module as a standalone verification crate and
 // supplies synthetic cfg values outside Cargo's normal check-cfg registry.
 #![allow(unexpected_cfgs)]

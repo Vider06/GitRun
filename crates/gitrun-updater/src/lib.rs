@@ -1,3 +1,6 @@
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
 #[allow(unused_imports)]
 use vstd::prelude::*;
 

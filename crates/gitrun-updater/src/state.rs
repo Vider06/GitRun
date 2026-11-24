@@ -1,6 +1,9 @@
 //! Updater-owned policy persistence, host diagnostics and bounded operation history.
 
 #[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
+#[cfg(verus)]
 use vstd::contrib::exec_spec::*;
 #[allow(unused_imports)]
 use vstd::prelude::*;

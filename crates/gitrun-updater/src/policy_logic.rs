@@ -1,6 +1,9 @@
 //! Pure updater release-policy types shared by runtime code and formal proofs.
 
 #[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
+#[cfg(verus)]
 use vstd::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

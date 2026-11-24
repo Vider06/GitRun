@@ -40,18 +40,17 @@ use vstd::contrib::exec_spec::*;
 #[cfg(verus)]
 use vstd::prelude::*;
 #[cfg(verus)]
-use vstd::string::StringSliceAdditionalSpecFns;
 
 #[cfg(verus)]
 verus! {
-    pub open spec fn is_bash_invocation_spec(invocation: Seq<u8>) -> bool {
-        invocation =~= seq![b'b', b'a', b's', b'h']
+    pub open spec fn is_bash_invocation_spec(invocation: Seq<char>) -> bool {
+        invocation =~= "bash"@
             || (invocation.len() >= 5
-                && invocation[invocation.len() - 5] == b'/'
-                && invocation[invocation.len() - 4] == b'b'
-                && invocation[invocation.len() - 3] == b'a'
-                && invocation[invocation.len() - 2] == b's'
-                && invocation[invocation.len() - 1] == b'h')
+                && invocation[invocation.len() - 5] == '/'
+                && invocation[invocation.len() - 4] == 'b'
+                && invocation[invocation.len() - 3] == 'a'
+                && invocation[invocation.len() - 2] == 's'
+                && invocation[invocation.len() - 1] == 'h')
     }
 }
 
@@ -69,7 +68,7 @@ fn is_bash_invocation(invocation: &str) -> bool {
 }
 
 #[cfg(verus)]
-#[verus_spec(returns is_bash_invocation_spec(invocation.spec_bytes()))]
+#[verus_spec(returns is_bash_invocation_spec(invocation@))]
 fn is_bash_invocation(invocation: &str) -> bool {
     let bytes = invocation.as_bytes();
     let length = bytes.len();
@@ -380,12 +379,12 @@ mod verus_verification {
             reveal_strlit("/bin/sh");
             reveal_strlit("/bin/bash.gitrun-real");
 
-            assert(is_bash_invocation_spec("bash".spec_bytes()));
-            assert(is_bash_invocation_spec("/bin/bash".spec_bytes()));
-            assert(is_bash_invocation_spec("/usr/bin/bash".spec_bytes()));
-            assert(!is_bash_invocation_spec("sh".spec_bytes()));
-            assert(!is_bash_invocation_spec("/bin/sh".spec_bytes()));
-            assert(!is_bash_invocation_spec("/bin/bash.gitrun-real".spec_bytes()));
+            assert(is_bash_invocation_spec("bash"@));
+            assert(is_bash_invocation_spec("/bin/bash"@));
+            assert(is_bash_invocation_spec("/usr/bin/bash"@));
+            assert(!is_bash_invocation_spec("sh"@));
+            assert(!is_bash_invocation_spec("/bin/sh"@));
+            assert(!is_bash_invocation_spec("/bin/bash.gitrun-real"@));
         }
     }
 }

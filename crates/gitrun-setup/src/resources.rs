@@ -680,9 +680,35 @@ mod verus_verification {
                 }
             }
             assert(dockerfile_build_context_is_minimal(adapted));
+
+            // The source contains no lowercase 'b', while the required Bash
+            // marker has 'b' at offset one. This proves that the marker cannot
+            // occur at any offset in the source Dockerfile.
+            assert forall |index: int|
+                0 <= index < source@.len()
+                implies #[trigger] source@[index] != 'b' by {
+                reveal_strlit("COPY Cargo.toml Cargo.lock ./ COPY crates ./crates");
+            }
+            assert forall |start: int|
+                0 <= start && start + (safe_bash@.len() as int) <= source@.len()
+                implies #[trigger] source@.subrange(
+                    start,
+                    start + (safe_bash@.len() as int),
+                ) != safe_bash@ by {
+                reveal_strlit("/bin/bash.gitrun-real");
+                assert(source@[start + 1] != 'b');
+                assert(safe_bash@[1] == 'b');
+                vstd::seq::lemma_seq_subrange_index(
+                    source@,
+                    start,
+                    start + (safe_bash@.len() as int),
+                    1,
+                );
+            }
+            assert(!dockerfile_uses_safe_bash_entrypoint(source));
+
             // The source has the broad COPY marker, so its build context is
-            // correctly classified as non-minimal. Kani covers the negative
-            // safe-entrypoint case against the concrete predicate as well.
+            // correctly classified as non-minimal.
             assert(!dockerfile_build_context_is_minimal(source));
         }
     }

@@ -32,7 +32,8 @@ verus! {
         returns contains_utf8_subsequence(haystack.spec_bytes(), needle.spec_bytes())
     )
 )]
-fn contains_literal(haystack: &str, needle: &str) -> bool {
+#[doc(hidden)]
+pub fn contains_literal(haystack: &str, needle: &str) -> bool {
     haystack.contains(needle)
 }
 

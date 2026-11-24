@@ -474,6 +474,9 @@ pub fn load_vm_definitions(state_dir: &Path) -> vm::Result<Vec<VmConfig>> {
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
+// Verus does not support RangeInclusive::contains in exec mode. Keep the
+// equivalent explicit bounds and scope the Clippy exception to this function.
+#[allow(clippy::manual_range_contains)]
 pub(crate) fn ipv4_octets_are_private(octets: [u8; 4]) -> bool {
     let [first, second, _, _] = octets;
     first == 10 || (first == 172 && second >= 16 && second <= 31) || (first == 192 && second == 168)

@@ -44,7 +44,7 @@ use vstd::string::StringSliceAdditionalSpecFns;
 #[cfg(verus)]
 verus! {
     pub open spec fn is_bash_invocation_spec(invocation: Seq<u8>) -> bool {
-        invocation =~= "bash".spec_bytes()
+        invocation =~= seq![b'b', b'a', b's', b'h']
             || (invocation.len() >= 5
                 && invocation[invocation.len() - 5] == b'/'
                 && invocation[invocation.len() - 4] == b'b'
@@ -72,22 +72,13 @@ fn is_bash_invocation(invocation: &str) -> bool {
 fn is_bash_invocation(invocation: &str) -> bool {
     let bytes = invocation.as_bytes();
     let length = bytes.len();
-    let result =
-        (length == 4 && bytes[0] == b'b' && bytes[1] == b'a' && bytes[2] == b's' && bytes[3] == b'h')
-            || (length >= 5
-                && bytes[length - 5] == b'/'
-                && bytes[length - 4] == b'b'
-                && bytes[length - 3] == b'a'
-                && bytes[length - 2] == b's'
-                && bytes[length - 1] == b'h');
-    proof {
-        assert(bytes@ == invocation.spec_bytes());
-        assert(length as int == invocation.spec_bytes().len());
-        reveal_strlit("bash");
-        assert("bash".spec_bytes() =~= seq![b'b', b'a', b's', b'h']);
-        assert(result == is_bash_invocation_spec(invocation.spec_bytes()));
-    }
-    result
+    (length == 4 && bytes[0] == b'b' && bytes[1] == b'a' && bytes[2] == b's' && bytes[3] == b'h')
+        || (length >= 5
+            && bytes[length - 5] == b'/'
+            && bytes[length - 4] == b'b'
+            && bytes[length - 3] == b'a'
+            && bytes[length - 2] == b's'
+            && bytes[length - 1] == b'h')
 }
 
 fn real_shell_for_invocation(invocation: &str) -> &'static str {

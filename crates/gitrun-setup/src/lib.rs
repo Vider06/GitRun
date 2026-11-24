@@ -363,21 +363,21 @@ pub fn setup_nonce_byte_is_hex(byte: u8) -> bool {
     byte.is_ascii_hexdigit()
 }
 
-// Keep the Verus implementation inside its verification macro. A function
-// declared outside verus! is treated as external by Verus and cannot be used
-// as a proved postcondition by downstream proof targets.
 #[cfg(verus)]
 verus! {
-    pub fn setup_nonce_byte_is_hex(byte: u8) -> (result: bool)
-        ensures result
-            == ((byte >= b'0' && byte <= b'9')
-                || (byte >= b'a' && byte <= b'f')
-                || (byte >= b'A' && byte <= b'F')),
-    {
+    pub open spec fn setup_nonce_byte_is_hex_spec(byte: u8) -> bool {
         (byte >= b'0' && byte <= b'9')
             || (byte >= b'a' && byte <= b'f')
             || (byte >= b'A' && byte <= b'F')
     }
+}
+
+#[cfg(verus)]
+#[verus_spec(returns setup_nonce_byte_is_hex_spec(byte))]
+pub fn setup_nonce_byte_is_hex(byte: u8) -> bool {
+    (byte >= b'0' && byte <= b'9')
+        || (byte >= b'a' && byte <= b'f')
+        || (byte >= b'A' && byte <= b'F')
 }
 
 fn setup_nonce_is_valid(value: &str) -> bool {
@@ -4136,12 +4136,12 @@ mod kani_verification {
 
 #[cfg(verus)]
 mod verus_verification {
-    use super::setup_nonce_byte_is_hex;
+    use super::setup_nonce_byte_is_hex_spec;
     use vstd::prelude::*;
 
     verus! {
         proof fn setup_nonce_hex_alphabet_is_exact(byte: u8)
-            ensures setup_nonce_byte_is_hex(byte)
+            ensures setup_nonce_byte_is_hex_spec(byte)
             == ((byte >= b'0' && byte <= b'9')
                 || (byte >= b'a' && byte <= b'f')
                 || (byte >= b'A' && byte <= b'F')),

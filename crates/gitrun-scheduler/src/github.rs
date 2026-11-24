@@ -424,11 +424,11 @@ const DEFAULT_API_ATTEMPTS: usize = 3;
 const MAX_API_ATTEMPTS: usize = 10;
 
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
-#[cfg_attr(verus, verus_spec(returns attempts.clamp(1, MAX_API_ATTEMPTS)))]
+#[cfg_attr(verus, verus_spec(returns if attempts < 1 { 1 } else if attempts > 10 { 10 } else { attempts }))]
 pub(crate) fn clamp_api_attempts(attempts: usize) -> usize {
     #[cfg(verus)]
     {
-        attempts.clamp(1, 10)
+        if attempts < 1 { 1 } else if attempts > 10 { 10 } else { attempts }
     }
     #[cfg(not(verus))]
     {

@@ -380,29 +380,29 @@ pub(crate) fn valid_workload_routing_byte(byte: u8) -> bool {
 
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
 fn valid_workload_routing_id(code: &str) -> bool {
-    // Inspect the canonical byte representation directly. This avoids
-    // iterator and prefix helpers that are not available in Verus' exec mode.
+    // Use checked slice access: Verus cannot lower Rust's slice index
+    // operator in this dual-spec function.
     let bytes = code.as_bytes();
     bytes.len() == 19
-        && bytes@[0] == b'w'
-        && bytes@[1] == b'k'
-        && bytes@[2] == b'-'
-        && valid_workload_routing_byte(bytes@[3])
-        && valid_workload_routing_byte(bytes@[4])
-        && valid_workload_routing_byte(bytes@[5])
-        && valid_workload_routing_byte(bytes@[6])
-        && valid_workload_routing_byte(bytes@[7])
-        && valid_workload_routing_byte(bytes@[8])
-        && valid_workload_routing_byte(bytes@[9])
-        && valid_workload_routing_byte(bytes@[10])
-        && valid_workload_routing_byte(bytes@[11])
-        && valid_workload_routing_byte(bytes@[12])
-        && valid_workload_routing_byte(bytes@[13])
-        && valid_workload_routing_byte(bytes@[14])
-        && valid_workload_routing_byte(bytes@[15])
-        && valid_workload_routing_byte(bytes@[16])
-        && valid_workload_routing_byte(bytes@[17])
-        && valid_workload_routing_byte(bytes@[18])
+        && bytes.get(0) == Some(&b'w')
+        && bytes.get(1) == Some(&b'k')
+        && bytes.get(2) == Some(&b'-')
+        && bytes.get(3).map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes.get(4).map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes.get(5).map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes.get(6).map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes.get(7).map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes.get(8).map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes.get(9).map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes.get(10).map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes.get(11).map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes.get(12).map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes.get(13).map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes.get(14).map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes.get(15).map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes.get(16).map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes.get(17).map_or(false, |byte| valid_workload_routing_byte(*byte))
+        && bytes.get(18).map_or(false, |byte| valid_workload_routing_byte(*byte))
 }
 
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]

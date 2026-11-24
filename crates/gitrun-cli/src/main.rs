@@ -6260,6 +6260,22 @@ mod internal_lifecycle_command_tests {
             })
         ));
         assert!(matches!(
+            Cli::try_parse_from(["gitrun", "manage", "--target", "operator@MainNode"])
+                .unwrap()
+                .command,
+            Some(Command::Manage { target: Some(target), source: None }) if target == "operator@MainNode"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["gitrun", "manage", "--source", "operator@host:/tmp/GitRun-logs-0123456789abcdef0123456789abcdef.txt"])
+                .unwrap()
+                .command,
+            Some(Command::Manage { target: None, source: Some(source) }) if source.starts_with("operator@host:")
+        ));
+        assert!(Cli::try_parse_from([
+            "gitrun", "manage", "--target", "operator@MainNode", "--source",
+            "operator@host:/tmp/GitRun-logs-0123456789abcdef0123456789abcdef.txt"
+        ]).is_err());
+        assert!(matches!(
             Cli::try_parse_from(["gitrun", "cat"]).unwrap().command,
             Some(Command::Cat)
         ));

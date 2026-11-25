@@ -6,7 +6,7 @@
 use vstd::prelude::*;
 
 verus! {
-    open spec fn repo_component_byte_allowed_spec(byte: u8) -> bool {
+    pub open spec fn repo_component_byte_allowed_spec(byte: u8) -> bool {
         (b'A' <= byte && byte <= b'Z')
             || (b'a' <= byte && byte <= b'z')
             || (b'0' <= byte && byte <= b'9')

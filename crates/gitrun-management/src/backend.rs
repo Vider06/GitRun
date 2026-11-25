@@ -10,7 +10,7 @@
 //! crate contains no dashboard frontend or window lifecycle ownership.
 
 #[cfg(verus)]
-use vstd::prelude::{verus_spec, verus_verify};
+use vstd::prelude::{verus_spec, verus_verify, SpecBitAnd};
 
 #[cfg(not(any(kani, verus)))]
 use gitrun_core::{Config, GitRunApi, GitRunSettings};

@@ -10,6 +10,8 @@
 
 #[cfg(verus)]
 use vstd::prelude::{verus_spec, verus_verify};
+#[cfg(verus)]
+use vstd::string::View;
 
 #[cfg(not(any(kani, verus)))]
 use serde_json::Value;

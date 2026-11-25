@@ -272,7 +272,10 @@ if array is None:
     raise SystemExit("Could not locate production_sources in the Verus runner.")
 
 scheduled = set(re.findall(r'"((?:crates|verification)/[^"]+\.rs)"', array.group(1)))
-scheduled.update(re.findall(r'run_verus_target\s+"((?:crates|verification)/[^"]+\.rs)"', runner))
+# The first path is the standalone Verus input; following paths are the
+# production source files whose proof result this target certifies.
+for call in re.finditer(r'run_verus_target\s+((?:"[^"]+"\s*\\?\s*)+)', runner):
+    scheduled.update(re.findall(r'"((?:crates|verification)/[^"]+\.rs)"', call.group(1)))
 with manifest_path.open(encoding="utf-8", newline="") as source:
     rows = csv.DictReader(source, delimiter="\t")
     missing = sorted(
@@ -310,6 +313,12 @@ echo "Verifying the standalone CLI presenter proof."
 run_verus_target "crates/gitrun-cli/src/presenter.rs" \
   "crates/gitrun-cli/src/presenter.rs"
 
+# Verify the CLI's pure repository-component contract without compiling the
+# complete gitrun binary, whose runtime dependencies are intentionally cfg'd
+# out in Verus mode.
+run_verus_target "verification/verus/cli_repo_component.rs" \
+  "crates/gitrun-cli/src/manage.rs"
+
 run_verus_target "verification/kani/updater_policy.rs" \
   "verification/kani/updater_policy.rs"
 
@@ -338,7 +347,9 @@ for package in "${package_order[@]}"; do
   run_verus_package "$package" "${package_sources[@]}"
 done
 
-run_verus_binary "gitrun-cli" "gitrun" "crates/gitrun-cli/src/manage.rs"
+# The CLI binary is not a Verus target: its runtime dependency exports are
+# deliberately unavailable under cfg(verus). Its pure policy proof is run
+# above as a standalone verifier input.
 run_verus_binary "gitrun-gsr" "gitrun-api" "crates/gitrun-gsr/src/bin/gitrun-api.rs"
 
 if [ "$proof_failures" -ne 0 ]; then

@@ -4399,6 +4399,7 @@ mod kani_verification {
 mod verus_verification {
     use super::valid_workload_routing_byte;
     use vstd::prelude::*;
+    use vstd::string::View;
 
     verus! {
         pub(super) open spec fn valid_workload_routing_id_bytes_spec(bytes: Seq<u8>) -> bool {

@@ -1828,7 +1828,15 @@ mod kani_verification {
         let now: i64 = kani::any();
         let delay = rate_limit_reset_seconds(reset, now);
         assert!(delay >= 1);
-        assert_eq!(delay, reset.saturating_sub(now).max(1) as u64);
+        // The positive difference can exceed i64::MAX. Casting both
+        // operands to u64 and using wrapping subtraction preserves the exact
+        // mathematical difference for reset > now across the full i64 range.
+        let expected = if reset > now {
+            (reset as u64).wrapping_sub(now as u64)
+        } else {
+            1
+        };
+        assert_eq!(delay, expected);
     }
 }
 

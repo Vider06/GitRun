@@ -41,8 +41,8 @@ env:
   CACHE_EPOCH: ${{ vars.GITRUN_CI_FRESH_CACHE == 'true' && format('e2x{0}', github.run_id) || 'e2' }}
   CACHE_BASE_EPOCH: e2
   # Cache writes are allowed on pushes and same-repository PRs, never fork PRs.
-  CI_CACHE_WRITE_ALLOWED: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'true' || 'false' }}
-  # Same-repository PRs may write only to their isolated PR cache scope; fork PRs are read-only.
+  CI_CACHE_WRITE_ALLOWED: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && vars.GITRUN_CI_CACHE_SAVE_PR == 'true')) && 'true' || 'false' }}
+  # Same-repository PR cache writes are opt-in; fork PRs are always read-only.
   TARGET_CACHE_MAX_MB: "4096"
   NPM_CACHE_MAX_MB: "600"
   CI_VERBOSE: ${{ vars.GITRUN_CI_VERBOSE == 'true' && '1' || '0' }}
@@ -103,6 +103,7 @@ jobs:
       - name: Verify repository variables
         id: verify
         env:
+          GITRUN_CI_CACHE_SAVE_PR: ${{ vars.GITRUN_CI_CACHE_SAVE_PR }}
           GITRUN_CI_FRESH_CACHE: ${{ vars.GITRUN_CI_FRESH_CACHE }}
           GITRUN_CI_VERBOSE: ${{ vars.GITRUN_CI_VERBOSE }}
           GITRUN_CI_UPLOAD_ARTIFACTS: ${{ vars.GITRUN_CI_UPLOAD_ARTIFACTS }}
@@ -117,6 +118,7 @@ jobs:
           echo "| Variable | Current repository value |"
           echo "|---|---|"
           for name in \
+            GITRUN_CI_CACHE_SAVE_PR \
             GITRUN_CI_FRESH_CACHE \
             GITRUN_CI_VERBOSE \
             GITRUN_CI_UPLOAD_ARTIFACTS \

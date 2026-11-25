@@ -4437,9 +4437,7 @@ mod kani_verification {
 
 #[cfg(verus)]
 mod verus_verification {
-    use super::{
-        valid_prewarm_workload_id, valid_workload_routing_byte, valid_workload_routing_id,
-    };
+    use super::{valid_workload_routing_byte, valid_workload_routing_id_bytes};
     use vstd::prelude::*;
 
     verus! {
@@ -4450,13 +4448,14 @@ mod verus_verification {
         {
         }
 
+        // Verify the byte-level contract directly: the runtime UTF-8 wrappers
+        // are intentionally excluded from Verus because str::as_bytes is exec-only.
         proof fn workload_routing_id_requires_canonical_prefix_length_and_hex_case() {
-            assert(valid_workload_routing_id("wk-0123456789abcdef"));
-            assert(valid_prewarm_workload_id("wk-0123456789abcdef"));
-            assert(!valid_workload_routing_id("wk-0123456789abcde"));
-            assert(!valid_workload_routing_id("wk-0123456789abcdef0"));
-            assert(!valid_workload_routing_id("wk-0123456789abcdeG"));
-            assert(!valid_workload_routing_id("WK-0123456789abcdef"));
+            assert(valid_workload_routing_id_bytes(b"wk-0123456789abcdef"));
+            assert(!valid_workload_routing_id_bytes(b"wk-0123456789abcde"));
+            assert(!valid_workload_routing_id_bytes(b"wk-0123456789abcdef0"));
+            assert(!valid_workload_routing_id_bytes(b"wk-0123456789abcdeG"));
+            assert(!valid_workload_routing_id_bytes(b"WK-0123456789abcdef"));
         }
     }
 }

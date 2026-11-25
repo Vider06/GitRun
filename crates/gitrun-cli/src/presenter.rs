@@ -879,7 +879,7 @@ mod live_state_kani_verification {
         let sequence = live_state_sequence(state);
         assert!(!sequence.is_empty());
         let selected = sequence[tick % sequence.len()];
-        assert!(sequence.iter().any(|candidate| *candidate == selected));
+        assert!(!selected.is_empty());
     }
 }
 

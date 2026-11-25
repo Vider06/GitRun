@@ -384,73 +384,25 @@ pub(crate) fn valid_workload_routing_byte(byte: u8) -> bool {
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
 fn valid_workload_routing_id_bytes(bytes: &[u8]) -> bool {
     bytes.len() == 19
-        && bytes.get(0) == Some(&b'w')
-        && bytes.get(1) == Some(&b'k')
-        && bytes.get(2) == Some(&b'-')
-        && match bytes.get(3) {
-            Some(byte) => valid_workload_routing_byte(*byte),
-            None => false,
-        }
-        && match bytes.get(4) {
-            Some(byte) => valid_workload_routing_byte(*byte),
-            None => false,
-        }
-        && match bytes.get(5) {
-            Some(byte) => valid_workload_routing_byte(*byte),
-            None => false,
-        }
-        && match bytes.get(6) {
-            Some(byte) => valid_workload_routing_byte(*byte),
-            None => false,
-        }
-        && match bytes.get(7) {
-            Some(byte) => valid_workload_routing_byte(*byte),
-            None => false,
-        }
-        && match bytes.get(8) {
-            Some(byte) => valid_workload_routing_byte(*byte),
-            None => false,
-        }
-        && match bytes.get(9) {
-            Some(byte) => valid_workload_routing_byte(*byte),
-            None => false,
-        }
-        && match bytes.get(10) {
-            Some(byte) => valid_workload_routing_byte(*byte),
-            None => false,
-        }
-        && match bytes.get(11) {
-            Some(byte) => valid_workload_routing_byte(*byte),
-            None => false,
-        }
-        && match bytes.get(12) {
-            Some(byte) => valid_workload_routing_byte(*byte),
-            None => false,
-        }
-        && match bytes.get(13) {
-            Some(byte) => valid_workload_routing_byte(*byte),
-            None => false,
-        }
-        && match bytes.get(14) {
-            Some(byte) => valid_workload_routing_byte(*byte),
-            None => false,
-        }
-        && match bytes.get(15) {
-            Some(byte) => valid_workload_routing_byte(*byte),
-            None => false,
-        }
-        && match bytes.get(16) {
-            Some(byte) => valid_workload_routing_byte(*byte),
-            None => false,
-        }
-        && match bytes.get(17) {
-            Some(byte) => valid_workload_routing_byte(*byte),
-            None => false,
-        }
-        && match bytes.get(18) {
-            Some(byte) => valid_workload_routing_byte(*byte),
-            None => false,
-        }
+        && bytes[0] == b'w'
+        && bytes[1] == b'k'
+        && bytes[2] == b'-'
+        && valid_workload_routing_byte(bytes[3])
+        && valid_workload_routing_byte(bytes[4])
+        && valid_workload_routing_byte(bytes[5])
+        && valid_workload_routing_byte(bytes[6])
+        && valid_workload_routing_byte(bytes[7])
+        && valid_workload_routing_byte(bytes[8])
+        && valid_workload_routing_byte(bytes[9])
+        && valid_workload_routing_byte(bytes[10])
+        && valid_workload_routing_byte(bytes[11])
+        && valid_workload_routing_byte(bytes[12])
+        && valid_workload_routing_byte(bytes[13])
+        && valid_workload_routing_byte(bytes[14])
+        && valid_workload_routing_byte(bytes[15])
+        && valid_workload_routing_byte(bytes[16])
+        && valid_workload_routing_byte(bytes[17])
+        && valid_workload_routing_byte(bytes[18])
 }
 
 #[cfg(not(verus))]

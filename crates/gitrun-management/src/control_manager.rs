@@ -28,7 +28,7 @@ const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
 /// Fixed server-side action allowlist. The socket never becomes a generic
 /// dispatcher for arbitrary backend strings.
-#[cfg_attr(verus, verus_verify)]
+#[cfg_attr(verus, verus_verify(dual_spec))]
 fn action_is_allowed(operation: &str, action: &str) -> bool {
     // Exact byte-slice equality avoids slice-pattern pointer checks in Kani
     // while preserving a closed, case-sensitive protocol vocabulary.

@@ -10,7 +10,7 @@
 // supplies synthetic cfg values outside Cargo's normal check-cfg registry.
 
 #[cfg(verus)]
-use vstd::prelude::{verus_spec, verus_verify};
+use vstd::prelude::verus_spec;
 
 #[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};

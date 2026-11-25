@@ -3925,8 +3925,12 @@ fn valid_repo(repo: &str) -> bool {
     parts.next().is_none()
         && !owner.is_empty()
         && !name.is_empty()
-        && owner.bytes().all(repo_component::repo_component_byte_allowed)
-        && name.bytes().all(repo_component::repo_component_byte_allowed)
+        && owner
+            .bytes()
+            .all(repo_component::repo_component_byte_allowed)
+        && name
+            .bytes()
+            .all(repo_component::repo_component_byte_allowed)
 }
 
 #[cfg(test)]

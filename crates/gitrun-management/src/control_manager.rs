@@ -30,60 +30,57 @@ const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 /// dispatcher for arbitrary backend strings.
 #[cfg_attr(verus, verus_verify(dual_spec))]
 fn action_is_allowed(operation: &str, action: &str) -> bool {
-    // Exact byte-slice equality avoids slice-pattern pointer checks in Kani
-    // while preserving a closed, case-sensitive protocol vocabulary.
-    let operation = operation.as_bytes();
-    let action = action.as_bytes();
-
-    if operation == b"read" {
-        action == b"first_run"
-            || action == b"overview"
-            || action == b"health"
-            || action == b"runners"
-            || action == b"host_resources"
-            || action == b"repository_activity"
-            || action == b"repo_detail"
-            || action == b"repo_bootstrap"
-            || action == b"config"
-            || action == b"gitrun_settings"
-            || action == b"security_summary"
-            || action == b"vault_secrets"
-            || action == b"gsr_status"
-            || action == b"gsr_events"
-            || action == b"service_logs"
-            || action == b"zizmor"
-            || action == b"logic_rules"
-            || action == b"vm_configs"
-            || action == b"hypervisor_decisions"
-            || action == b"kitty"
-            || action == b"repo_api_policies"
-            || action == b"dock_requirements"
-            || action == b"updates"
-            || action == b"updater_settings"
-            || action == b"updater_info"
-            || (cfg!(test) && action == b"ipc_ping")
-    } else if operation == b"write" {
-        action == b"connect_repository"
-            || action == b"vm_configs_replace"
-            || action == b"fast_stop"
-            || action == b"vault_set"
-            || action == b"vault_delete"
-            || action == b"zizmor_install"
-            || action == b"zizmor_disable"
-            || action == b"logic_rules_save"
-            || action == b"vm_save"
-            || action == b"vm_delete"
-            || action == b"hypervisor_respond"
-            || action == b"kitty_save"
-            || action == b"gitrun_settings_save"
-            || action == b"config_save"
-            || action == b"dashboard_settings_save"
-            || action == b"updater_settings_save"
-            || action == b"updater_operation_record"
-            || action == b"service_control"
-            || action == b"maintenance_task"
-            || action == b"json_recovery"
-            || (cfg!(test) && action == b"ipc_test_write")
+    // Exact string equality preserves the closed, case-sensitive protocol
+    // vocabulary and remains available to Verus in specification mode.
+    if operation == "read" {
+        action == "first_run"
+            || action == "overview"
+            || action == "health"
+            || action == "runners"
+            || action == "host_resources"
+            || action == "repository_activity"
+            || action == "repo_detail"
+            || action == "repo_bootstrap"
+            || action == "config"
+            || action == "gitrun_settings"
+            || action == "security_summary"
+            || action == "vault_secrets"
+            || action == "gsr_status"
+            || action == "gsr_events"
+            || action == "service_logs"
+            || action == "zizmor"
+            || action == "logic_rules"
+            || action == "vm_configs"
+            || action == "hypervisor_decisions"
+            || action == "kitty"
+            || action == "repo_api_policies"
+            || action == "dock_requirements"
+            || action == "updates"
+            || action == "updater_settings"
+            || action == "updater_info"
+            || (cfg!(test) && action == "ipc_ping")
+    } else if operation == "write" {
+        action == "connect_repository"
+            || action == "vm_configs_replace"
+            || action == "fast_stop"
+            || action == "vault_set"
+            || action == "vault_delete"
+            || action == "zizmor_install"
+            || action == "zizmor_disable"
+            || action == "logic_rules_save"
+            || action == "vm_save"
+            || action == "vm_delete"
+            || action == "hypervisor_respond"
+            || action == "kitty_save"
+            || action == "gitrun_settings_save"
+            || action == "config_save"
+            || action == "dashboard_settings_save"
+            || action == "updater_settings_save"
+            || action == "updater_operation_record"
+            || action == "service_control"
+            || action == "maintenance_task"
+            || action == "json_recovery"
+            || (cfg!(test) && action == "ipc_test_write")
     } else {
         false
     }

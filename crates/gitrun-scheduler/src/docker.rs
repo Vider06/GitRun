@@ -380,36 +380,14 @@ pub(crate) fn valid_workload_routing_byte(byte: u8) -> bool {
     matches!(byte, b'0'..=b'9' | b'a'..=b'f')
 }
 
-// Verus verifies the byte-level contract directly. Keeping UTF-8 conversion in
-// the runtime wrapper avoids calling str::as_bytes from a Verus exec body.
-// The executable body uses ordinary Rust indexing; the explicit return
-// specification uses Verus sequence indexing and is kept in an attribute so
-// rustfmt and rustc never need to parse Verus-only expression syntax.
+// The executable function keeps ordinary Rust slice indexing. Its return
+// contract points to a separate Seq-based spec function; avoiding dual_spec
+// here prevents Verus from reinterpreting exec indexing as ghost indexing.
 #[allow(clippy::get_first, clippy::unnecessary_map_or)]
-#[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(
     verus,
     verus_spec(returns
-        bytes@.len() == 19
-            && bytes@[0] == b'w'
-            && bytes@[1] == b'k'
-            && bytes@[2] == b'-'
-            && valid_workload_routing_byte(bytes@[3])
-            && valid_workload_routing_byte(bytes@[4])
-            && valid_workload_routing_byte(bytes@[5])
-            && valid_workload_routing_byte(bytes@[6])
-            && valid_workload_routing_byte(bytes@[7])
-            && valid_workload_routing_byte(bytes@[8])
-            && valid_workload_routing_byte(bytes@[9])
-            && valid_workload_routing_byte(bytes@[10])
-            && valid_workload_routing_byte(bytes@[11])
-            && valid_workload_routing_byte(bytes@[12])
-            && valid_workload_routing_byte(bytes@[13])
-            && valid_workload_routing_byte(bytes@[14])
-            && valid_workload_routing_byte(bytes@[15])
-            && valid_workload_routing_byte(bytes@[16])
-            && valid_workload_routing_byte(bytes@[17])
-            && valid_workload_routing_byte(bytes@[18])
+        verus_verification::valid_workload_routing_id_bytes_spec(bytes@)
     )
 )]
 fn valid_workload_routing_id_bytes(bytes: &[u8]) -> bool {
@@ -4419,10 +4397,33 @@ mod kani_verification {
 
 #[cfg(verus)]
 mod verus_verification {
-    use super::{valid_workload_routing_byte, valid_workload_routing_id_bytes};
+    use super::valid_workload_routing_byte;
     use vstd::prelude::*;
 
     verus! {
+        pub(super) open spec fn valid_workload_routing_id_bytes_spec(bytes: Seq<u8>) -> bool {
+            bytes.len() == 19
+                && bytes[0] == b'w'
+                && bytes[1] == b'k'
+                && bytes[2] == b'-'
+                && valid_workload_routing_byte(bytes[3])
+                && valid_workload_routing_byte(bytes[4])
+                && valid_workload_routing_byte(bytes[5])
+                && valid_workload_routing_byte(bytes[6])
+                && valid_workload_routing_byte(bytes[7])
+                && valid_workload_routing_byte(bytes[8])
+                && valid_workload_routing_byte(bytes[9])
+                && valid_workload_routing_byte(bytes[10])
+                && valid_workload_routing_byte(bytes[11])
+                && valid_workload_routing_byte(bytes[12])
+                && valid_workload_routing_byte(bytes[13])
+                && valid_workload_routing_byte(bytes[14])
+                && valid_workload_routing_byte(bytes[15])
+                && valid_workload_routing_byte(bytes[16])
+                && valid_workload_routing_byte(bytes[17])
+                && valid_workload_routing_byte(bytes[18])
+        }
+
         proof fn workload_routing_byte_alphabet_is_exact(byte: u8)
             ensures
                 valid_workload_routing_byte(byte)
@@ -4430,14 +4431,13 @@ mod verus_verification {
         {
         }
 
-        // Verify the byte-level contract directly: the runtime UTF-8 wrappers
-        // are intentionally excluded from Verus because str::as_bytes is exec-only.
+        // Verify the formal byte contract independently of the Rust wrapper.
         proof fn workload_routing_id_requires_canonical_prefix_length_and_hex_case() {
-            assert(valid_workload_routing_id_bytes(b"wk-0123456789abcdef"));
-            assert(!valid_workload_routing_id_bytes(b"wk-0123456789abcde"));
-            assert(!valid_workload_routing_id_bytes(b"wk-0123456789abcdef0"));
-            assert(!valid_workload_routing_id_bytes(b"wk-0123456789abcdeG"));
-            assert(!valid_workload_routing_id_bytes(b"WK-0123456789abcdef"));
+            assert(valid_workload_routing_id_bytes_spec(b"wk-0123456789abcdef".view()));
+            assert(!valid_workload_routing_id_bytes_spec(b"wk-0123456789abcde".view()));
+            assert(!valid_workload_routing_id_bytes_spec(b"wk-0123456789abcdef0".view()));
+            assert(!valid_workload_routing_id_bytes_spec(b"wk-0123456789abcdeG".view()));
+            assert(!valid_workload_routing_id_bytes_spec(b"WK-0123456789abcdef".view()));
         }
     }
 }

@@ -378,14 +378,11 @@ pub(crate) fn valid_workload_routing_byte(byte: u8) -> bool {
     matches!(byte, b'0'..=b'9' | b'a'..=b'f')
 }
 
-// Keep checked slice access and explicit Option matching here: Verus cannot
-// lower slice indexing or Option::map_or in this dual-spec function. Scope the
-// Clippy exception to this verifier boundary.
+// Verus verifies the byte-level contract directly. Keeping UTF-8 conversion in
+// the runtime wrapper avoids calling str::as_bytes from a Verus exec body.
 #[allow(clippy::get_first, clippy::unnecessary_map_or)]
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
-fn valid_workload_routing_id(code: &str) -> bool {
-    // The exact length check above guarantees every subsequent byte position.
-    let bytes = code.as_bytes();
+fn valid_workload_routing_id_bytes(bytes: &[u8]) -> bool {
     bytes.len() == 19
         && bytes.get(0) == Some(&b'w')
         && bytes.get(1) == Some(&b'k')
@@ -456,7 +453,12 @@ fn valid_workload_routing_id(code: &str) -> bool {
         }
 }
 
-#[cfg_attr(verus, verus_verify(dual_spec, closed))]
+#[cfg(not(verus))]
+fn valid_workload_routing_id(code: &str) -> bool {
+    valid_workload_routing_id_bytes(code.as_bytes())
+}
+
+#[cfg(not(verus))]
 fn valid_prewarm_workload_id(code: &str) -> bool {
     valid_workload_routing_id(code)
 }

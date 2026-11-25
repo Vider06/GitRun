@@ -94,20 +94,49 @@ mod verification {
         assert!(UpdatePolicy::SecurityFullPre.accepts_release_type(ReleaseType::Security));
     }
 
+    // Avoid str equality in CBMC: its lowering calls an unbounded memcmp loop.
+    // Compare the finite wire representation byte-by-byte instead.
+    fn wire_value_matches(value: &str, expected: &[u8]) -> bool {
+        let actual = value.as_bytes();
+        if actual.len() != expected.len() {
+            return false;
+        }
+
+        let mut index = 0;
+        while index < expected.len() {
+            if actual[index] != expected[index] {
+                return false;
+            }
+            index += 1;
+        }
+        true
+    }
+
     /// Proves that every representable release type has a stable wire value.
     #[kani::proof]
+    #[kani::unwind(18)]
     fn release_type_wire_values_are_total() {
-        assert!(ReleaseType::Pre.as_str() == "pre");
-        assert!(ReleaseType::Full.as_str() == "full");
-        assert!(ReleaseType::Security.as_str() == "security");
+        assert!(wire_value_matches(ReleaseType::Pre.as_str(), b"pre"));
+        assert!(wire_value_matches(ReleaseType::Full.as_str(), b"full"));
+        assert!(wire_value_matches(ReleaseType::Security.as_str(), b"security"));
     }
 
     /// Proves that every update policy has a stable wire value.
     #[kani::proof]
+    #[kani::unwind(18)]
     fn update_policy_wire_values_are_total() {
-        assert!(UpdatePolicy::SecurityOnly.as_str() == "security_only");
-        assert!(UpdatePolicy::SecurityFull.as_str() == "security_full");
-        assert!(UpdatePolicy::SecurityFullPre.as_str() == "security_full_pre");
+        assert!(wire_value_matches(
+            UpdatePolicy::SecurityOnly.as_str(),
+            b"security_only"
+        ));
+        assert!(wire_value_matches(
+            UpdatePolicy::SecurityFull.as_str(),
+            b"security_full"
+        ));
+        assert!(wire_value_matches(
+            UpdatePolicy::SecurityFullPre.as_str(),
+            b"security_full_pre"
+        ));
     }
 }
 

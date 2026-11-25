@@ -113,7 +113,7 @@ run_kani_command() {
   # an hour or more in a shell variable. This preserves live harness progress
   # and leaves a recoverable log if a runner is interrupted.
   set +e
-  "$@" 2>&1 | tee "$log"
+  timeout --signal=TERM --kill-after=30s 45m "$@" 2>&1 | tee "$log"
   pipeline_status=("${PIPESTATUS[@]}")
   set -e
 
@@ -255,6 +255,11 @@ trap finish_formal_report EXIT
 
 mkdir -p "$(dirname "$results")"
 : > "$results"
+
+if ! command -v timeout >/dev/null 2>&1; then
+  echo "GNU timeout is required to bound individual Kani proof targets." >&2
+  exit 1
+fi
 
 if ! command -v kani >/dev/null 2>&1; then
   echo "Kani is not installed; refusing to report formal verification as successful." >&2

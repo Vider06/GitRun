@@ -135,6 +135,7 @@ jobs:
             echo "| Variable | Current repository value |"
             echo "|---|---|"
             for name in \
+              GITRUN_CI_CACHE_SAVE_PR \
               GITRUN_CI_FRESH_CACHE \
               GITRUN_CI_VERBOSE \
               GITRUN_CI_UPLOAD_ARTIFACTS \

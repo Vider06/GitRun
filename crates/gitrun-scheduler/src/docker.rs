@@ -395,22 +395,22 @@ fn valid_workload_routing_id_bytes(bytes: &[u8]) -> bool {
         && bytes[0] == b'w'
         && bytes[1] == b'k'
         && bytes[2] == b'-'
-        && valid_workload_routing_byte(bytes[3])
-        && valid_workload_routing_byte(bytes[4])
-        && valid_workload_routing_byte(bytes[5])
-        && valid_workload_routing_byte(bytes[6])
-        && valid_workload_routing_byte(bytes[7])
-        && valid_workload_routing_byte(bytes[8])
-        && valid_workload_routing_byte(bytes[9])
-        && valid_workload_routing_byte(bytes[10])
-        && valid_workload_routing_byte(bytes[11])
-        && valid_workload_routing_byte(bytes[12])
-        && valid_workload_routing_byte(bytes[13])
-        && valid_workload_routing_byte(bytes[14])
-        && valid_workload_routing_byte(bytes[15])
-        && valid_workload_routing_byte(bytes[16])
-        && valid_workload_routing_byte(bytes[17])
-        && valid_workload_routing_byte(bytes[18])
+        && valid_workload_routing_byte_spec(bytes[3])
+        && valid_workload_routing_byte_spec(bytes[4])
+        && valid_workload_routing_byte_spec(bytes[5])
+        && valid_workload_routing_byte_spec(bytes[6])
+        && valid_workload_routing_byte_spec(bytes[7])
+        && valid_workload_routing_byte_spec(bytes[8])
+        && valid_workload_routing_byte_spec(bytes[9])
+        && valid_workload_routing_byte_spec(bytes[10])
+        && valid_workload_routing_byte_spec(bytes[11])
+        && valid_workload_routing_byte_spec(bytes[12])
+        && valid_workload_routing_byte_spec(bytes[13])
+        && valid_workload_routing_byte_spec(bytes[14])
+        && valid_workload_routing_byte_spec(bytes[15])
+        && valid_workload_routing_byte_spec(bytes[16])
+        && valid_workload_routing_byte_spec(bytes[17])
+        && valid_workload_routing_byte_spec(bytes[18])
 }
 
 #[cfg(not(verus))]
@@ -4402,27 +4402,32 @@ mod verus_verification {
     use vstd::string::View;
 
     verus! {
+        pub(super) open spec fn valid_workload_routing_byte_spec(byte: u8) -> bool {
+            (byte >= b'0' && byte <= b'9')
+                || (byte >= b'a' && byte <= b'f')
+        }
+
         pub(super) open spec fn valid_workload_routing_id_bytes_spec(bytes: Seq<u8>) -> bool {
             bytes.len() == 19
                 && bytes[0] == b'w'
                 && bytes[1] == b'k'
                 && bytes[2] == b'-'
-                && valid_workload_routing_byte(bytes[3])
-                && valid_workload_routing_byte(bytes[4])
-                && valid_workload_routing_byte(bytes[5])
-                && valid_workload_routing_byte(bytes[6])
-                && valid_workload_routing_byte(bytes[7])
-                && valid_workload_routing_byte(bytes[8])
-                && valid_workload_routing_byte(bytes[9])
-                && valid_workload_routing_byte(bytes[10])
-                && valid_workload_routing_byte(bytes[11])
-                && valid_workload_routing_byte(bytes[12])
-                && valid_workload_routing_byte(bytes[13])
-                && valid_workload_routing_byte(bytes[14])
-                && valid_workload_routing_byte(bytes[15])
-                && valid_workload_routing_byte(bytes[16])
-                && valid_workload_routing_byte(bytes[17])
-                && valid_workload_routing_byte(bytes[18])
+                && valid_workload_routing_byte_spec(bytes[3])
+                && valid_workload_routing_byte_spec(bytes[4])
+                && valid_workload_routing_byte_spec(bytes[5])
+                && valid_workload_routing_byte_spec(bytes[6])
+                && valid_workload_routing_byte_spec(bytes[7])
+                && valid_workload_routing_byte_spec(bytes[8])
+                && valid_workload_routing_byte_spec(bytes[9])
+                && valid_workload_routing_byte_spec(bytes[10])
+                && valid_workload_routing_byte_spec(bytes[11])
+                && valid_workload_routing_byte_spec(bytes[12])
+                && valid_workload_routing_byte_spec(bytes[13])
+                && valid_workload_routing_byte_spec(bytes[14])
+                && valid_workload_routing_byte_spec(bytes[15])
+                && valid_workload_routing_byte_spec(bytes[16])
+                && valid_workload_routing_byte_spec(bytes[17])
+                && valid_workload_routing_byte_spec(bytes[18])
         }
 
         proof fn workload_routing_byte_alphabet_is_exact(byte: u8)

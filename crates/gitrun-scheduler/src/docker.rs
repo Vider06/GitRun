@@ -4399,7 +4399,6 @@ mod kani_verification {
 mod verus_verification {
     use super::valid_workload_routing_byte;
     use vstd::prelude::*;
-    use vstd::string::View;
 
     verus! {
         pub(super) open spec fn valid_workload_routing_byte_spec(byte: u8) -> bool {
@@ -4437,13 +4436,29 @@ mod verus_verification {
         {
         }
 
-        // Verify the formal byte contract independently of the Rust wrapper.
+        // Use explicit Seq literals: byte-array views are opaque to the prover,
+        // so indexing a byte-string literal does not expose its concrete bytes.
         proof fn workload_routing_id_requires_canonical_prefix_length_and_hex_case() {
-            assert(valid_workload_routing_id_bytes_spec(b"wk-0123456789abcdef".view()));
-            assert(!valid_workload_routing_id_bytes_spec(b"wk-0123456789abcde".view()));
-            assert(!valid_workload_routing_id_bytes_spec(b"wk-0123456789abcdef0".view()));
-            assert(!valid_workload_routing_id_bytes_spec(b"wk-0123456789abcdeG".view()));
-            assert(!valid_workload_routing_id_bytes_spec(b"WK-0123456789abcdef".view()));
+            assert(valid_workload_routing_id_bytes_spec(seq![
+                b'w', b'k', b'-', b'0', b'1', b'2', b'3', b'4', b'5', b'6',
+                b'7', b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f',
+            ]));
+            assert(!valid_workload_routing_id_bytes_spec(seq![
+                b'w', b'k', b'-', b'0', b'1', b'2', b'3', b'4', b'5', b'6',
+                b'7', b'8', b'9', b'a', b'b', b'c', b'd', b'e',
+            ]));
+            assert(!valid_workload_routing_id_bytes_spec(seq![
+                b'w', b'k', b'-', b'0', b'1', b'2', b'3', b'4', b'5', b'6',
+                b'7', b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f', b'0',
+            ]));
+            assert(!valid_workload_routing_id_bytes_spec(seq![
+                b'w', b'k', b'-', b'0', b'1', b'2', b'3', b'4', b'5', b'6',
+                b'7', b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'G',
+            ]));
+            assert(!valid_workload_routing_id_bytes_spec(seq![
+                b'W', b'K', b'-', b'0', b'1', b'2', b'3', b'4', b'5', b'6',
+                b'7', b'8', b'9', b'a', b'b', b'c', b'd', b'e', b'f',
+            ]));
         }
     }
 }

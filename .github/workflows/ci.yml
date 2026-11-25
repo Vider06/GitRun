@@ -47,6 +47,7 @@ env:
   NPM_CACHE_MAX_MB: "600"
   CI_VERBOSE: ${{ vars.GITRUN_CI_VERBOSE == 'true' && '1' || '0' }}
   CI_UPLOAD_ARTIFACTS: ${{ vars.GITRUN_CI_UPLOAD_ARTIFACTS == 'true' && 'true' || 'false' }}
+  CI_UPLOAD_LOG_ARTIFACTS: ${{ vars.GITRUN_UPLOAD_LOG_ARTIFACTS == 'true' && 'true' || 'false' }}
   CI_RUNNER_MODE: ${{ vars.GITRUN_RUNNER_MODE || 'github-hosted' }}
   CI_FULL_RUN: ${{ vars.GITRUN_CI_FULL_RUN == 'true' && 'true' || 'false' }}
   CI_FRESH_CACHE: ${{ vars.GITRUN_CI_FRESH_CACHE == 'true' && 'true' || 'false' }}
@@ -105,6 +106,7 @@ jobs:
           GITRUN_CI_FRESH_CACHE: ${{ vars.GITRUN_CI_FRESH_CACHE }}
           GITRUN_CI_VERBOSE: ${{ vars.GITRUN_CI_VERBOSE }}
           GITRUN_CI_UPLOAD_ARTIFACTS: ${{ vars.GITRUN_CI_UPLOAD_ARTIFACTS }}
+          GITRUN_UPLOAD_LOG_ARTIFACTS: ${{ vars.GITRUN_UPLOAD_LOG_ARTIFACTS }}
           GITRUN_RUNNER_MODE: ${{ vars.GITRUN_RUNNER_MODE }}
           GITRUN_CI_FULL_RUN: ${{ vars.GITRUN_CI_FULL_RUN }}
           GITRUN_CI_GC_DRY_RUN: ${{ vars.GITRUN_CI_GC_DRY_RUN }}
@@ -118,6 +120,7 @@ jobs:
             GITRUN_CI_FRESH_CACHE \
             GITRUN_CI_VERBOSE \
             GITRUN_CI_UPLOAD_ARTIFACTS \
+            GITRUN_UPLOAD_LOG_ARTIFACTS \
             GITRUN_RUNNER_MODE \
             GITRUN_CI_FULL_RUN \
             GITRUN_CI_GC_DRY_RUN
@@ -198,7 +201,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
       - &job_result
         name: Upload canonical job result
-        if: always()
+        if: always() && env.CI_UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: gitrun-job-result-${{ github.job }}
@@ -253,7 +256,7 @@ jobs:
 
       - &logs
         name: Upload CI logs
-        if: failure() && env.CI_UPLOAD_ARTIFACTS == 'true'
+        if: failure() && env.CI_UPLOAD_LOG_ARTIFACTS == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ci-logs-${{ github.job }}
@@ -2795,7 +2798,8 @@ jobs:
               *.rpm) rpm -qp "$package" >/dev/null ;;
               *.pkg.tar.zst) tar --zstd -tf "$package" >/dev/null ;;
               *.apk) tar -tzf "$package" >/dev/null ;;
-              *.xbps) tar -tJf "$package" >/dev/null ;;
+              # XBPS payloads created by xbps-create are plain tar archives.
+              *.xbps) tar -tf "$package" >/dev/null ;;
               *-server.tar.gz) tar -tzf "$package" >/dev/null ;;
               *-server.tar.zst) tar --zstd -tf "$package" >/dev/null ;;
               *.AppImage|*.bin) test -x "$package"; file "$package" >/dev/null ;;
@@ -2974,7 +2978,7 @@ jobs:
       - name: Run targeted Miri regression test
         run: bash scripts/ci/verify-rust-miri.sh
       - name: Upload Miri source coverage
-        if: always()
+        if: always() && env.CI_UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: miri-source-coverage
@@ -3127,7 +3131,7 @@ jobs:
           VERUS_JOB_RESULT: ${{ needs.verus-formal-verification.result }}
         run: python3 scripts/ci/verify-rust-dual-coverage.py
       - name: Upload dual-verifier source coverage
-        if: always()
+        if: always() && env.CI_UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: dual-verifier-source-coverage

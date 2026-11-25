@@ -26,12 +26,73 @@ const SOCKET_PATH: &str = "/run/gitrun-control/manager.sock";
 #[cfg(not(any(kani, verus)))]
 const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 
+#[cfg(verus)]
+mod action_allowlist_spec {
+    use vstd::prelude::*;
+
+    verus! {
+        pub(super) open spec fn allowed(operation: &str, action: &str) -> bool {
+            (operation@ == "read"@ && (
+                action@ == "first_run"@
+                || action@ == "overview"@
+                || action@ == "health"@
+                || action@ == "runners"@
+                || action@ == "host_resources"@
+                || action@ == "repository_activity"@
+                || action@ == "repo_detail"@
+                || action@ == "repo_bootstrap"@
+                || action@ == "config"@
+                || action@ == "gitrun_settings"@
+                || action@ == "security_summary"@
+                || action@ == "vault_secrets"@
+                || action@ == "gsr_status"@
+                || action@ == "gsr_events"@
+                || action@ == "service_logs"@
+                || action@ == "zizmor"@
+                || action@ == "logic_rules"@
+                || action@ == "vm_configs"@
+                || action@ == "hypervisor_decisions"@
+                || action@ == "kitty"@
+                || action@ == "repo_api_policies"@
+                || action@ == "dock_requirements"@
+                || action@ == "updates"@
+                || action@ == "updater_settings"@
+                || action@ == "updater_info"@
+                || (cfg!(test) && action@ == "ipc_ping"@)
+            )) || (operation@ == "write"@ && (
+                action@ == "connect_repository"@
+                || action@ == "vm_configs_replace"@
+                || action@ == "fast_stop"@
+                || action@ == "vault_set"@
+                || action@ == "vault_delete"@
+                || action@ == "zizmor_install"@
+                || action@ == "zizmor_disable"@
+                || action@ == "logic_rules_save"@
+                || action@ == "vm_save"@
+                || action@ == "vm_delete"@
+                || action@ == "hypervisor_respond"@
+                || action@ == "kitty_save"@
+                || action@ == "gitrun_settings_save"@
+                || action@ == "config_save"@
+                || action@ == "dashboard_settings_save"@
+                || action@ == "updater_settings_save"@
+                || action@ == "updater_operation_record"@
+                || action@ == "service_control"@
+                || action@ == "maintenance_task"@
+                || action@ == "json_recovery"@
+                || (cfg!(test) && action@ == "ipc_test_write"@)
+            ))
+        }
+    }
+}
+
 /// Fixed server-side action allowlist. The socket never becomes a generic
 /// dispatcher for arbitrary backend strings.
-#[cfg_attr(verus, verus_verify(dual_spec))]
+#[cfg_attr(verus, verus_spec(returns action_allowlist_spec::allowed(operation, action)))]
+#[cfg_attr(verus, verifier::allow_in_spec)]
 fn action_is_allowed(operation: &str, action: &str) -> bool {
-    // Exact string equality preserves the closed, case-sensitive protocol
-    // vocabulary and remains available to Verus in specification mode.
+    // Runtime string equality is linked to the spec-level string-view
+    // predicate by the Verus return specification.
     if operation == "read" {
         action == "first_run"
             || action == "overview"

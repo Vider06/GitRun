@@ -5,7 +5,7 @@
 //! and lets Verus verify the executable predicate against its closed contract.
 
 #[cfg(verus)]
-use vstd::prelude::{verus_spec, verus_verify};
+use vstd::prelude::{verus_spec, verus_verify, SpecOrd};
 
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
 #[cfg_attr(

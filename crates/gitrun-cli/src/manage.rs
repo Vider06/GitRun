@@ -32,6 +32,9 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+#[path = "repo_component.rs"]
+mod repo_component;
+
 type ManagementTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 
 const VERSION_FILE: &str = include_str!("../../../version.txt");
@@ -3911,15 +3914,6 @@ fn restore_redacted(edited: &mut Value, original: &Value) {
     }
 }
 
-// Keep repository-component policy byte-oriented and dependency-free so the
-// exact predicate used by CLI validation can be checked exhaustively by Kani.
-fn repo_component_byte_allowed(byte: u8) -> bool {
-    byte.is_ascii_uppercase()
-        || byte.is_ascii_lowercase()
-        || byte.is_ascii_digit()
-        || matches!(byte, b'-' | b'_' | b'.')
-}
-
 fn valid_repo(repo: &str) -> bool {
     let mut parts = repo.split('/');
     let Some(owner) = parts.next() else {
@@ -3931,60 +3925,8 @@ fn valid_repo(repo: &str) -> bool {
     parts.next().is_none()
         && !owner.is_empty()
         && !name.is_empty()
-        && owner.bytes().all(repo_component_byte_allowed)
-        && name.bytes().all(repo_component_byte_allowed)
-}
-
-#[cfg(kani)]
-mod kani_verification {
-    use super::repo_component_byte_allowed;
-
-    #[kani::proof]
-    fn repository_component_byte_policy_is_exact() {
-        let byte: u8 = kani::any();
-        let expected = (b'A' <= byte && byte <= b'Z')
-            || (b'a' <= byte && byte <= b'z')
-            || (b'0' <= byte && byte <= b'9')
-            || matches!(byte, b'-' | b'_' | b'.');
-        assert_eq!(repo_component_byte_allowed(byte), expected);
-        assert!(!repo_component_byte_allowed(b'/'));
-        assert!(!repo_component_byte_allowed(b' '));
-        assert!(!repo_component_byte_allowed(b'@'));
-        assert!(!repo_component_byte_allowed(0));
-    }
-}
-
-#[cfg(verus)]
-mod verus_verification {
-    use vstd::prelude::*;
-
-    verus! {
-        // This is the formal contract for the executable predicate checked
-        // exhaustively by Kani in the same source module.
-        open spec fn repo_component_byte_allowed_spec(byte: u8) -> bool {
-            (b'A' <= byte && byte <= b'Z')
-                || (b'a' <= byte && byte <= b'z')
-                || (b'0' <= byte && byte <= b'9')
-                || byte == b'-'
-                || byte == b'_'
-                || byte == b'.'
-        }
-
-        proof fn repository_component_contract_rejects_separators()
-            ensures
-                !repo_component_byte_allowed_spec(b'/'),
-                !repo_component_byte_allowed_spec(b' '),
-                !repo_component_byte_allowed_spec(b'@'),
-                !repo_component_byte_allowed_spec(0),
-                repo_component_byte_allowed_spec(b'A'),
-                repo_component_byte_allowed_spec(b'Z'),
-                repo_component_byte_allowed_spec(b'a'),
-                repo_component_byte_allowed_spec(b'z'),
-                repo_component_byte_allowed_spec(b'0'),
-                repo_component_byte_allowed_spec(b'9'),
-        {
-        }
-    }
+        && owner.bytes().all(repo_component::repo_component_byte_allowed)
+        && name.bytes().all(repo_component::repo_component_byte_allowed)
 }
 
 #[cfg(test)]

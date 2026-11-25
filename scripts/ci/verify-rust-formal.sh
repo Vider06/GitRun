@@ -374,7 +374,7 @@ run_kani_target "crates/gitrun-cli/src/presenter.rs" \
 
 # Verify the exact repository-component predicate used by CLI validation.
 run_kani_target "crates/gitrun-cli/src/repo_component.rs" \
-  "crates/gitrun-cli/src/manage.rs"
+  "crates/gitrun-cli/src/repo_component.rs"
 
 # Verify the GSR API binary separately from its library proof scopes.
 run_kani_binary "gitrun-gsr" "gitrun-api" "crates/gitrun-gsr/src/bin/gitrun-api.rs"

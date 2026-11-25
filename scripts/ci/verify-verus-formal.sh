@@ -41,7 +41,7 @@ readonly -a production_sources=(
   "crates/gitrun-updater/src/release_policy.rs"
   "crates/gitrun-scheduler/src/vm.rs"
   "crates/gitrun-cli/src/presenter.rs"
-  "crates/gitrun-cli/src/manage.rs"
+  "crates/gitrun-cli/src/repo_component.rs"
   "crates/gitrun-platform/src/lib.rs"
   "crates/gitrun-scheduler/src/github.rs"
   "crates/gitrun-scheduler/src/gtuu.rs"
@@ -317,7 +317,7 @@ run_verus_target "crates/gitrun-cli/src/presenter.rs" \
 # complete gitrun binary, whose runtime dependencies are intentionally cfg'd
 # out in Verus mode.
 run_verus_target "crates/gitrun-cli/src/repo_component.rs" \
-  "crates/gitrun-cli/src/manage.rs"
+  "crates/gitrun-cli/src/repo_component.rs"
 
 run_verus_target "verification/kani/updater_policy.rs" \
   "verification/kani/updater_policy.rs"
@@ -325,7 +325,7 @@ run_verus_target "verification/kani/updater_policy.rs" \
 declare -a package_order=()
 declare -A package_seen=()
 for source in "${production_sources[@]}"; do
-  if [[ "$source" == "crates/gitrun-cli/src/presenter.rs" || "$source" == "crates/gitrun-cli/src/manage.rs" || "$source" == "crates/gitrun-gsr/src/bin/gitrun-api.rs" ]]; then
+  if [[ "$source" == "crates/gitrun-cli/src/presenter.rs" || "$source" == "crates/gitrun-cli/src/repo_component.rs" || "$source" == "crates/gitrun-gsr/src/bin/gitrun-api.rs" ]]; then
     continue
   fi
   package="${source#crates/}"

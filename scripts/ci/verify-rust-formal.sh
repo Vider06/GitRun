@@ -16,6 +16,7 @@ readonly required_harnesses=(
   "runner_floor_predicate_matches_the_capacity_contract"
   "automation_action_wire_names_are_total"
   "repository_component_byte_alphabet_is_closed"
+  "repository_component_byte_policy_is_exact"
   "violation_action_config_mapping_is_total"
   "simple_command_byte_alphabet_is_closed"
   "decision_filename_byte_code_is_injective"
@@ -337,7 +338,7 @@ fi
 phase=coverage
 for harness in "${required_harnesses[@]}"; do
   found=false
-  for source in "${proof_sources[@]}" "crates/gitrun-updater/src/policy_logic.rs" "crates/gitrun-cli/src/presenter.rs"; do
+  for source in "${proof_sources[@]}" "crates/gitrun-updater/src/policy_logic.rs" "crates/gitrun-cli/src/presenter.rs" "crates/gitrun-cli/src/repo_component.rs"; do
     if grep -B5 -F "fn $harness()" "$source" | grep -Fq "#[kani::proof]"; then
       found=true
       break
@@ -370,6 +371,10 @@ run_kani_target "$policy_harness" \
 # deliberately compiled as a standalone Kani entrypoint rather than --lib.
 run_kani_target "crates/gitrun-cli/src/presenter.rs" \
   "crates/gitrun-cli/src/presenter.rs"
+
+# Verify the exact repository-component predicate used by CLI validation.
+run_kani_target "crates/gitrun-cli/src/repo_component.rs" \
+  "crates/gitrun-cli/src/manage.rs"
 
 # Verify the GSR API binary separately from its library proof scopes.
 run_kani_binary "gitrun-gsr" "gitrun-api" "crates/gitrun-gsr/src/bin/gitrun-api.rs"

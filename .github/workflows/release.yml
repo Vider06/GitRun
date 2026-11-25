@@ -245,7 +245,7 @@ jobs:
     name: Independent GitRun Desktop · ${{ matrix.target }}
     needs: prepare
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 60
     permissions:
       contents: read
     strategy:

@@ -82,9 +82,14 @@ def has_proof_construct(entrypoint: str, tool: str) -> bool:
         return False
     if tool == "KANI":
         return "#[kani::proof]" in content
-    return "verus!" in content and (
-        "proof fn " in content or "verus_verify" in content
-    )
+    # Production sources may use either Verus' inline macro syntax or
+    # the repository's attribute-based dual_spec integration. Both forms
+    # must carry an actual Verus proof construct; accepting the paired
+    # verus_spec/verus_verify attributes avoids rejecting valid attribute
+    # proofs that do not contain an inline verus! block.
+    inline_verus = "verus!" in content and "proof fn " in content
+    attribute_verus = "verus_spec" in content and "verus_verify" in content
+    return inline_verus or attribute_verus
 
 
 def write_report(

@@ -2283,7 +2283,7 @@ jobs:
     needs: [cargo-lock, rust-lint, frontend]
     if: ${{ needs.cargo-lock.outputs.tauri == 'true' && needs.rust-lint.result == 'success' && needs.frontend.result == 'success' }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 60
     permissions:
       contents: read
     outputs: *job_outputs
@@ -2929,7 +2929,7 @@ jobs:
     needs: [cargo-lock]
     if: ${{ needs.cargo-lock.result == 'success' && needs.cargo-lock.outputs.python == 'true' }}
     runs-on: *runner
-    timeout-minutes: 30
+    timeout-minutes: 60
     outputs: *job_outputs
     steps:
       - *checkout
@@ -3019,7 +3019,7 @@ jobs:
     needs: [rust-source-inventory]
     if: ${{ needs.rust-source-inventory.result == 'success' }}
     runs-on: *runner
-    timeout-minutes: 180
+    timeout-minutes: 60
     outputs: *job_outputs
     steps:
       - *checkout
@@ -3061,7 +3061,7 @@ jobs:
     needs: [rust-source-inventory]
     if: ${{ needs.rust-source-inventory.result == 'success' }}
     runs-on: *runner
-    timeout-minutes: 180
+    timeout-minutes: 60
     outputs: *job_outputs
     steps:
       - *checkout

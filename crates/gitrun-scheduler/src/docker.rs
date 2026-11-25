@@ -380,29 +380,57 @@ pub(crate) fn valid_workload_routing_byte(byte: u8) -> bool {
 
 // Verus verifies the byte-level contract directly. Keeping UTF-8 conversion in
 // the runtime wrapper avoids calling str::as_bytes from a Verus exec body.
+// The executable body uses ordinary Rust indexing; the explicit return
+// specification uses Verus sequence indexing and is kept in an attribute so
+// rustfmt and rustc never need to parse Verus-only expression syntax.
 #[allow(clippy::get_first, clippy::unnecessary_map_or)]
 #[cfg_attr(verus, verus_verify(dual_spec, closed))]
+#[cfg_attr(
+    verus,
+    verus_spec(returns
+        bytes@.len() == 19
+            && bytes@[0] == b'w'
+            && bytes@[1] == b'k'
+            && bytes@[2] == b'-'
+            && valid_workload_routing_byte(bytes@[3])
+            && valid_workload_routing_byte(bytes@[4])
+            && valid_workload_routing_byte(bytes@[5])
+            && valid_workload_routing_byte(bytes@[6])
+            && valid_workload_routing_byte(bytes@[7])
+            && valid_workload_routing_byte(bytes@[8])
+            && valid_workload_routing_byte(bytes@[9])
+            && valid_workload_routing_byte(bytes@[10])
+            && valid_workload_routing_byte(bytes@[11])
+            && valid_workload_routing_byte(bytes@[12])
+            && valid_workload_routing_byte(bytes@[13])
+            && valid_workload_routing_byte(bytes@[14])
+            && valid_workload_routing_byte(bytes@[15])
+            && valid_workload_routing_byte(bytes@[16])
+            && valid_workload_routing_byte(bytes@[17])
+            && valid_workload_routing_byte(bytes@[18])
+    )
+)]
 fn valid_workload_routing_id_bytes(bytes: &[u8]) -> bool {
     bytes.len() == 19
-        && bytes@[0] == b'w'
-        && bytes@[1] == b'k'
-        && bytes@[2] == b'-'
-        && valid_workload_routing_byte(bytes@[3])
-        && valid_workload_routing_byte(bytes@[4])
-        && valid_workload_routing_byte(bytes@[5])
-        && valid_workload_routing_byte(bytes@[6])
-        && valid_workload_routing_byte(bytes@[7])
-        && valid_workload_routing_byte(bytes@[8])
-        && valid_workload_routing_byte(bytes@[9])
-        && valid_workload_routing_byte(bytes@[10])
-        && valid_workload_routing_byte(bytes@[11])
-        && valid_workload_routing_byte(bytes@[12])
-        && valid_workload_routing_byte(bytes@[13])
-        && valid_workload_routing_byte(bytes@[14])
-        && valid_workload_routing_byte(bytes@[15])
-        && valid_workload_routing_byte(bytes@[16])
-        && valid_workload_routing_byte(bytes@[17])
-        && valid_workload_routing_byte(bytes@[18])
+        && bytes[0] == b'w'
+        && bytes[1] == b'k'
+        && bytes[2] == b'-'
+        && valid_workload_routing_byte(bytes[3])
+        && valid_workload_routing_byte(bytes[4])
+        && valid_workload_routing_byte(bytes[5])
+        && valid_workload_routing_byte(bytes[6])
+        && valid_workload_routing_byte(bytes[7])
+        && valid_workload_routing_byte(bytes[8])
+        && valid_workload_routing_byte(bytes[9])
+        && valid_workload_routing_byte(bytes[10])
+        && valid_workload_routing_byte(bytes[11])
+        && valid_workload_routing_byte(bytes[12])
+        && valid_workload_routing_byte(bytes[13])
+        && valid_workload_routing_byte(bytes[14])
+        && valid_workload_routing_byte(bytes[15])
+        && valid_workload_routing_byte(bytes[16])
+        && valid_workload_routing_byte(bytes[17])
+        && valid_workload_routing_byte(bytes[18])
 }
 
 #[cfg(not(verus))]

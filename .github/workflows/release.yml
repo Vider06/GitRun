@@ -1439,7 +1439,8 @@ jobs:
               *.rpm) rpm -qp "$package" >/dev/null ;;
               *.pkg.tar.zst) tar --zstd -tf "$package" >/dev/null ;;
               *.apk) tar -tzf "$package" >/dev/null ;;
-              *.xbps) tar -tJf "$package" >/dev/null ;;
+              # XBPS payloads created by xbps-create are plain tar archives.
+              *.xbps) tar -tf "$package" >/dev/null ;;
               *-server.tar.gz) tar -tzf "$package" >/dev/null ;;
               *-server.tar.zst) tar --zstd -tf "$package" >/dev/null ;;
               *.AppImage|*.bin)

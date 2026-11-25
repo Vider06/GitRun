@@ -118,7 +118,10 @@ mod verification {
     fn release_type_wire_values_are_total() {
         assert!(wire_value_matches(ReleaseType::Pre.as_str(), b"pre"));
         assert!(wire_value_matches(ReleaseType::Full.as_str(), b"full"));
-        assert!(wire_value_matches(ReleaseType::Security.as_str(), b"security"));
+        assert!(wire_value_matches(
+            ReleaseType::Security.as_str(),
+            b"security"
+        ));
     }
 
     /// Proves that every update policy has a stable wire value.

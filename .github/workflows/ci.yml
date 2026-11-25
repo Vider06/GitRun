@@ -136,6 +136,7 @@ jobs:
               GITRUN_CI_FRESH_CACHE \
               GITRUN_CI_VERBOSE \
               GITRUN_CI_UPLOAD_ARTIFACTS \
+              GITRUN_UPLOAD_LOG_ARTIFACTS \
               GITRUN_RUNNER_MODE \
               GITRUN_CI_FULL_RUN \
               GITRUN_CI_GC_DRY_RUN

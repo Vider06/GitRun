@@ -40,7 +40,7 @@ env:
   # Persistent CI configuration comes from Repository Variables.
   CACHE_EPOCH: ${{ vars.GITRUN_CI_FRESH_CACHE == 'true' && format('e2x{0}', github.run_id) || 'e2' }}
   CACHE_BASE_EPOCH: e2
-  # Cache writes are allowed on pushes and same-repository PRs, never fork PRs.
+  # Cache writes are allowed on pushes; same-repository PR writes are opt-in; fork PRs are read-only.
   CI_CACHE_WRITE_ALLOWED: ${{ (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && vars.GITRUN_CI_CACHE_SAVE_PR == 'true')) && 'true' || 'false' }}
   # Same-repository PR cache writes are opt-in; fork PRs are always read-only.
   TARGET_CACHE_MAX_MB: "4096"

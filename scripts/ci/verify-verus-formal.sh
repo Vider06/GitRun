@@ -316,7 +316,7 @@ run_verus_target "crates/gitrun-cli/src/presenter.rs" \
 # Verify the CLI's pure repository-component contract without compiling the
 # complete gitrun binary, whose runtime dependencies are intentionally cfg'd
 # out in Verus mode.
-run_verus_target "verification/verus/cli_repo_component.rs" \
+run_verus_target "crates/gitrun-cli/src/repo_component.rs" \
   "crates/gitrun-cli/src/manage.rs"
 
 run_verus_target "verification/kani/updater_policy.rs" \

@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod cat;
+mod log_export;
 mod manage;
 mod presenter;
 
@@ -1924,7 +1925,7 @@ fn main() {
     let command = cli.command.unwrap_or(Command::Dashboard);
     let is_cat_command = matches!(&command, Command::Cat);
     let is_status_command = matches!(&command, Command::Status { .. });
-    let is_manage_command = matches!(&command, Command::Manage);
+    let is_manage_command = matches!(&command, Command::Manage { .. });
     let is_doctor_command = matches!(&command, Command::Doctor);
     let is_interactive_setup = is_interactive_terminal_setup(&command);
     // Interactive setup reads credentials and paths from stdin. Keep the live
@@ -2030,13 +2031,23 @@ fn main() {
             presenter.prepare_for_external_process();
             run_dashboard()
         }
-        Command::Manage => {
+        Command::Manage { target, source } => {
             presenter.prepare_for_external_process();
-            match manage::run() {
-                Ok(()) => 0,
-                Err(error) => {
-                    eprintln!("GitRun management console: FAIL — {error}");
-                    1
+            if target.is_some() || source.is_some() {
+                match log_export::run(target.as_deref(), source.as_deref()) {
+                    Ok(code) => code,
+                    Err(error) => {
+                        eprintln!("GitRun local log export: FAIL — {error}");
+                        1
+                    }
+                }
+            } else {
+                match manage::run() {
+                    Ok(()) => 0,
+                    Err(error) => {
+                        eprintln!("GitRun management console: FAIL — {error}");
+                        1
+                    }
                 }
             }
         }
@@ -2255,7 +2266,7 @@ fn validation_state_for_command(command: &Command) -> presenter::ValidationState
             ValidationState::Ready
         }
         Command::Scheduler | Command::Dashboard => ValidationState::Running,
-        Command::Manage => ValidationState::Reading,
+        Command::Manage { .. } => ValidationState::Reading,
         Command::Uninstall
         | Command::Reinstall
         | Command::UninstallRoot
@@ -2529,7 +2540,14 @@ enum Command {
     /// Launch the GitRun dashboard (default when no command is given).
     Dashboard,
     /// Launch the interactive terminal management console for headless hosts.
-    Manage,
+    Manage {
+        /// Start an SSH session and receive logs on this Linux desktop.
+        #[arg(long, conflicts_with = "source")]
+        target: Option<String>,
+        /// Download a previously exported log file from a remote Linux host.
+        #[arg(long, conflicts_with = "target")]
+        source: Option<String>,
+    },
     /// Internal recovery command used by the protected recovery UI.
     #[command(name = "recovery-gtuu", hide = true)]
     RecoveryGtuu,
@@ -6236,8 +6254,32 @@ mod internal_lifecycle_command_tests {
     fn manage_is_public_and_cat_remains_a_separate_command() {
         assert!(matches!(
             Cli::try_parse_from(["gitrun", "manage"]).unwrap().command,
-            Some(Command::Manage)
+            Some(Command::Manage {
+                target: None,
+                source: None
+            })
         ));
+        assert!(matches!(
+            Cli::try_parse_from(["gitrun", "manage", "--target", "operator@MainNode"])
+                .unwrap()
+                .command,
+            Some(Command::Manage { target: Some(target), source: None }) if target == "operator@MainNode"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["gitrun", "manage", "--source", "operator@host:/tmp/GitRun-logs-0123456789abcdef0123456789abcdef.txt"])
+                .unwrap()
+                .command,
+            Some(Command::Manage { target: None, source: Some(source) }) if source.starts_with("operator@host:")
+        ));
+        assert!(Cli::try_parse_from([
+            "gitrun",
+            "manage",
+            "--target",
+            "operator@MainNode",
+            "--source",
+            "operator@host:/tmp/GitRun-logs-0123456789abcdef0123456789abcdef.txt"
+        ])
+        .is_err());
         assert!(matches!(
             Cli::try_parse_from(["gitrun", "cat"]).unwrap().command,
             Some(Command::Cat)

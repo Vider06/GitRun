@@ -31,6 +31,12 @@
 //! trades some false negatives (obfuscated invocations) for a policy that is
 //! easy to audit and cannot itself be exploited via crafted input.
 
+#[cfg(verus)]
+use vstd::contrib::exec_spec::*;
+#[cfg(verus)]
+use vstd::prelude::*;
+
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
 
 /// One configured policy list: a set of patterns plus whether the list is
@@ -39,11 +45,13 @@ use serde::{Deserialize, Serialize};
 /// `gitrun-core` doesn't need a regex dependency for something substring
 /// matching already covers.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct PatternList {
     pub enabled: bool,
     pub patterns: Vec<String>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl PatternList {
     pub fn new(enabled: bool, patterns: Vec<String>) -> Self {
         Self { enabled, patterns }
@@ -68,7 +76,9 @@ impl PatternList {
 /// What GSR should do when `CommandPolicy::evaluate` returns `Denied`.
 /// Configured via `Config::gsr_violation_action`; see that field's doc
 /// comment for the operator-facing string values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(all(not(kani), not(verus)), derive(Serialize, Deserialize))]
+#[cfg_attr(verus, verus_verify)]
 pub enum ViolationAction {
     /// Log the event but let the job continue. Useful for dry-running a
     /// new policy before enforcing it.
@@ -83,15 +93,83 @@ pub enum ViolationAction {
     KillAndBan,
 }
 
+#[cfg(verus)]
+verus! {
+    exec_spec_verified! {
+        pub open spec fn violation_action_tag(value: Seq<u8>) -> u8 {
+            if value.len() == 8
+                && value[0usize as int] == b'l'
+                && value[1usize as int] == b'o'
+                && value[2usize as int] == b'g'
+                && value[3usize as int] == b'_'
+                && value[4usize as int] == b'o'
+                && value[5usize as int] == b'n'
+                && value[6usize as int] == b'l'
+                && value[7usize as int] == b'y'
+            {
+                0
+            } else if value.len() == 12
+                && value[0usize as int] == b'k'
+                && value[1usize as int] == b'i'
+                && value[2usize as int] == b'l'
+                && value[3usize as int] == b'l'
+                && value[4usize as int] == b'_'
+                && value[5usize as int] == b'a'
+                && value[6usize as int] == b'n'
+                && value[7usize as int] == b'd'
+                && value[8usize as int] == b'_'
+                && value[9usize as int] == b'b'
+                && value[10usize as int] == b'a'
+                && value[11usize as int] == b'n'
+            {
+                2
+            } else {
+                1
+            }
+        }
+    }
+}
+
 impl ViolationAction {
-    pub fn from_config_str(value: &str) -> Self {
-        match value {
-            "log_only" => Self::LogOnly,
-            "kill_and_ban" => Self::KillAndBan,
+    /// Shared byte-oriented implementation. Runtime and Verus use the
+    /// same byte-level decision; the Verus executable is generated from a
+    /// sequence specification with a proved correspondence.
+    #[cfg(not(verus))]
+    pub fn from_config_bytes(value: &[u8]) -> Self {
+        if value == b"log_only" {
+            Self::LogOnly
+        } else if value == b"kill_and_ban" {
+            Self::KillAndBan
+        } else {
+            Self::Kill
+        }
+    }
+
+    #[cfg(verus)]
+    #[verus_spec(
+        returns
+            if violation_action_tag(value@) == 0 {
+                Self::LogOnly
+            } else if violation_action_tag(value@) == 2 {
+                Self::KillAndBan
+            } else {
+                Self::Kill
+            }
+    )]
+    pub fn from_config_bytes(value: &[u8]) -> Self {
+        match exec_violation_action_tag(value) {
+            0 => Self::LogOnly,
+            2 => Self::KillAndBan,
             _ => Self::Kill,
         }
     }
 
+    #[cfg(not(verus))]
+    pub fn from_config_str(value: &str) -> Self {
+        Self::from_config_bytes(value.as_bytes())
+    }
+
+    #[cfg_attr(verus, verus_verify(dual_spec, open))]
     pub fn as_config_str(self) -> &'static str {
         match self {
             Self::LogOnly => "log_only",
@@ -103,6 +181,7 @@ impl ViolationAction {
 
 /// Result of evaluating one command line against the active policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub enum Decision {
     Allowed,
     /// Carries which list and which pattern caused the denial, for the
@@ -125,6 +204,7 @@ pub enum Decision {
 /// must remain root-owned; the runner image enforces that for toolchain paths.
 /// Complex scripts should be checked into the workflow/repository and launched
 /// as normal Actions steps, where GSR supervises each actual exec.
+#[cfg(not(any(kani, verus)))]
 fn is_interpreter_or_command_wrapper(name: &str) -> bool {
     // GitDockRun Execute is not a shell/script API. Docker exec is started
     // outside the long-lived runner's GSR ptrace tree, so a script interpreter
@@ -220,17 +300,36 @@ fn is_interpreter_or_command_wrapper(name: &str) -> bool {
         .any(|prefix| normalized.starts_with(prefix))
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns
+            (byte >= b'a' && byte <= b'z')
+                || (byte >= b'A' && byte <= b'Z')
+                || (byte >= b'0' && byte <= b'9')
+                || matches!(
+                    byte,
+                    b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
+                )
+    )
+)]
+pub(crate) fn is_simple_command_byte(byte: u8) -> bool {
+    (byte >= b'a' && byte <= b'z')
+        || (byte >= b'A' && byte <= b'Z')
+        || (byte >= b'0' && byte <= b'9')
+        || matches!(
+            byte,
+            b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
+        )
+}
+
+#[cfg(not(any(kani, verus)))]
 pub fn parse_simple_command(command: &str) -> Result<Vec<String>, &'static str> {
     if command.trim().is_empty() {
         return Err("command must not be empty");
     }
-    if command.bytes().any(|byte| {
-        !(byte.is_ascii_alphanumeric()
-            || matches!(
-                byte,
-                b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
-            ))
-    }) {
+    if command.bytes().any(|byte| !is_simple_command_byte(byte)) {
         return Err(
             "GitDockRun Execute accepts one simple command with plain arguments; shell operators, quoting, expansion, redirection and control characters are not allowed",
         );
@@ -259,6 +358,7 @@ pub fn parse_simple_command(command: &str) -> Result<Vec<String>, &'static str> 
     Ok(argv)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn validate_simple_shell_command(command: &str) -> Result<(), &'static str> {
     parse_simple_command(command).map(|_| ())
 }
@@ -269,12 +369,14 @@ pub fn validate_simple_shell_command(command: &str) -> Result<(), &'static str> 
 /// tests (and the dashboard, which needs to display current state) can
 /// build one directly without going through `Config`.
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 pub struct CommandPolicy {
     pub baseline_blacklist: PatternList,
     pub user_blacklist: PatternList,
     pub user_whitelist: PatternList,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl CommandPolicy {
     pub fn evaluate(&self, command: &str) -> Decision {
         let normalized = normalize_command(command);
@@ -309,6 +411,7 @@ impl CommandPolicy {
 /// identifier. Punctuation-delimited indicators (URLs, paths and flags) can
 /// still match inside a command line; alphanumeric/underscore boundaries
 /// prevent cases such as `nsentering` or `ptraceable` from triggering.
+#[cfg(not(any(kani, verus)))]
 fn contains_pattern_at_token_boundaries(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return false;
@@ -339,6 +442,7 @@ fn contains_pattern_at_token_boundaries(haystack: &str, needle: &str) -> bool {
 }
 
 /// Canonicalize shell whitespace without attempting to parse shell syntax.
+#[cfg(not(any(kani, verus)))]
 fn normalize_command(value: &str) -> String {
     value
         .split_whitespace()
@@ -351,6 +455,7 @@ fn normalize_command(value: &str) -> String {
 /// its initial arguments. It must not match a phrase that appears only in a
 /// later argument (for example, a Python script whose filename contains
 /// `cargo build --release`).
+#[cfg(not(any(kani, verus)))]
 fn whitelist_executable_name(executable: &str) -> Option<&str> {
     if executable.is_empty() {
         return None;
@@ -397,6 +502,7 @@ fn whitelist_executable_name(executable: &str) -> Option<&str> {
     path.file_name().and_then(std::ffi::OsStr::to_str)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn whitelist_pattern_matches(pattern: &str, command_normalized: &str) -> bool {
     let pattern = normalize_command(pattern);
     if pattern.is_empty() {
@@ -458,6 +564,7 @@ fn whitelist_pattern_matches(pattern: &str, command_normalized: &str) -> bool {
 /// appear in a normal build/test/deploy job, or (like `docker run
 /// --privileged`) is far more often malicious than not even though the
 /// runner does have legitimate Docker access via the mounted socket.
+#[cfg(not(any(kani, verus)))]
 pub fn baseline_patterns() -> Vec<String> {
     [
         // Privilege escalation
@@ -871,3 +978,108 @@ mod tests {
         }
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::ViolationAction;
+
+    /// Exhaustively checks the byte allowlist used by GitDockRun Execute.
+    #[kani::proof]
+    fn simple_command_byte_alphabet_is_closed() {
+        let byte: u8 = kani::any();
+        let expected = (byte >= b'a' && byte <= b'z')
+            || (byte >= b'A' && byte <= b'Z')
+            || (byte >= b'0' && byte <= b'9')
+            || matches!(
+                byte,
+                b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
+            );
+        assert_eq!(super::is_simple_command_byte(byte), expected);
+    }
+
+    /// Checks canonical configuration names and the fail-safe unknown-value default.
+    #[kani::proof]
+    fn violation_action_config_mapping_is_total() {
+        assert_eq!(
+            ViolationAction::from_config_str("log_only"),
+            ViolationAction::LogOnly
+        );
+        assert_eq!(
+            ViolationAction::from_config_str("kill"),
+            ViolationAction::Kill
+        );
+        assert_eq!(
+            ViolationAction::from_config_str("kill_and_ban"),
+            ViolationAction::KillAndBan
+        );
+        assert_eq!(
+            ViolationAction::from_config_str("unknown"),
+            ViolationAction::Kill
+        );
+        assert_eq!(ViolationAction::from_config_str(""), ViolationAction::Kill);
+        assert!(ViolationAction::LogOnly.as_config_str() == "log_only");
+        assert!(ViolationAction::Kill.as_config_str() == "kill");
+        assert!(ViolationAction::KillAndBan.as_config_str() == "kill_and_ban");
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{violation_action_tag, ViolationAction};
+    use vstd::prelude::*;
+
+    verus! {
+        /// Proves the byte-level allowlist used before direct argv parsing.
+        proof fn simple_command_byte_alphabet_is_closed(byte: u8)
+            ensures
+                super::is_simple_command_byte(byte)
+                    == (
+                        (byte >= b'a' && byte <= b'z')
+                            || (byte >= b'A' && byte <= b'Z')
+                            || (byte >= b'0' && byte <= b'9')
+                            || matches!(
+                                byte,
+                                b' ' | b'_' | b'.' | b'/' | b':' | b'@' | b'%' | b'+' | b'=' | b',' | b'-'
+                            )
+                    ),
+        {
+        }
+
+        /// Verifies canonical names and fail-safe handling of unknown values.
+        proof fn violation_action_config_mapping_is_total() {
+            reveal(violation_action_tag);
+            // The proof inputs are built as sequence literals: Verus relates
+            // those to the specification directly, while the view of a byte
+            // slice literal is only opaque to the solver.
+            let log_only: Seq<u8> = seq![b'l', b'o', b'g', b'_', b'o', b'n', b'l', b'y'];
+            let kill: Seq<u8> = seq![b'k', b'i', b'l', b'l'];
+            let kill_and_ban: Seq<u8> =
+                seq![b'k', b'i', b'l', b'l', b'_', b'a', b'n', b'd', b'_', b'b', b'a', b'n'];
+            let unknown: Seq<u8> = seq![b'u', b'n', b'k', b'n', b'o', b'w', b'n'];
+            let empty: Seq<u8> = seq![];
+            let log_only_extra: Seq<u8> =
+                seq![b'l', b'o', b'g', b'_', b'o', b'n', b'l', b'y', b'_'];
+            let kill_and_ban_extra: Seq<u8> = seq![
+                b'k', b'i', b'l', b'l', b'_', b'a', b'n', b'd', b'_', b'b', b'a', b'n', b'_', b'e',
+                b'x', b't', b'r', b'a'
+            ];
+            assert(violation_action_tag(log_only) == 0);
+            assert(violation_action_tag(kill) == 1);
+            assert(violation_action_tag(kill_and_ban) == 2);
+            assert(violation_action_tag(unknown) == 1);
+            assert(violation_action_tag(empty) == 1);
+            assert(violation_action_tag(log_only_extra) == 1);
+            assert(violation_action_tag(kill_and_ban_extra) == 1);
+            assert(ViolationAction::LogOnly.as_config_str() == "log_only");
+            assert(ViolationAction::Kill.as_config_str() == "kill");
+            assert(ViolationAction::KillAndBan.as_config_str() == "kill_and_ban");
+        }
+    }
+}
+
+#[cfg(kani)]
+#[allow(dead_code)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

@@ -5,15 +5,26 @@
 //! and authorized by GSR before they reach this layer. There is deliberately
 //! no variant for arbitrary shell/Docker commands.
 
-use gitrun_core::{GitRunApi, GitRunOperation};
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
+use gitrun_core::api_policy::{GitRunApi, GitRunOperation};
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::collections::BTreeMap;
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
+#[cfg(not(any(kani, verus)))]
 pub mod ipc;
 pub mod protocol;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct ApiInvocation {
     pub api: GitRunApi,
     pub operation: GitRunOperation,
@@ -26,6 +37,7 @@ pub struct ApiInvocation {
     pub arguments: BTreeMap<String, String>,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl ApiInvocation {
     pub fn into_authorized(self, request_id: String) -> AuthorizedOperation {
         AuthorizedOperation {
@@ -43,6 +55,7 @@ impl ApiInvocation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct AuthorizedOperation {
     pub request_id: String,
     pub api: GitRunApi,
@@ -60,6 +73,7 @@ pub struct AuthorizedOperation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub enum ExecutionEvent {
     Started,
     Stdout(String),
@@ -68,20 +82,25 @@ pub enum ExecutionEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct ExecutionResult {
     pub exit_code: i32,
     pub stdout: String,
     pub stderr: String,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(any(kani, verus)), derive(Error))]
 pub enum ExecutionError {
-    #[error("execution backend does not implement {api:?}/{operation:?}")]
+    #[cfg_attr(
+        not(any(kani, verus)),
+        error("execution backend does not implement {api:?}/{operation:?}")
+    )]
     Unsupported {
         api: GitRunApi,
         operation: GitRunOperation,
     },
-    #[error("execution failed: {0}")]
+    #[cfg_attr(not(any(kani, verus)), error("execution failed: {0}"))]
     Failed(String),
 }
 
@@ -89,6 +108,7 @@ pub enum ExecutionError {
 ///
 /// Implementations should be composed from explicit API handlers
 /// (GitVaultRun, GitDockRun, ...) rather than a generic shell runner.
+#[cfg(not(any(kani, verus)))]
 pub trait ExecutionBackend: Send + Sync {
     fn execute(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError>;
 
@@ -122,21 +142,90 @@ pub trait ExecutionBackend: Send + Sync {
     }
 }
 
+/// Pure production decision shared by the runtime error constructor and Verus.
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
+#[cfg_attr(verus, verus_spec(returns(api, operation)))]
+pub(crate) fn noop_backend_unsupported_pair(
+    api: GitRunApi,
+    operation: GitRunOperation,
+) -> (GitRunApi, GitRunOperation) {
+    (api, operation)
+}
+
+#[cfg(not(verus))]
+pub fn noop_backend_unsupported_error(
+    api: GitRunApi,
+    operation: GitRunOperation,
+) -> ExecutionError {
+    let (api, operation) = noop_backend_unsupported_pair(api, operation);
+    ExecutionError::Unsupported { api, operation }
+}
+
+#[cfg(verus)]
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
+#[cfg_attr(verus, verus_spec(returns true))]
+pub(crate) fn noop_backend_error_preserves_pair(
+    api: GitRunApi,
+    operation: GitRunOperation,
+) -> bool {
+    let (actual_api, actual_operation) = noop_backend_unsupported_pair(api, operation);
+    let api_preserved = match (actual_api, api) {
+        (GitRunApi::GitVaultRun, GitRunApi::GitVaultRun)
+        | (GitRunApi::GitDockRun, GitRunApi::GitDockRun)
+        | (GitRunApi::GitSaveRun, GitRunApi::GitSaveRun)
+        | (GitRunApi::GitRegisterRun, GitRunApi::GitRegisterRun)
+        | (GitRunApi::GitInstallRun, GitRunApi::GitInstallRun)
+        | (GitRunApi::GitReadRun, GitRunApi::GitReadRun)
+        | (GitRunApi::GitWriteRun, GitRunApi::GitWriteRun)
+        | (GitRunApi::GitVerifyRun, GitRunApi::GitVerifyRun)
+        | (GitRunApi::GitStatusRun, GitRunApi::GitStatusRun)
+        | (GitRunApi::GitDispatchRun, GitRunApi::GitDispatchRun) => true,
+        _ => false,
+    };
+    let operation_preserved = match (actual_operation, operation) {
+        (GitRunOperation::Read, GitRunOperation::Read)
+        | (GitRunOperation::Write, GitRunOperation::Write)
+        | (GitRunOperation::Exists, GitRunOperation::Exists)
+        | (GitRunOperation::Delete, GitRunOperation::Delete)
+        | (GitRunOperation::List, GitRunOperation::List)
+        | (GitRunOperation::Connect, GitRunOperation::Connect)
+        | (GitRunOperation::Disconnect, GitRunOperation::Disconnect)
+        | (GitRunOperation::Execute, GitRunOperation::Execute)
+        | (GitRunOperation::Melt, GitRunOperation::Melt)
+        | (GitRunOperation::Mount, GitRunOperation::Mount)
+        | (GitRunOperation::Unmount, GitRunOperation::Unmount)
+        | (GitRunOperation::File, GitRunOperation::File)
+        | (GitRunOperation::Logs, GitRunOperation::Logs)
+        | (GitRunOperation::Register, GitRunOperation::Register)
+        | (GitRunOperation::Install, GitRunOperation::Install)
+        | (GitRunOperation::Remove, GitRunOperation::Remove)
+        | (GitRunOperation::Update, GitRunOperation::Update)
+        | (GitRunOperation::Verify, GitRunOperation::Verify)
+        | (GitRunOperation::Status, GitRunOperation::Status)
+        | (GitRunOperation::Plan, GitRunOperation::Plan) => true,
+        _ => false,
+    };
+    api_preserved && operation_preserved
+}
+
 /// Safe default backend used while the concrete handlers are introduced.
 /// It guarantees that an accidentally unregistered operation cannot execute.
 #[derive(Debug, Default, Clone, Copy)]
+#[cfg(not(any(kani, verus)))]
 pub struct NoopExecutionBackend;
 
+#[cfg(not(any(kani, verus)))]
 impl ExecutionBackend for NoopExecutionBackend {
     fn execute(&self, request: &AuthorizedOperation) -> Result<ExecutionResult, ExecutionError> {
-        Err(ExecutionError::Unsupported {
-            api: request.api,
-            operation: request.operation,
-        })
+        Err(noop_backend_unsupported_error(
+            request.api,
+            request.operation,
+        ))
     }
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 mod tests {
     use super::*;
 
@@ -182,3 +271,80 @@ mod tests {
         assert!(matches!(error, ExecutionError::Unsupported { .. }));
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{noop_backend_unsupported_error, ExecutionError};
+    use gitrun_core::api_policy::{GitRunApi, GitRunOperation};
+
+    #[kani::proof]
+    #[kani::unwind(21)]
+    fn noop_backend_rejects_every_declared_api_operation_pair() {
+        let apis = [
+            GitRunApi::GitVaultRun,
+            GitRunApi::GitDockRun,
+            GitRunApi::GitSaveRun,
+            GitRunApi::GitRegisterRun,
+            GitRunApi::GitInstallRun,
+            GitRunApi::GitReadRun,
+            GitRunApi::GitWriteRun,
+            GitRunApi::GitVerifyRun,
+            GitRunApi::GitStatusRun,
+            GitRunApi::GitDispatchRun,
+        ];
+        let operations = [
+            GitRunOperation::Read,
+            GitRunOperation::Write,
+            GitRunOperation::Exists,
+            GitRunOperation::Delete,
+            GitRunOperation::List,
+            GitRunOperation::Connect,
+            GitRunOperation::Disconnect,
+            GitRunOperation::Execute,
+            GitRunOperation::Melt,
+            GitRunOperation::Mount,
+            GitRunOperation::Unmount,
+            GitRunOperation::File,
+            GitRunOperation::Logs,
+            GitRunOperation::Register,
+            GitRunOperation::Install,
+            GitRunOperation::Remove,
+            GitRunOperation::Update,
+            GitRunOperation::Verify,
+            GitRunOperation::Status,
+            GitRunOperation::Plan,
+        ];
+        for api in apis {
+            for operation in operations {
+                let error = noop_backend_unsupported_error(api, operation);
+                assert!(
+                    matches!(error, ExecutionError::Unsupported { api: actual_api, operation: actual_operation }
+                    if actual_api == api && actual_operation == operation)
+                );
+            }
+        }
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{noop_backend_error_preserves_pair, GitRunApi, GitRunOperation};
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn noop_backend_preserves_every_declared_operation_pair(
+            api: GitRunApi,
+            operation: GitRunOperation,
+        )
+            ensures noop_backend_error_preserves_pair(api, operation),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+#[allow(dead_code)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

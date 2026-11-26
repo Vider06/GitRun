@@ -266,20 +266,15 @@ ci_apt() {
     if sudo -n true 2>/dev/null; then sudo="sudo -n"; else return 1; fi
   fi
 
-  # Prefer the canonical Ubuntu archive instead of the Azure mirror that
-  # has intermittently stalled on GitHub-hosted runners. Preserve Ubuntu's
-  # suite/component configuration and leave security.ubuntu.com untouched.
-  # This runs before update in every job that installs APT dependencies.
+  # Use the same fail-closed canonical mirror override as workflow-level
+  # apt setup. This also replaces regional EC2 archive mirrors, not only Azure.
   if [ ! -f "$CI_DIR/apt-mirror-forced" ]; then
-    if [ -f /etc/apt/apt-mirrors.txt ]; then
-      $sudo sed -i -E 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' /etc/apt/apt-mirrors.txt
-      echo "APT mirror list after override:"
-      $sudo cat /etc/apt/apt-mirrors.txt
+    local mirror_script="${GITHUB_WORKSPACE:-$PWD}/scripts/ci/force-ubuntu-archive-mirror.sh"
+    if [ ! -f "$mirror_script" ]; then
+      ci_err "canonical Ubuntu APT mirror helper is missing: $mirror_script"
+      return 1
     fi
-    for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-      [ -f "$source" ] || continue
-      $sudo sed -i -E 's#https?://azure[.]archive[.]ubuntu[.]com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g' "$source"
-    done
+    $sudo bash "$mirror_script"
     : > "$CI_DIR/apt-mirror-forced"
   fi
 
@@ -344,6 +339,20 @@ ci_need_report() {
   return 1
 }
 
+# ------------------------------------------------------- Cargo verbosity ----
+# Keep normal CI output concise; CI_VERBOSE=1 adds tool-native diagnostics.
+ci_cargo_clippy() {
+  if [ "${CI_VERBOSE:-0}" = 1 ]; then cargo clippy --verbose "$@"; else cargo clippy "$@"; fi
+}
+ci_cargo_doc() {
+  if [ "${CI_VERBOSE:-0}" = 1 ]; then cargo doc --verbose "$@"; else cargo doc "$@"; fi
+}
+# cargo-audit 0.22.x has no --verbose flag; preserve its native output in both modes.
+ci_cargo_audit() { cargo audit "$@"; }
+ci_cargo_deny() {
+  if [ "${CI_VERBOSE:-0}" = 1 ]; then cargo deny --log-level debug "$@"; else cargo deny "$@"; fi
+}
+
 # ----------------------------------------------------------- diagnostics ----
 ci_image_fp() {
   {
@@ -355,22 +364,38 @@ ci_image_fp() {
   } | sha256sum | cut -c1-8
 }
 ci_diag() {
-  local ws="${GITHUB_WORKSPACE:-.}" avail_kb inode_pct mem_mb
+  local ws="${GITHUB_WORKSPACE:-.}" avail_kb temp_avail_kb inode_pct mem_mb
   echo "::group::Runner diagnostics"
   echo "runner: ${RUNNER_NAME:-?} (${RUNNER_OS:-?}/${RUNNER_ARCH:-?})  job: ${GITHUB_JOB:-?}  sha: ${GITHUB_SHA:0:12}"
   # shellcheck source=/dev/null
   echo "image : $( (. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown}") ) | $(getconf GNU_LIBC_VERSION 2>/dev/null) | fingerprint $(ci_image_fp)"
   echo "kernel: $(uname -srm)  cpus: $(nproc 2>/dev/null || echo ?)  load: $(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"
-  df -h "$ws" "$RUNNER_TEMP" 2>/dev/null || true
-  df -i "$ws" 2>/dev/null || true
+  df -hT "$ws" "$RUNNER_TEMP" 2>/dev/null || true
+  df -i "$ws" "$RUNNER_TEMP" 2>/dev/null || true
   free -m 2>/dev/null || true
+  if [ -r /sys/fs/cgroup/memory.max ]; then
+    echo "cgroup memory: $(cat /sys/fs/cgroup/memory.current 2>/dev/null || echo unknown) / $(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo unknown) bytes"
+  elif [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+    echo "cgroup memory limit: $(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)"
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    if timeout 5s docker info >/dev/null 2>&1; then echo "docker daemon: available"; else echo "docker daemon: installed but unavailable"; fi
+  else
+    echo "docker daemon: not installed"
+  fi
   if [ "${CI_VERBOSE:-0}" = 1 ]; then echo "--- environment (secrets filtered) ---"; env | grep -viE 'token|secret|password|key' | sort; fi
   echo "::endgroup::"
   avail_kb="$(df -Pk "$ws" | awk 'NR==2{print $4}')"
+  temp_avail_kb="$(df -Pk "$RUNNER_TEMP" | awk 'NR==2{print $4}')"
   inode_pct="$(df -Pi "$ws" | awk 'NR==2{gsub("%","",$5); print $5}')"
   mem_mb="$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 99999)"
-  if [ "${avail_kb:-0}" -lt 1048576 ]; then ci_err "disk almost full on the runner: $((avail_kb / 1024)) MB free in $ws (need >= 1 GB). Clean _work/ and docker images on $RUNNER_NAME."; return 1; fi
-  if [ "${avail_kb:-0}" -lt 5242880 ]; then ci_warn "low disk space: $((avail_kb / 1024)) MB free on $RUNNER_NAME"; fi
+  if [ "${avail_kb:-0}" -lt 1048576 ] || [ "${temp_avail_kb:-0}" -lt 1048576 ]; then
+    ci_err "disk almost full on the runner: workspace=$((avail_kb / 1024)) MB, runner-temp=$((temp_avail_kb / 1024)) MB free (need >= 1 GB on both). Clean _work/ and Docker images on $RUNNER_NAME."
+    return 1
+  fi
+  if [ "${avail_kb:-0}" -lt 5242880 ] || [ "${temp_avail_kb:-0}" -lt 5242880 ]; then
+    ci_warn "low disk space on $RUNNER_NAME: workspace=$((avail_kb / 1024)) MB, runner-temp=$((temp_avail_kb / 1024)) MB"
+  fi
   if [ "${inode_pct:-0}" -ge 90 ]; then ci_warn "inodes ${inode_pct}% used on $RUNNER_NAME"; fi
   if [ "${mem_mb:-99999}" -lt 1500 ]; then ci_warn "low memory: ${mem_mb} MB available on $RUNNER_NAME"; fi
   return 0
@@ -649,6 +674,13 @@ ci_report() {
     *) status_label="unavailable ($status)" ;;
   esac
   report="$CI_DIR/report.md"
+  # Every job emits the same machine-readable result artifact. The shared
+  # Python writer owns the schema so job-specific scripts only add data.
+  if [ -f "${GITHUB_WORKSPACE:-$PWD}/scripts/ci/ci-job-report.py" ]; then
+    python3 "${GITHUB_WORKSPACE:-$PWD}/scripts/ci/ci-job-report.py" write
+  else
+    ci_err "canonical job-result writer is missing; report artifact was not generated"
+  fi
   {
     echo "# GitRun CI job report"
     echo

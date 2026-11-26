@@ -23,6 +23,9 @@
 //! Actions runner, so workflow code does not inherit that tracing capability.
 //! events.rs remains the shared integration point for durable security events.
 
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
 pub mod agent;
 pub mod api_gate;
 pub mod automation_gate;
@@ -30,5 +33,7 @@ pub mod events;
 pub mod exec_supervisor;
 pub mod watchdog;
 
+#[cfg(not(any(kani, verus)))]
 pub use events::{SecurityEvent, Severity};
+#[cfg(not(any(kani, verus)))]
 pub use watchdog::{run as run_watchdog, WatchConfig};

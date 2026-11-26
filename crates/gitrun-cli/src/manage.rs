@@ -32,6 +32,9 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+#[path = "repo_component.rs"]
+mod repo_component;
+
 type ManagementTerminal = Terminal<CrosstermBackend<io::Stdout>>;
 
 const VERSION_FILE: &str = include_str!("../../../version.txt");
@@ -1972,7 +1975,7 @@ fn fallback_receive_command(path: &Path) -> Option<String> {
     }
     let source = format!("{username}@{server_address}:{}", path.display());
     Some(format!(
-        "Windows: powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\gitrun-manage.ps1 -Source '{source}'\nLinux: bash scripts/gitrun-manage.sh --source '{source}'"
+        "Windows: powershell.exe -ExecutionPolicy Bypass -File .\\scripts\\gitrun-manage.ps1 -Source '{source}'\nLinux: gitrun manage --source '{source}'"
     ))
 }
 
@@ -3923,11 +3926,11 @@ fn valid_repo(repo: &str) -> bool {
         && !owner.is_empty()
         && !name.is_empty()
         && owner
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+            .bytes()
+            .all(repo_component::repo_component_byte_allowed)
         && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+            .bytes()
+            .all(repo_component::repo_component_byte_allowed)
 }
 
 #[cfg(test)]

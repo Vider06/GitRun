@@ -6,11 +6,20 @@
 //! a permit can be returned. The permit is intentionally not constructible by
 //! callers outside this module.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
+#[cfg(not(any(kani, verus)))]
 use crate::events::{self, SecurityEvent, Severity};
+#[cfg(not(any(kani, verus)))]
 use std::path::{Path, PathBuf};
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
+#[allow(unused_imports)]
+use vstd::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(verus, verus_verify)]
 pub enum AutomationAction {
     PredictiveWarmPool,
     StopIdleRunner,
@@ -18,7 +27,8 @@ pub enum AutomationAction {
 }
 
 impl AutomationAction {
-    fn as_str(self) -> &'static str {
+    #[cfg_attr(verus, verus_verify(dual_spec, open))]
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::PredictiveWarmPool => "predictive_warm_pool",
             Self::StopIdleRunner => "stop_idle_runner",
@@ -28,6 +38,7 @@ impl AutomationAction {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 pub struct AutomationPolicy {
     pub kitty_enabled: bool,
     pub telemetry_enabled: bool,
@@ -43,6 +54,7 @@ pub struct AutomationPolicy {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(not(any(kani, verus)))]
 pub struct AutomationIntent {
     pub action: AutomationAction,
     pub repository: String,
@@ -68,6 +80,7 @@ pub struct AutomationIntent {
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub enum AutomationGateError {
     #[error("automation denied: {0}")]
     Denied(String),
@@ -75,14 +88,17 @@ pub enum AutomationGateError {
     Audit(String),
 }
 
+#[cfg(not(any(kani, verus)))]
 pub type Result<T> = std::result::Result<T, AutomationGateError>;
 
 /// Opaque, short-lived grant. Only a successful GSR check can construct one.
+#[cfg(not(any(kani, verus)))]
 pub struct AuthorizedAutomationAction {
     intent: AutomationIntent,
     audit_path: PathBuf,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl AuthorizedAutomationAction {
     pub fn action(&self) -> AutomationAction {
         self.intent.action
@@ -127,6 +143,7 @@ impl AuthorizedAutomationAction {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn authorize_action(
     policy: &AutomationPolicy,
     intent: AutomationIntent,
@@ -189,6 +206,36 @@ pub fn authorize_action(
     })
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
+#[cfg_attr(
+    verus,
+    verus_spec(returns proposed >= configured && proposed <= maximum)
+)]
+pub(crate) fn runner_floor_is_bounded(configured: u32, proposed: u32, maximum: u32) -> bool {
+    proposed >= configured && proposed <= maximum
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns
+            (byte >= b'a' && byte <= b'z')
+                || (byte >= b'A' && byte <= b'Z')
+                || (byte >= b'0' && byte <= b'9')
+                || byte == b'-'
+                || byte == b'_'
+                || byte == b'.'
+    )
+)]
+pub(crate) fn valid_repository_component_byte(byte: u8) -> bool {
+    matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9')
+        || byte == b'-'
+        || byte == b'_'
+        || byte == b'.'
+}
+
+#[cfg(not(any(kani, verus)))]
 fn valid_repository(repository: &str) -> bool {
     let mut parts = repository.split('/');
     let (Some(owner), Some(name), None) = (parts.next(), parts.next(), parts.next()) else {
@@ -199,12 +246,11 @@ fn valid_repository(repository: &str) -> bool {
             && part.len() <= 100
             && part != "."
             && part != ".."
-            && part
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            && part.bytes().all(valid_repository_component_byte)
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate(
     policy: &AutomationPolicy,
     intent: &AutomationIntent,
@@ -253,7 +299,7 @@ fn validate(
             let maximum = intent
                 .max_runners
                 .ok_or_else(|| "global runner maximum is missing".to_owned())?;
-            if proposed < configured || proposed > maximum {
+            if !runner_floor_is_bounded(configured, proposed, maximum) {
                 return Err("proposed runner floor violates deterministic capacity bounds".into());
             }
         }
@@ -435,3 +481,99 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{runner_floor_is_bounded, AutomationAction};
+
+    /// Checks the production warm-pool floor predicate for every u32 triple.
+    #[kani::proof]
+    fn runner_floor_predicate_matches_the_capacity_contract() {
+        let configured: u32 = kani::any();
+        let proposed: u32 = kani::any();
+        let maximum: u32 = kani::any();
+
+        assert_eq!(
+            runner_floor_is_bounded(configured, proposed, maximum),
+            proposed >= configured && proposed <= maximum
+        );
+    }
+
+    /// Exhaustively checks the byte alphabet accepted inside owner/repo components.
+    #[kani::proof]
+    fn repository_component_byte_alphabet_is_closed() {
+        let byte: u8 = kani::any();
+        let expected = (byte >= b'a' && byte <= b'z')
+            || (byte >= b'A' && byte <= b'Z')
+            || (byte >= b'0' && byte <= b'9')
+            || byte == b'-'
+            || byte == b'_'
+            || byte == b'.';
+        assert_eq!(super::valid_repository_component_byte(byte), expected);
+    }
+
+    /// Proves all automation action names are stable and exhaustive.
+    #[kani::proof]
+    fn automation_action_wire_names_are_total() {
+        assert_eq!(
+            AutomationAction::PredictiveWarmPool.as_str(),
+            "predictive_warm_pool"
+        );
+        assert_eq!(
+            AutomationAction::StopIdleRunner.as_str(),
+            "stop_idle_runner"
+        );
+        assert_eq!(
+            AutomationAction::FastStopWorkflowRun.as_str(),
+            "fast_stop_workflow_run"
+        );
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{runner_floor_is_bounded, AutomationAction};
+    use vstd::prelude::*;
+
+    verus! {
+        /// Verifies both directions of the runner-floor authorization predicate.
+        proof fn runner_floor_predicate_matches_the_capacity_contract(
+            configured: u32,
+            proposed: u32,
+            maximum: u32,
+        )
+            ensures
+                runner_floor_is_bounded(configured, proposed, maximum)
+                    == (proposed >= configured && proposed <= maximum),
+        {
+        }
+
+        /// Proves the byte-level allowlist used by repository identity validation.
+        proof fn repository_component_byte_alphabet_is_closed(byte: u8)
+            ensures
+                super::valid_repository_component_byte(byte)
+                    == (
+                        (byte >= b'a' && byte <= b'z')
+                            || (byte >= b'A' && byte <= b'Z')
+                            || (byte >= b'0' && byte <= b'9')
+                            || byte == b'-'
+                            || byte == b'_'
+                            || byte == b'.'
+                    ),
+        {
+        }
+
+        /// Verifies the canonical wire name for every automation action.
+        proof fn automation_action_wire_names_are_total() {
+            assert(AutomationAction::PredictiveWarmPool.as_str() == "predictive_warm_pool");
+            assert(AutomationAction::StopIdleRunner.as_str() == "stop_idle_runner");
+            assert(AutomationAction::FastStopWorkflowRun.as_str() == "fast_stop_workflow_run");
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

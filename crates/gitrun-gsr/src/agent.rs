@@ -16,18 +16,69 @@
 //! for the shell layer, while the kernel layer guarantees that directly
 //! invoking those paths does not bypass the policy.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
+#[cfg(not(any(kani, verus)))]
 use crate::events::{self, SecurityEvent, Severity};
+#[cfg(not(any(kani, verus)))]
 use gitrun_core::command_policy::{CommandPolicy, Decision};
+#[cfg(not(any(kani, verus)))]
 use std::env;
+#[cfg(not(any(kani, verus)))]
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 use std::os::unix::process::CommandExt;
+#[cfg(not(any(kani, verus)))]
 use std::process::Command;
 
 const REAL_SHELL_FALLBACK: &str = "/bin/sh.gitrun-real";
 const REAL_BASH_FALLBACK: &str = "/bin/bash.gitrun-real";
 
+#[cfg(verus)]
+use vstd::contrib::exec_spec::*;
+#[cfg(verus)]
+use vstd::prelude::*;
+#[cfg(verus)]
+use vstd::string::StringSliceAdditionalSpecFns;
+#[cfg(verus)]
+verus! {
+    pub open spec fn is_bash_invocation_spec(invocation: Seq<u8>) -> bool {
+        invocation =~= seq![b'b', b'a', b's', b'h']
+            || (invocation.len() >= 5
+                && invocation[invocation.len() - 5] == b'/'
+                && invocation[invocation.len() - 4] == b'b'
+                && invocation[invocation.len() - 3] == b'a'
+                && invocation[invocation.len() - 2] == b's'
+                && invocation[invocation.len() - 1] == b'h')
+    }
+}
+
+#[cfg(not(verus))]
 fn is_bash_invocation(invocation: &str) -> bool {
-    invocation.ends_with("/bash") || invocation == "bash"
+    let bytes = invocation.as_bytes();
+    let length = bytes.len();
+    (length == 4 && bytes[0] == b'b' && bytes[1] == b'a' && bytes[2] == b's' && bytes[3] == b'h')
+        || (length >= 5
+            && bytes[length - 5] == b'/'
+            && bytes[length - 4] == b'b'
+            && bytes[length - 3] == b'a'
+            && bytes[length - 2] == b's'
+            && bytes[length - 1] == b'h')
+}
+
+#[cfg(verus)]
+#[verus_spec(returns is_bash_invocation_spec(invocation.spec_bytes()))]
+fn is_bash_invocation(invocation: &str) -> bool {
+    let bytes = invocation.as_bytes();
+    let length = bytes.len();
+    (length == 4 && bytes[0] == b'b' && bytes[1] == b'a' && bytes[2] == b's' && bytes[3] == b'h')
+        || (length >= 5
+            && bytes[length - 5] == b'/'
+            && bytes[length - 4] == b'b'
+            && bytes[length - 3] == b'a'
+            && bytes[length - 2] == b's'
+            && bytes[length - 1] == b'h')
 }
 
 fn real_shell_for_invocation(invocation: &str) -> &'static str {
@@ -42,6 +93,7 @@ fn real_shell_for_invocation(invocation: &str) -> &'static str {
 /// supervisor. A disabled master switch intentionally becomes an empty
 /// policy rather than a special execution path, so the two layers keep the
 /// same semantics.
+#[cfg(not(any(kani, verus)))]
 fn policy_for_config(config: &gitrun_core::Config) -> Result<CommandPolicy, String> {
     if let Some(policy) = config.command_policy() {
         return Ok(policy);
@@ -65,6 +117,7 @@ fn policy_for_config(config: &gitrun_core::Config) -> Result<CommandPolicy, Stri
 /// script-style argv when present. For direct script-file invocations it
 /// falls back to joining argv so a policy still has something concrete to
 /// inspect.
+#[cfg(not(any(kani, verus)))]
 pub fn extract_command_line(args: &[String]) -> String {
     if let Some(dash_c_pos) = args.iter().position(|a| a == "-c") {
         if let Some(script) = args.get(dash_c_pos + 1) {
@@ -75,6 +128,7 @@ pub fn extract_command_line(args: &[String]) -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub enum AgentDecision {
     Delegate { real_shell: String },
     Refuse { reason: String },
@@ -83,6 +137,7 @@ pub enum AgentDecision {
 /// Pure decision logic for one shell invocation. It does not read mutable
 /// policy state from the process environment, which keeps the decision easy
 /// to test and prevents a job from changing policy after startup.
+#[cfg(not(any(kani, verus)))]
 pub fn decide(policy: &CommandPolicy, args: &[String], invocation: &str) -> AgentDecision {
     let command_line = extract_command_line(args);
     match policy.evaluate(&command_line) {
@@ -100,6 +155,7 @@ pub fn decide(policy: &CommandPolicy, args: &[String], invocation: &str) -> Agen
 /// Executes the shell-wrapper layer directly. The kernel supervisor uses the
 /// same policy builder but does not call this function; it supervises the
 /// whole Actions runner process tree instead.
+#[cfg(not(any(kani, verus)))]
 pub fn run(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
     let args: Vec<String> = env::args().skip(1).collect();
     let policy = match policy_for_config(config) {
@@ -155,6 +211,7 @@ pub fn run(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
 /// closed if ptrace/seccomp setup or executable inspection is unavailable:
 /// falling back to the weaker shell layer would recreate the bypass this
 /// supervisor is specifically meant to close.
+#[cfg(not(any(kani, verus)))]
 pub fn supervise_runner(events_path: &std::path::Path, config: &gitrun_core::Config) -> i32 {
     let policy = match policy_for_config(config) {
         Ok(policy) => policy,
@@ -187,6 +244,7 @@ pub fn supervise_runner(events_path: &std::path::Path, config: &gitrun_core::Con
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn severity_for(_config: &gitrun_core::Config) -> Severity {
     Severity::Warning
 }
@@ -284,3 +342,62 @@ mod tests {
         );
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{is_bash_invocation, real_shell_for_invocation};
+
+    #[kani::proof]
+    fn shell_dispatch_never_crosses_shell_families() {
+        assert!(is_bash_invocation("bash"));
+        assert!(is_bash_invocation("/bin/bash"));
+        assert!(is_bash_invocation("/usr/bin/bash"));
+        assert!(!is_bash_invocation("sh"));
+        assert!(!is_bash_invocation("/bin/sh"));
+        assert!(!is_bash_invocation("/bin/bash.gitrun-real"));
+
+        assert!(real_shell_for_invocation("bash") == "/bin/bash.gitrun-real");
+        assert!(real_shell_for_invocation("/bin/bash") == "/bin/bash.gitrun-real");
+        assert!(real_shell_for_invocation("sh") == "/bin/sh.gitrun-real");
+        assert!(real_shell_for_invocation("/bin/sh") == "/bin/sh.gitrun-real");
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::is_bash_invocation_spec;
+    use vstd::prelude::*;
+    use vstd::string::StringSliceAdditionalSpecFns;
+
+    verus! {
+        proof fn shell_dispatch_spec_separates_bash_from_sh() {
+            reveal_strlit("bash");
+            reveal_strlit("/bash");
+            reveal_strlit("/bin/bash");
+            reveal_strlit("/usr/bin/bash");
+            reveal_strlit("sh");
+            reveal_strlit("/bin/sh");
+            reveal_strlit("/bin/bash.gitrun-real");
+            assert(vstd::string::is_ascii("bash"));
+            assert(vstd::string::is_ascii("/bin/bash"));
+            assert(vstd::string::is_ascii("/usr/bin/bash"));
+            assert(vstd::string::is_ascii("sh"));
+            assert(vstd::string::is_ascii("/bin/sh"));
+            assert(vstd::string::is_ascii("/bin/bash.gitrun-real"));
+            broadcast use vstd::string::is_ascii_spec_bytes;
+
+            assert(is_bash_invocation_spec("bash".spec_bytes()));
+            assert(is_bash_invocation_spec("/bin/bash".spec_bytes()));
+            assert(is_bash_invocation_spec("/usr/bin/bash".spec_bytes()));
+            assert(!is_bash_invocation_spec("sh".spec_bytes()));
+            assert(!is_bash_invocation_spec("/bin/sh".spec_bytes()));
+            assert(!is_bash_invocation_spec("/bin/bash.gitrun-real".spec_bytes()));
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

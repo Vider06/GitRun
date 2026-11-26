@@ -6,7 +6,7 @@ license = "Apache-2.0"
 description = "GitVault: encrypted secret storage shared across GitRun runner containers"
 
 [dependencies]
-vstd = "=0.0.0-2026-11-01-0251"
+vstd = "=0.0.0-2026-11-22-0344"
 aes-gcm = "0.11.1"
 base64 = "0.23"
 rand = "0.10"

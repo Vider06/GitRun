@@ -6,7 +6,7 @@ license = "Apache-2.0"
 description = "GitRun host platform detection and runtime compatibility checks"
 
 [dependencies]
-vstd = "=0.0.0-2026-11-01-0251"
+vstd = "=0.0.0-2026-11-22-0344"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(verus)'] }

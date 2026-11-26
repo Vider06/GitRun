@@ -6,7 +6,7 @@ license = "Apache-2.0"
 description = "GitRun autoscaler: reconciles desired vs actual runner containers against GitHub Actions and Docker"
 
 [dependencies]
-vstd = "=0.0.0-2026-11-01-0251"
+vstd = "=0.0.0-2026-11-22-0344"
 gitrun-core = { path = "../gitrun-core" }
 gitrun-platform = { path = "../gitrun-platform" }
 gitrun-smart-scheduler = { path = "../gitrun-smart-scheduler" }

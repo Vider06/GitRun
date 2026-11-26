@@ -7,7 +7,7 @@ license = "Apache-2.0"
 description = "GitRun release update, dependency and rollback manager"
 
 [dependencies]
-vstd = "=0.0.0-2026-11-01-0251"
+vstd = "=0.0.0-2026-11-22-0344"
 gitrun-core = { path = "../gitrun-core" }
 gitrun-platform = { path = "../gitrun-platform" }
 libc = "0.2"

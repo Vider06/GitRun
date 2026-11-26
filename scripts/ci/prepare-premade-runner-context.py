@@ -37,7 +37,7 @@ def main() -> int:
     url = f"https://raw.githubusercontent.com/Vider06/GitRun/{pinned_ref}/{pinned_path}"
     run([
         "curl", "--fail", "--silent", "--show-error", "--location",
-        "--proto", "=https", "--tlsv1.2", url, "-o", str(premade),
+        "--proto", "=https", url, "-o", str(premade),
     ])
 
     source = premade.read_text(encoding="utf-8")

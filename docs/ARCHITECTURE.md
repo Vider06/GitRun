@@ -100,3 +100,5 @@ Future Mapping projects the next hour into twelve five-minute buckets, with an o
 ## Shared management backend
 
 The management API, policy checks, persistence operations, typed command dispatcher and privileged Control Manager live in the `gitrun-management` crate. The crate's default feature set is headless: CLI, system services and the Control Manager do not link Tauri or require GTK/WebKit. The separately packaged Dashboard is a thin Tauri adapter that enables the optional `desktop` feature and exposes the backend's UI commands. Both the terminal management console and the Dashboard invoke the same management handlers; protected system operations are routed through the allowlisted Unix-domain-socket Control Manager. The CLI launches the Dashboard executable as a separate process and has no direct dependency on the Dashboard crate.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

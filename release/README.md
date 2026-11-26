@@ -61,3 +61,5 @@ The 1.9.1 release has a one-time legacy Debian migration package for existing 1.
 The native service lifecycle is service-manager-specific: DEB/RPM/Arch Server packages carry systemd units; Alpine APK carries OpenRC definitions; Void XBPS carries runit service trees and `INSTALL`/`REMOVE` hooks. Package hooks restart only previously active services on upgrade and preserve configuration/state on removal. The explicit `gitrun uninstall` command is the destructive cleanup path.
 
 The separately packaged Desktop application can be installed independently of the Server package. The CLI and Dashboard use the same `gitrun-management` backend; terminal-first users can run `gitrun setup --terminal` and `gitrun manage` without installing the Tauri runtime.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

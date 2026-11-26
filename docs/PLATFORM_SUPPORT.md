@@ -88,3 +88,5 @@ Do not advertise a distribution/architecture as fully supported for every worklo
 - Add further Desktop targets only after frontend/runtime dependencies and target packaging are validated.
 
 Until these runtime and lifecycle checks are complete, report detected host capabilities and available release assets separately from fully validated deployment targets.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

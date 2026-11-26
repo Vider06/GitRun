@@ -7,3 +7,5 @@ The PR #83 source-head CI passed the canonical runner image build and build-time
 ## Build toolchains
 
 The runner image uses digest-pinned official Debian Bookworm images: Rust `1.100.0` for the builder stage that compiles the GSR agent and API, and Node.js `26.13.1` for the runtime stage. Keep each image tag and its SHA-256 digest synchronized in `Dockerfile` when updating either toolchain.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

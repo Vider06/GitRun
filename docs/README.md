@@ -30,3 +30,5 @@ The current source/product version is <!-- gitrun-version:start -->1.9.1<!-- git
 ## Validation boundaries
 
 Historical changes and test results describe the source commit on which they were recorded. They are not proof of current behavior on every host. Privileged desktop flows, host repair, VM provisioning and recovery, customized runner-image migration, and release-signing configuration require validation in the target environment.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

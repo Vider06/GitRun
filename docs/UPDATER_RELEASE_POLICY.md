@@ -94,3 +94,5 @@ The operation is idempotent. It can be run again with the same tag and classific
 ## Version boundary
 
 This format begins with GitRun 1.9.1. The new updater requires the typed signed manifest and matching GitHub metadata; it intentionally has no legacy interpretation path for older releases.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

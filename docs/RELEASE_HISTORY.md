@@ -240,3 +240,5 @@ A green workflow is evidence only for the jobs and commit it actually checked. I
 - Bumped the smart-scheduler crate to 0.4.0 and the scheduler/dashboard crates to 0.11.0. `version.txt` remains 1.7.0 for the product source line.
 
 These capabilities are experimental and disabled by default. This history does not assert real-world forecast calibration or that all environment-specific release gates have passed.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

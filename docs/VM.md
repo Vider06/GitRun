@@ -104,3 +104,5 @@ A VM can provide a stronger boundary than a host Docker runner, but it is not au
 The PR #83 source-head checks passed the VM configuration/resolution test set before merge; those results are historical and do not replace live provisioning/recovery on target machines. Validate the selected hypervisor, guest Docker endpoint, TLS material, recovery behavior and supplied base images on the actual host.
 
 PR [#103](https://github.com/Vider06/GitRun/pull/103) addresses legacy host runtime recovery and canonical service units, not the VM guest lifecycle. The exact checks for the current source commit must be reviewed separately. See the [release history](RELEASE_HISTORY.md) for the historical verification and host-recovery boundaries.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

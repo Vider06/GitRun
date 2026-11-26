@@ -22,3 +22,5 @@ https://github.com/Vider06/GitRun
 This policy is intended to complement the Apache License 2.0 and does not restrict the copyright permissions granted by that license.
 
 *This document describes the project's brand policy and is not a substitute for jurisdiction-specific legal advice.*
+
+<!-- Documentation refresh marker: 2026-11-26 -->

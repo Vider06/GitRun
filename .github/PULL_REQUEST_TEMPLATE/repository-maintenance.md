@@ -20,3 +20,5 @@ List the focused checks or manual review performed.
 ## Follow-up
 
 List any repository settings that must be applied separately from this pull request.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

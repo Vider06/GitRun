@@ -30,3 +30,5 @@ For user-facing Dashboard, TUI and CLI changes, review [ACCESSIBILITY.md](ACCESS
 ## Predictive scheduling
 
 Kitty forecasting, queueing, Future Mapping and Think changes need bounded deterministic tests for missing or stale data, configured limits and resource-pressure fallback. Offline queue replay must not use future observations or job durations to influence earlier decisions. Preserve shadow-mode behavior and the exact-revision GSR authorization boundary, and update the scheduler guide and affected component documentation when behavior changes.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

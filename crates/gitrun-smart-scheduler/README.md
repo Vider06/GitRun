@@ -73,3 +73,5 @@ Settings:
 - `future_mapping_enabled`: `false` by default; requires Kitty, telemetry, predictive analytics, Predictive Warm Pool and Adaptive Resource Management.
 - `think_enabled`: `false` by default; requires Future Mapping.
 - `think_iterations`: integer from 2 to 5; defaults to 3.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

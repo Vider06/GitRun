@@ -38,3 +38,5 @@ Keep the description short and product-focused. Topics should identify GitRun's 
 - Prefer additive changes when current configuration has not been fully audited.
 - Separate repository settings that require privileged access from changes reviewable in a pull request.
 - Do not include credentials, tokens, private keys, or sensitive diagnostic data in issues or pull requests.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

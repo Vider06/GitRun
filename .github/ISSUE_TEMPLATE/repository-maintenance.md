@@ -27,3 +27,5 @@ Describe the smallest useful improvement.
 ## References
 
 Link relevant files, issues, or discussions.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

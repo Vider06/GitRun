@@ -12,3 +12,4 @@ The scheduler can create the configured GitRun-managed runner bridge when Docker
 
 The scheduler's Linux resource sampling supplies host-wide CPU data for resource-pressure decisions and the recent CPU-history view in the dashboard and Management TUI. The UI history is bounded to the latest 60 samples and is not per-job CPU accounting. It is currently process-local and resets when GitRun restarts. This history is distinct from Kitty's bounded training/forecast observations and does not enable Kitty's predictive capacity changes.
 
+<!-- Documentation refresh marker: 2026-11-26 -->

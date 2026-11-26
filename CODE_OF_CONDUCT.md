@@ -9,3 +9,5 @@ GitRun is intended to be a welcoming technical project. Participants are expecte
 - Respect project maintainers' decisions about moderation and security handling.
 
 Report serious or private concerns through the security contact described in [SECURITY.md](SECURITY.md). Project maintainers may remove comments, close discussions, or restrict participation when these standards are violated.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

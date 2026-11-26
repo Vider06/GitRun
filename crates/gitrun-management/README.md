@@ -42,3 +42,5 @@ Commands explicitly selected by an operator in the Management TUI or Dashboard r
 User-requested update, permanent-runner update, reinstall and uninstall actions are not submitted as `maintenance_task` jobs. This prevents an interface from reporting that a task was merely handed to systemd when the operator expects to watch it run.
 
 The Control Manager's `maintenance_task` mechanism remains available for work that is intentionally deferred or background-managed. It is not the default execution path for direct TUI/GUI actions. Recurring runner/container automation remains owned by the scheduler and its configured schedule.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

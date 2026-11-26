@@ -95,3 +95,5 @@ Windows VM-backed runners require Docker TLS credentials, and dynamic Windows ru
 Unexpected runner exits are security events: the container is quarantined and removed rather than restarted in place. GitDockRun resource operations also require an exact repository/run/job/requester binding.
 
 Release updates support signed manifests through Ed25519 and can require signature verification. Release artifacts include dependency metadata, SPDX SBOM, and provenance.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

@@ -86,3 +86,5 @@ Every map has a monotonic revision and a one-hour lifetime. A typed patch captur
 Think is an optional guard that compares 2–5 genuinely distinct history windows: 1 hour, 6 hours, 24 hours, 3.5 days and 7 days. Each window requires at least 75% sample coverage. The default uses the first three windows. Incomplete coverage or disagreement beyond a bounded tolerance withholds new predictive floor growth and workload prewarms. Think does not lower the configured minimum, override shadow mode or bypass GSR, resource-pressure controls or operator capacity limits.
 
 Both settings default to disabled and require explicit opt-in. Future Mapping requires Kitty, aggregate telemetry, predictive analytics, Predictive Warm Pool and Adaptive Resource Management. Think requires Future Mapping. Start with shadow-mode observations and review the exact source commit's CI and host-specific behavior; the forecasts are not calibrated service-level guarantees.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

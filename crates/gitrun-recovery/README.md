@@ -25,3 +25,5 @@ Doctor checks discovered JSON files individually and reports path-specific malfo
 For operator usage and CPU-history caveats, see the [CLI recovery guide](../gitrun-cli/README.md#json-integrity-and-recovery) and [dashboard guide](../gitrun-dashboard-tauri/README.md#host-cpu-history).
 
 See [consolidated release history](../../docs/RELEASE_HISTORY.md) for the current dashboard read path and [the consolidated release history](../../docs/RELEASE_HISTORY.md) for the earlier legacy runtime migration. The exact CI status is commit-specific, and repair should also be verified on the target host after deployment.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

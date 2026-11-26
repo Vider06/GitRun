@@ -106,3 +106,5 @@ Changes to user-facing interfaces should consider the following during developme
 - State which operating system, webview, terminal and assistive-technology combinations were actually tested. Do not imply broader coverage than was performed.
 
 Accessibility fixes should be scoped to the affected interaction and include regression coverage where practical.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

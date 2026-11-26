@@ -24,3 +24,5 @@ Do not report vulnerabilities in public issues. Use the private vulnerability-re
 - [Security model](docs/SECURITY_MODEL.md)
 - [Kitty Smart Scheduler](docs/SMART_SCHEDULER.md)
 - [CLI diagnostics and recovery](crates/gitrun-cli/README.md#json-integrity-and-recovery)
+
+<!-- Documentation refresh marker: 2026-11-26 -->

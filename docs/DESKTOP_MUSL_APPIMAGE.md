@@ -84,3 +84,5 @@ Do not move these artifacts into the official release matrix until all of the fo
 - release filenames, checksums, signatures and the signed updater manifest have an explicit musl-specific contract.
 
 Until then, official releases continue publishing the existing standalone musl Dashboard binaries and native APK/XBPS packages.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

@@ -47,3 +47,5 @@ The release workflow creates `library.zip` from the explicit JSON reference-sour
 - Run `python3 scripts/sync-markdown-version.py --check` to detect markers whose displayed values differ from the requested/current product version.
 - Run `python3 scripts/sync-markdown-version.py --check-structure` in general PR CI to validate paired markers and required coverage while allowing version synchronization to remain deferred.
 - The release workflow updates markers to the selected release version and runs strict `--check` before packaging. If `main/version.txt` still matches that release version, it creates or refreshes a dedicated automation branch from current `main` and opens (or updates) a docs-only pull request. It never pushes the documentation commit directly to `main`. If `main` targets a different product version, the workflow synchronizes only its release workspace and logs a warning. Historical release numbers outside the marked current-source references are intentionally preserved.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

@@ -29,3 +29,5 @@ redistribute zizmor. For the authoritative, current license text and copyright
 notice, refer to the upstream license:
 
 https://github.com/zizmorcore/zizmor/blob/main/LICENSE
+
+<!-- Documentation refresh marker: 2026-11-26 -->

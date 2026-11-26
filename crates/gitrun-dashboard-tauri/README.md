@@ -44,3 +44,5 @@ The product/source target for this branch is GitRun <!-- gitrun-version:start --
 ### Kitty Future Mapping and Think
 
 App Settings exposes opt-in controls, prerequisite validation and explicit confirmations for Future Mapping and Think. The Workflow Model view shows the map revision, actionability status, expiry, last patch metadata, twelve five-minute demand buckets and per-runner CPU/RAM envelopes, along with Think's window-agreement state. These are estimates and ceilings, not evidence that capacity was created. The scheduler's GSR audit, hard bounds, resource-pressure checks and actual container state remain authoritative.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

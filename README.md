@@ -276,3 +276,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md) and [SUPPORT.
 ## License
 
 GitRun is distributed under the [Apache License 2.0](LICENSE).
+
+<!-- Documentation refresh marker: 2026-11-26 -->

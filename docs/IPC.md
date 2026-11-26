@@ -86,3 +86,5 @@ The PR #83 source HEAD [`5afbe14`](https://github.com/Vider06/GitRun/commit/5afb
 PR [#103](https://github.com/Vider06/GitRun/pull/103) repairs legacy runtime ownership and canonical systemd unit installation; PR [#109](https://github.com/Vider06/GitRun/pull/109) adds a narrowly scoped privileged read for dashboard security settings and does not change this socket protocol. The workflow socket and GSR/executor protocol remain the separate boundaries described here. Check current commit status and use the [release history](RELEASE_HISTORY.md) for recovery and deployment requirements.
 
 The IPC server and its request allowlist are implemented in `gitrun-management`, not in the dashboard crate. The CLI, dashboard adapter and systemd Control Manager share the same typed management dispatcher. The `gitrun-management` default build has no Tauri feature; only the desktop adapter enables Tauri integration.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

@@ -251,3 +251,5 @@ them, and the signing job depends on the formal-verification and package
 certification job. Signing therefore cannot proceed when that gate fails.
 The formal source gate remains strict in both workflows; it is not bypassed
 for Release.
+
+<!-- Documentation refresh marker: 2026-11-26 -->

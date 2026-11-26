@@ -30,7 +30,7 @@ def main() -> int:
             (
                 index
                 for index, line in enumerate(lines)
-                if re.match(r"^\\s*(?:pub\\s+)?fn\\s+main\\s*\\(\\s*\\)\\s*(?:->\\s*[^{}]+)?\\s*\\{?\\s*$", line)
+                if re.match(r"^\s*(?:pub\s+)?fn\s+main\s*\(\s*\)\s*(?:->\s*[^{}]+)?\s*\{?\s*$", line)
             ),
             None,
         )

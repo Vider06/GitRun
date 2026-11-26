@@ -53,6 +53,7 @@ fn main() {
 
 #[cfg(not(any(kani, verus)))]
 fn load_config() -> Result<Config, gitrun_core::ConfigError> {
+    // An explicit config file takes precedence; otherwise use the process environment.
     match std::env::var("GITRUN_CONFIG_FILE") {
         Ok(path) => Config::from_env_file(path),
         Err(_) => Config::from_env(),

@@ -486,16 +486,7 @@ jobs:
       - *checkout
       - *boot
       - name: Test tracked-file cache fingerprints
-        shell: bash
-        run: |
-          set -euo pipefail
-          first="$(bash scripts/ci/hash-tracked-files.sh Cargo.lock Cargo.toml '**/Cargo.toml')"
-          second="$(bash scripts/ci/hash-tracked-files.sh Cargo.lock Cargo.toml '**/Cargo.toml')"
-          empty="$(bash scripts/ci/hash-tracked-files.sh '.gitrun-ci-nonexistent-fixture/**')"
-          [[ "$first" =~ ^[0-9a-f]{64}$ ]]
-          [[ "$first" == "$second" ]]
-          [[ -z "$empty" ]]
-          echo "tracked-file cache fingerprint is stable and handles unmatched patterns"
+        run: python3 scripts/ci/selftest-hash-tracked-files.py
       - name: Test log parsers and helpers
         run: bash scripts/ci/selftest.sh
       - *report
@@ -539,136 +530,7 @@ jobs:
           MAX_FILE_MB: "5"
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"
-
-          hy_secrets() {
-            local f bad=0
-            while IFS= read -r f; do
-              ci_annot error "$f" 1 "" "tracked secret/key file" "looks like a credential or key file: remove it from git and rotate the secret"; bad=1
-            done < <(git ls-files | grep -E '(^|/)\.env(\.[^/]+)?$|\.(pem|key|p12|pfx|jks|keystore)$|(^|/)id_(rsa|dsa|ecdsa|ed25519)$' \
-              | grep -vE '\.(example|sample|template|dist)$|(^|/)config/config\.example\.env$|\.example\.env$' || true)
-            return "$bad"
-          }
-          hy_conflicts() {
-            local f l bad=0
-            while IFS=: read -r f l _; do
-              ci_annot error "$f" "$l" "" "merge conflict marker" "unresolved merge conflict marker"; bad=1
-            done < <(git grep -nIE '^(<<<<<<<|>>>>>>>) ' -- . ':!*.md' || true)
-            return "$bad"
-          }
-          hy_crlf() {
-            local f bad=0
-            while IFS= read -r f; do
-              ci_annot error "$f" 1 "" "CRLF line endings" "file is committed with CRLF line endings: this breaks bash/Docker/YAML tooling on Linux (convert to LF)"; bad=1
-            done < <(git ls-files --eol | awk -F'\t' '$1 ~ /^i\/crlf/ {print $2}' | grep -E '\.(sh|ya?ml|env)$|(^|/)Dockerfile[^/]*$|(^|/)Makefile$' || true)
-            return "$bad"
-          }
-          hy_case() {
-            local n bad=0
-            while IFS= read -r n; do
-              ci_annot error "" "" "" "case-insensitive name collision" "two tracked paths differ only by case (breaks macOS/Windows checkouts): $n"; bad=1
-            done < <(git ls-files | tr '[:upper:]' '[:lower:]' | sort | uniq -d)
-            return "$bad"
-          }
-          hy_large() {
-            local size f bad=0 max=$((MAX_FILE_MB * 1048576))
-            while read -r size f; do
-              ci_annot warning "$f" 1 "" "large file" "$((size / 1048576)).$(((size % 1048576) * 10 / 1048576)) MB tracked in git (limit ${MAX_FILE_MB} MB): consider Git LFS or a release asset"; bad=1
-            done < <(git ls-files -z | xargs -0 -r stat -c '%s %n' 2>/dev/null | awk -v m="$max" '$1 > m' | grep -vE '(Cargo|package-lock)\.(lock|json)$' || true)
-            return "$bad"
-          }
-          hy_exec() {
-            local mode f bad=0
-            while read -r mode _ _ f; do
-              if [ "$mode" != 100755 ]; then ci_annot warning "$f" 1 "" "script not executable" "shell script is not executable in git (git update-index --chmod=+x)"; bad=1; fi
-              if [ "$(head -c 2 "$f" 2>/dev/null)" != '#!' ]; then ci_annot warning "$f" 1 "" "missing shebang" "shell script has no #! line"; bad=1; fi
-            done < <(git ls-files -s -- '*.sh')
-            return "$bad"
-          }
-          hy_whitespace() {
-            case "$EVENT" in
-              pull_request) git diff --check HEAD^1 HEAD -- . ':!*.md' 2>&1 | ci_awk_diffcheck warning ;;
-              push) if git rev-parse -q --verify HEAD^ >/dev/null; then git diff --check HEAD^ HEAD -- . ':!*.md' 2>&1 | ci_awk_diffcheck warning; fi ;;
-              *) echo "whitespace check skipped for $EVENT events" ;;
-            esac
-          }
-          hy_json() {
-            local f out bad=0 l
-            while IFS= read -r f; do
-              if ! out="$(jq empty "$f" 2>&1)"; then
-                l="$(grep -oE 'line [0-9]+' <<<"$out" | head -n 1 | cut -d' ' -f2 || true)"
-                ci_annot error "$f" "${l:-1}" "" "JSON syntax" "${out%%$'\n'*}"; bad=1
-              fi
-            done < <(git ls-files '*.json' | grep -vE '(^|/)(tsconfig|jsconfig)[^/]*\.json$|(^|/)\.vscode/|devcontainer\.json$' || true)
-            return "$bad"
-          }
-          hy_yaml() {
-            git ls-files -z '*.yml' '*.yaml' | python3 -c '
-          import os, sys, yaml
-          bad = 0
-          log = open(os.environ["CI_ANNOT"], "a")
-          for p in sys.stdin.buffer.read().decode().split("\0"):
-              if not p:
-                  continue
-              try:
-                  list(yaml.safe_load_all(open(p, encoding="utf-8")))
-              except yaml.YAMLError as e:
-                  m = getattr(e, "problem_mark", None)
-                  line = (m.line + 1) if m else 1
-                  col = (m.column + 1) if m else 1
-                  msg = (getattr(e, "problem", None) or str(e)).replace("\n", " ").replace("%", "%25")
-                  print(f"::error file={p},line={line},col={col},title=YAML syntax::{msg}")
-                  log.write(f"• {p}:{line} [YAML syntax] {msg}\n")
-                  bad = 1
-          sys.exit(bad)
-          '
-          }
-          hy_toml() {
-            if ! python3 -c 'import tomllib' 2>/dev/null; then echo "python3 < 3.11: TOML validation skipped"; return 0; fi
-            git ls-files -z '*.toml' | python3 -c '
-          import os, re, sys, tomllib
-          bad = 0
-          log = open(os.environ["CI_ANNOT"], "a")
-          for p in sys.stdin.buffer.read().decode().split("\0"):
-              if not p:
-                  continue
-              try:
-                  tomllib.loads(open(p, encoding="utf-8").read())
-              except tomllib.TOMLDecodeError as e:
-                  msg = str(e).replace("\n", " ").replace("%", "%25")
-                  m = re.search(r"line (\d+)", msg)
-                  line = m.group(1) if m else "1"
-                  print(f"::error file={p},line={line},title=TOML syntax::{msg}")
-                  log.write(f"• {p}:{line} [TOML syntax] {msg}\n")
-                  bad = 1
-          sys.exit(bad)
-          '
-          }
-          hy_links() {
-            local md dir link target bad=0
-            while IFS= read -r md; do
-              dir="$(dirname "$md")"
-              while IFS= read -r link; do
-                target="${link%%#*}"; target="${target%%\?*}"
-                [ -n "$target" ] || continue
-                case "$target" in http*|mailto:*|tel:*|/*) continue ;; esac
-                if [ ! -e "$dir/$target" ]; then ci_annot warning "$md" 1 "" "broken link" "relative link target not found: $link"; bad=1; fi
-              done < <(grep -oE '\]\([^)[:space:]]+\)' "$md" | sed -E 's/^\]\(//; s/\)$//' || true)
-            done < <(git ls-files '*.md')
-            return "$bad"
-          }
-
-          ci_gate error "no tracked secrets / key files" hy_secrets
-          ci_gate error "no merge conflict markers" hy_conflicts
-          ci_gate error "no CRLF in scripts, YAML and Dockerfiles" hy_crlf
-          ci_gate error "no case-insensitive name collisions" hy_case
-          ci_gate error "JSON files parse" hy_json
-          ci_gate error "YAML files parse" hy_yaml
-          ci_gate error "TOML files parse" hy_toml
-          ci_gate warn "no whitespace errors in the change" hy_whitespace
-          ci_gate warn "no oversized files" hy_large
-          ci_gate warn "shell scripts: executable bit and shebang" hy_exec
-          ci_gate warn "relative Markdown links resolve" hy_links
-          ci_checks_finish "Repository hygiene and syntax"
+          ci_run "Repository hygiene and syntax" python3 scripts/ci/check-repository-hygiene.py
       - *report
       - *job_result
       - *logs
@@ -681,23 +543,47 @@ jobs:
     runs-on: *runner
     timeout-minutes: 60
     permissions:
+      actions: read
       contents: read
+      security-events: write
     outputs: *job_outputs
     steps:
       - *checkout
       - *boot
       - name: Secret pattern scan
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          pat='(gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----|xox[baprs]-[A-Za-z0-9-]{10,}|sk_live_[0-9a-zA-Z]{24,})'
-          scan() {
-            local f l bad=0
-            while IFS=: read -r f l _; do
-              ci_annot error "$f" "$l" "" "possible credential" "credential-like string committed (value hidden): revoke it and purge it from history"; bad=1
-            done < <(git grep -nIE "$pat" -- . ':!docs/ROADMAP_PHASES.md' ':!SECURITY.md' || true)
-            return "$bad"
-          }
-          ci_run "secret pattern scan" scan
+        id: secret_scan
+        run: >-
+          python3 scripts/ci/check-secret-patterns.py
+          --sarif-file "$GITHUB_WORKSPACE/gitrun-secret-patterns.sarif"
+          --defer-failure
+
+      # The upload action resolves the analyzed commit from checkout_path.
+      # Check out the PR head separately so the SARIF commit and source lines
+      # belong to the branch, rather than the synthetic pull/<number>/merge checkout.
+      - name: Checkout pull request head for SARIF
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: .sarif-source
+          persist-credentials: false
+
+      - name: Publish secret pattern findings to Code Scanning
+        if: ${{ always() && !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934 # v4
+        with:
+          sarif_file: gitrun-secret-patterns.sarif
+          category: gitrun-secret-patterns
+          checkout_path: ${{ github.event_name == 'pull_request' && format('{0}/.sarif-source', github.workspace) || github.workspace }}
+          ref: ${{ github.event_name == 'pull_request' && format('refs/heads/{0}', github.event.pull_request.head.ref) || github.ref }}
+          sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Enforce secret pattern findings
+        if: ${{ always() && !cancelled() }}
+        run: >-
+          python3 scripts/ci/check-secret-patterns.py
+          --sarif-file "$GITHUB_WORKSPACE/gitrun-secret-patterns.sarif"
+          --fail-on-findings
 
       - name: actionlint (syntax, expressions, shell in run blocks)
         run: |
@@ -897,27 +783,7 @@ jobs:
             fi
 
             if [ "$dir" = . ]; then base=""; else base="$dir/"; fi
-            check_js() {
-              local files=()
-              while IFS= read -r -d '' file; do
-                case "$file" in
-                  *.min.js) continue ;;
-                  *) files+=( "$file" ) ;;
-                esac
-              done < <(git ls-files -z -- "${base}*.js" "${base}*.mjs" "${base}*.cjs")
-              if [ "${#files[@]}" -eq 0 ]; then
-                ci_warn "$lbl: no tracked JavaScript files found"
-                return 0
-              fi
-              local file rc=0
-              for file in "${files[@]}"; do
-                if ! node --check "$file" 2>&1 | ci_awk_node; then
-                  rc=1
-                fi
-              done
-              return "$rc"
-            }
-            ci_run "$lbl node --check (tracked JS)" check_js || bad=1
+            ci_run "$lbl node --check (tracked JS)" python3 scripts/ci/check-tracked-javascript.py "$base" "$lbl" || bad=1
 
             if pkg_has_script test; then step "npm test" npm test; fi
             if pkg_has_script build; then step "npm run build" npm run build; fi
@@ -1305,18 +1171,7 @@ jobs:
           ci_run "Vault security tests" cargo test --locked -p gitrun-vault || rc=1
           exit "$rc"
       - name: Verify security-sensitive workflow invariants
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          verify_security_invariants() {
-            grep -q 'id-token: write' .github/workflows/release.yml && return 1
-            grep -q 'aws-actions/configure-aws-credentials@' .github/workflows/release.yml && return 1
-            grep -q 'ED25519_SHA_512' .github/workflows/release.yml && return 1
-            grep -q 'GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64' .github/workflows/release.yml || return 1
-            grep -q 'GITRUN_UPDATE_SIGNING_KEY_ID' .github/workflows/release.yml || return 1
-            grep -q 'GITRUN_UPDATE_SIGNATURE_REQUIRED' crates/gitrun-updater/src/lib.rs || return 1
-            grep -q 'GITRUN_RUNNER_NETWORK' config/config.example.env || return 1
-          }
-          ci_run "Security-sensitive workflow invariants" verify_security_invariants
+        run: python3 scripts/ci/check-security-invariants.py
       - *rust_prune
       - *s_tc
       - *s_reg
@@ -1399,41 +1254,7 @@ jobs:
           ci_run "Manage routes reads and writes through Control Manager IPC" cargo test --locked -p gitrun-cli control_manager_routing_tests -- --nocapture || rc=1
           ci_run "CLI doctor reads protected configuration through Control Manager IPC" cargo test --locked -p gitrun-cli control_manager_cli_routing_tests -- --nocapture || rc=1
 
-          validate_systemd_units() {
-            command -v systemd-analyze >/dev/null 2>&1 || {
-              echo "systemd-analyze is required to validate the service units" >&2
-              return 1
-            }
-            # Build the executable explicitly: the preceding package tests do not
-            # guarantee that Cargo has produced target/debug/gitrun.
-            cargo build --locked -p gitrun-cli --bin gitrun || return 1
-            sudo install -Dm0755 target/debug/gitrun /usr/local/bin/gitrun || return 1
-            sudo install -Dm0600 config/config.example.env /etc/gitrun/gitrun.env || return 1
-            sudo install -Dm0644 systemd/gitrun.service /etc/systemd/system/gitrun.service || return 1
-            sudo install -Dm0644 systemd/gitrun-gsr.service /etc/systemd/system/gitrun-gsr.service || return 1
-            sudo install -Dm0644 systemd/gitrun-control.service /etc/systemd/system/gitrun-control.service || return 1
-            getent group gitrun-control >/dev/null 2>&1 || sudo groupadd --system gitrun-control || return 1
-            sudo systemd-analyze verify gitrun.service gitrun-gsr.service gitrun-control.service || return 1
-
-            # Catch regressions in reboot enablement and restart-on-crash policy.
-            grep -Fq 'WantedBy=multi-user.target' systemd/gitrun.service || return 1
-            grep -Fq 'WantedBy=multi-user.target' systemd/gitrun-gsr.service || return 1
-            grep -Fq 'WantedBy=multi-user.target' systemd/gitrun-control.service || return 1
-            grep -Fq 'Restart=on-failure' systemd/gitrun.service || return 1
-            grep -Fq 'Restart=on-failure' systemd/gitrun-gsr.service || return 1
-            grep -Fq 'Restart=on-failure' systemd/gitrun-control.service || return 1
-            grep -Fq 'ExecStart=/usr/local/bin/gitrun scheduler' systemd/gitrun.service || return 1
-            grep -Fq 'ExecStart=/usr/local/bin/gitrun gsr-watchdog' systemd/gitrun-gsr.service || return 1
-            grep -Fq 'ExecStart=/usr/local/bin/gitrun control-manager' systemd/gitrun-control.service || return 1
-            grep -Fq 'ServiceManager::Systemd' crates/gitrun-setup/src/lib.rs || return 1
-            grep -Fq 'systemctl' crates/gitrun-setup/src/lib.rs || return 1
-            grep -Fq 'gitrun.service' crates/gitrun-setup/src/lib.rs || return 1
-            grep -Fq 'gitrun-gsr.service' crates/gitrun-setup/src/lib.rs || return 1
-            grep -Fq 'gitrun-control.service' crates/gitrun-setup/src/lib.rs || return 1
-            grep -Fq 'gitrun-gsr.service' crates/gitrun-setup/src/lib.rs || return 1
-            grep -Fq 'gsr-watchdog' crates/gitrun-cli/src/main.rs || return 1
-          }
-          ci_run "Validate systemd unit syntax and service command alignment" validate_systemd_units || rc=1
+          ci_run "Validate systemd unit syntax and service command alignment" python3 scripts/ci/check-systemd-units.py || rc=1
           exit "$rc"
       - name: Verify live GitDockRun mount namespace behavior
         run: |
@@ -1479,55 +1300,7 @@ jobs:
       - *checkout
       - *boot
       - name: Verify scheduler, watchdog and Control Manager units with systemd-analyze
-        run: |
-          set -euo pipefail
-          source "$RUNNER_TEMP/ci-lib.sh"
-          if ! command -v systemd-analyze >/dev/null 2>&1; then
-            ci_err "systemd-analyze is required; refusing to skip systemd unit validation"
-            exit 1
-          fi
-
-          unit_dir="$RUNNER_TEMP/gitrun-ci/systemd-units"
-          runtime_dir="$RUNNER_TEMP/gitrun-ci/systemd-runtime"
-          mkdir -p "$unit_dir" "$runtime_dir"
-
-          # Verify copies of the real units in isolation. A harmless executable
-          # shim and a CI-only docker.service satisfy external references without
-          # touching /usr/local/bin or replacing a service on a persistent runner.
-          stub="$runtime_dir/gitrun"
-          printf '#!/bin/sh\nexit 0\n' > "$stub"
-          chmod 0755 "$stub"
-          sed "s#/usr/local/bin/gitrun#$stub#g" systemd/gitrun.service > "$unit_dir/gitrun.service"
-          sed "s#/usr/local/bin/gitrun#$stub#g" systemd/gitrun-gsr.service > "$unit_dir/gitrun-gsr.service"
-          sed "s#/usr/local/bin/gitrun#$stub#g" systemd/gitrun-control.service > "$unit_dir/gitrun-control.service"
-          getent group gitrun-control >/dev/null 2>&1 || sudo groupadd --system gitrun-control
-          cat > "$unit_dir/docker.service" <<'SYSTEMD_STUB'
-          [Unit]
-          Description=GitRun CI-only Docker dependency stub
-          [Service]
-          Type=oneshot
-          ExecStart=/usr/bin/true
-          RemainAfterExit=yes
-          SYSTEMD_STUB
-
-          rc=0
-          ci_run "systemd-analyze verifies scheduler, watchdog and dependencies" \
-            env TERM=dumb SYSTEMD_COLORS=0 SYSTEMD_PAGER=cat \
-            SYSTEMD_UNIT_PATH="$unit_dir:/etc/systemd/system:/usr/lib/systemd/system:/lib/systemd/system" \
-            systemd-analyze --man=no --recursive-errors=yes verify \
-              "$unit_dir/gitrun.service" "$unit_dir/gitrun-gsr.service" "$unit_dir/gitrun-control.service" "$unit_dir/docker.service" || rc=1
-
-          # Verify boot/restart contracts as well as parser acceptance.
-          grep -Fq 'WantedBy=multi-user.target' systemd/gitrun.service || { ci_err "scheduler unit is not enabled for multi-user boot"; rc=1; }
-          grep -Fq 'WantedBy=multi-user.target' systemd/gitrun-gsr.service || { ci_err "GSR unit is not enabled for multi-user boot"; rc=1; }
-          grep -Fq 'WantedBy=multi-user.target' systemd/gitrun-control.service || { ci_err "Control Manager unit is not enabled for multi-user boot"; rc=1; }
-          grep -Fq 'Restart=on-failure' systemd/gitrun.service || { ci_err "scheduler restart policy missing"; rc=1; }
-          grep -Fq 'Restart=on-failure' systemd/gitrun-gsr.service || { ci_err "GSR restart policy missing"; rc=1; }
-          grep -Fq 'Restart=on-failure' systemd/gitrun-control.service || { ci_err "Control Manager restart policy missing"; rc=1; }
-          grep -Fq 'ExecStart=/usr/local/bin/gitrun scheduler' systemd/gitrun.service || { ci_err "scheduler ExecStart contract changed"; rc=1; }
-          grep -Fq 'ExecStart=/usr/local/bin/gitrun gsr-watchdog' systemd/gitrun-gsr.service || { ci_err "GSR ExecStart contract changed"; rc=1; }
-          grep -Fq 'ExecStart=/usr/local/bin/gitrun control-manager' systemd/gitrun-control.service || { ci_err "Control Manager ExecStart contract changed"; rc=1; }
-          exit "$rc"
+        run: python3 scripts/ci/check-systemd-unit-isolated.py
       - *report
       - *job_result
       - *logs
@@ -1808,9 +1581,8 @@ jobs:
             aarch64-unknown-linux-musl) arch=arm64; formats="apk"; xbps_arch=aarch64-musl; xbps_dep=musl; base_dep=musl; cpu=aarch64-musl ;;
             *) echo "Unsupported package target: $TARGET" >&2; exit 1 ;;
           esac
-          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm zstd
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_apt rpm zstd
           command -v go >/dev/null
           GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
           export PATH="$RUNNER_TEMP/bin:$PATH"
@@ -2057,9 +1829,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dpkg-dev imagemagick
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_apt dpkg-dev imagemagick
           test "$VERSION" = v1.9.1
           binary="$GITHUB_WORKSPACE/canonical/gitrun-x86_64-unknown-linux-gnu"
           test -x "$binary"
@@ -2211,9 +1982,8 @@ jobs:
       - name: Install package inspection tools
         run: |
           set -euo pipefail
-          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm zstd
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_apt rpm zstd
       - name: Set up pinned Go toolchain for nFPM
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
@@ -2625,9 +2395,8 @@ jobs:
       - name: Install metadata tools
         run: |
           set -euo pipefail
-          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq zip
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_apt jq zip
       - name: Synchronize and validate release version metadata
         shell: bash
         run: |
@@ -2748,9 +2517,8 @@ jobs:
       - name: Install release asset inspection tools
         run: |
           set -euo pipefail
-          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq zstd unzip rpm file
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_apt jq zstd unzip rpm file
       - name: Assemble canonical Release asset set
         shell: bash
         run: |
@@ -2846,27 +2614,7 @@ jobs:
           source "$RUNNER_TEMP/ci-lib.sh"
           rc=0
           ci_run "Linux ABI, distro, package manager and init-system detection" cargo test --locked -p gitrun-platform || rc=1
-          check_android_entrypoint_guards() {
-            local file
-            local entrypoints=(
-              crates/gitrun-cli/src/main.rs
-              crates/gitrun-scheduler/src/main.rs
-              crates/gitrun-gsr/src/main.rs
-              crates/gitrun-gsr/src/bin/gitrun-api.rs
-              crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs
-              crates/gitrun-recovery/src/main.rs
-              crates/gitrun-dashboard-tauri/src-tauri/src/main.rs
-            )
-            for file in "${entrypoints[@]}"; do
-              test -f "$file" || { ci_err "missing executable entry point: $file"; return 1; }
-              awk '
-                /^fn main\(\)/ { main_line = NR; in_main = 1; next }
-                in_main && /ensure_supported_runtime\(\)/ { guard_line = NR; exit }
-                END { if (!main_line || !guard_line || guard_line - main_line > 6) exit 1 }
-              ' "$file" || { ci_err "Android runtime guard missing or too late in $file"; return 1; }
-            done
-          }
-          ci_run "Android guard coverage at every executable entry point" check_android_entrypoint_guards || rc=1
+          ci_run "Android guard coverage at every executable entry point" python3 scripts/ci/check-android-entrypoint-guards.py || rc=1
           ci_run "Minimal runner bootstrap carries the platform crate" cargo test --locked -p gitrun-setup bootstrap_lock_matches_the_minimal_workspace || rc=1
           ci_run "Minimal runner Dockerfile includes all bootstrap crates" cargo test --locked -p gitrun-setup bootstrap_dockerfile_uses_minimal_gsr_build_context_and_original_bash || rc=1
           ci_run "Headless management backend compiles without desktop features" cargo test --locked -p gitrun-management || rc=1
@@ -2926,7 +2674,7 @@ jobs:
           ci_run "Test platform detection contracts" cargo test --locked -p gitrun-platform || rc=1
           ci_run "Test native recovery service-manager routing" cargo test --locked -p gitrun-recovery main_library_restore_routes_by_the_active_service_manager || rc=1
           ci_run "Probe Tauri dependencies on Debian, Fedora, Arch and Alpine" python3 scripts/ci/check-dashboard-distro-dependencies.py || rc=1
-          ci_run "Audit repository-wide multi-distro boundaries" python3 scripts/check-multidistro-contracts.py || rc=1
+          ci_run "Audit repository-wide multi-distro boundaries" python3 scripts/ci/check-multidistro-contracts.py || rc=1
           exit "$rc"
       - *report
       - *job_result
@@ -3194,21 +2942,7 @@ jobs:
           rc=0
           ci_run "cargo test" test_run || rc=1
           ci_run "Shared management backend tests (headless)" cargo test --locked -p gitrun-management --no-default-features --all-targets || rc=1
-          cli_graph_check() {
-            graph="$(cargo tree --locked -e normal -p gitrun-cli)"
-            if grep -q "gitrun-dashboard-tauri" <<<"$graph"; then
-              echo "gitrun-cli must not depend on the dashboard package" >&2
-              return 1
-            fi
-            if grep -qE "(^|[[:space:]])tauri v" <<<"$graph"; then
-              echo "gitrun-cli must not link the Tauri runtime" >&2
-              return 1
-            fi
-            test -f crates/gitrun-management/src/backend.rs
-            test -f crates/gitrun-management/src/control_manager.rs
-            test ! -e crates/gitrun-dashboard-tauri/src-tauri/src/control_manager.rs
-          }
-          ci_run "CLI and Control Manager are dashboard-independent" cli_graph_check
+          ci_run "CLI and Control Manager are dashboard-independent" python3 scripts/ci/check-cli-boundaries.py
           if [ -s "$CI_DIR/test-totals.txt" ]; then
             read -r totals < "$CI_DIR/test-totals.txt"
             { echo "### 🧪 Tests"; echo; echo "\`$totals\`"; echo; } | ci_sum
@@ -3257,15 +2991,7 @@ jobs:
             cargo check --locked --workspace --exclude gitrun-dashboard-tauri --all-targets
           }
           ci_run "Compile every workspace crate and target without the Dashboard GUI" headless_workspace_check
-          headless_graph_check() {
-            local graph
-            graph="$(cargo tree --locked --workspace --exclude gitrun-dashboard-tauri -e normal)"
-            if grep -Eiq '(^|[[:space:]])(tauri|webkit2gtk) v' <<<"$graph"; then
-              echo "The headless workspace dependency graph unexpectedly includes Tauri or WebKitGTK" >&2
-              return 1
-            fi
-          }
-          ci_run "Headless workspace dependency graph excludes Tauri and WebKitGTK" headless_graph_check
+          ci_run "Headless workspace dependency graph excludes Tauri and WebKitGTK" python3 scripts/ci/check-headless-dependencies.py
       - name: Upload cargo build timings
         if: always() && env.CI_UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -3508,10 +3234,8 @@ jobs:
       - name: Install Tauri Linux dependencies
         run: |
           set -euo pipefail
-          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev \
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_apt build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev \
             librsvg2-dev patchelf xdg-utils libwebkit2gtk-4.1-dev imagemagick
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
@@ -3765,80 +3489,7 @@ jobs:
           dockerfile: docker/runner/Dockerfile
           skip-extraction: ${{ steps.c_dmounts_write.outputs.cache-hit == 'true' || steps.c_dmounts_readonly.outputs.cache-hit == 'true' }}
       - name: Verify installer-pinned Premade runner Dockerfile
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          premade_ref="$(sed -n 's/^pub const CANONICAL_PREMADE_RUNNER_REF: &str = "\([0-9a-f]\{40\}\)";.*/\1/p' crates/gitrun-updater/src/lib.rs)"
-          premade_path="$(sed -n 's/^pub const CANONICAL_PREMADE_RUNNER_PATH: &str = "\([^"]*\)";.*/\1/p' crates/gitrun-updater/src/lib.rs)"
-          test -n "$premade_ref"
-          test -n "$premade_path"
-          premade="$RUNNER_TEMP/premade-runner.Dockerfile"
-          adapted="$RUNNER_TEMP/premade-runner-adapted.Dockerfile"
-          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-            "https://raw.githubusercontent.com/Vider06/GitRun/$premade_ref/$premade_path" \
-            -o "$premade"
-          grep -Fq 'COPY Cargo.toml Cargo.lock ./' "$premade"
-          grep -Fq 'COPY crates ./crates' "$premade"
-          grep -Fq 'ENTRYPOINT ["/entrypoint.sh"]' "$premade"
-          sed '/^COPY Cargo.toml Cargo.lock \.\/$/ { N; s|COPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates|COPY Cargo.toml Cargo.lock ./\nCOPY crates/gitrun-core ./crates/gitrun-core\nCOPY crates/gitrun-exe ./crates/gitrun-exe\nCOPY crates/gitrun-gsr ./crates/gitrun-gsr\nCOPY crates/gitrun-platform ./crates/gitrun-platform|; }' "$premade" > "$adapted"
-          if grep -Fq 'COPY crates ./crates' "$adapted"; then
-            echo "ERROR: adapted Dockerfile still copies the full crates workspace" >&2
-            exit 1
-          fi
-          grep -Fq 'COPY crates/gitrun-core ./crates/gitrun-core' "$adapted"
-          grep -Fq 'COPY crates/gitrun-exe ./crates/gitrun-exe' "$adapted"
-          grep -Fq 'COPY crates/gitrun-gsr ./crates/gitrun-gsr' "$adapted"
-          grep -Fq 'COPY crates/gitrun-platform ./crates/gitrun-platform' "$adapted"
-          echo "Linting immutable installer-pinned Dockerfile: $premade_path@$premade_ref"
-          # This upstream Dockerfile intentionally keeps root as the entrypoint
-          # bootstrap user and follows Debian's pinned-bookworm security stream.
-          # Keep Hadolint errors fatal; advisory warnings must not block the
-          # functional build validation that follows.
-          hadolint --no-color --failure-threshold error "$premade"
-          echo "Linting setup-adapted installer Dockerfile"
-          hadolint --no-color --failure-threshold error "$adapted"
-          context="$RUNNER_TEMP/premade-runner-context"
-          rm -rf "$context"
-          mkdir -p "$context/docker/runner"
-          while IFS= read -r target; do
-            case "$target" in
-              Cargo.toml)
-                printf '%s\n' '[workspace]' 'resolver = "2"' 'members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr", "crates/gitrun-platform"]' > "$context/Cargo.toml"
-                ;;
-              Cargo.lock)
-                cp crates/gitrun-setup/src/runner-bootstrap.lock "$context/Cargo.lock"
-                ;;
-              *)
-                mkdir -p "$context/$(dirname "$target")"
-                cp "$target" "$context/$target"
-                ;;
-            esac
-          done < <(awk '/RUNNER_BUILD_FILES:/ { inside=1; next } inside && index($0, "];") == 1 { exit } inside && match($0, /"[^"]+"/) { path=substr($0, RSTART + 1, RLENGTH - 2); if (path == "Cargo.toml" || path == "Cargo.lock" || path ~ /^crates\//) print path }' crates/gitrun-setup/src/resources.rs)
-          cp docker/runner/entrypoint.sh "$context/docker/runner/entrypoint.sh"
-          cp "$adapted" "$context/Dockerfile"
-          for required in \
-            Cargo.toml \
-            Cargo.lock \
-            crates/gitrun-core/Cargo.toml \
-            crates/gitrun-exe/src/lib.rs \
-            crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs \
-            crates/gitrun-gsr/src/bin/gitrun-api.rs \
-            crates/gitrun-platform/Cargo.toml \
-            crates/gitrun-platform/src/lib.rs \
-            docker/runner/entrypoint.sh
-          do
-            if [ ! -s "$context/$required" ]; then
-              echo "ERROR: installer runner build context is missing $required" >&2
-              exit 1
-            fi
-          done
-          {
-            echo "### Installer Dockerfile source"
-            echo
-            echo "- Fetched the exact immutable Premade Dockerfile pinned by gitrun-updater."
-            echo "- Applied the same workspace-copy adaptation as gitrun-setup."
-            echo "- Prepared the minimal four-crate workspace and pinned bootstrap lockfile for the actual image build below."
-            echo
-          } | ci_sum
+        run: python3 scripts/ci/prepare-premade-runner-context.py
       - name: Validate Compose and lint Dockerfiles
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"

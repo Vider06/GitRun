@@ -570,7 +570,7 @@ jobs:
 
       - name: Publish secret pattern findings to Code Scanning
         if: ${{ always() && !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-        uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934 # v4
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         with:
           sarif_file: gitrun-secret-patterns.sarif
           category: gitrun-secret-patterns
@@ -1490,7 +1490,7 @@ jobs:
             echo "VERSION=$VERSION"
           } >> "$GITHUB_ENV"
       - name: Download target executable built by CI
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: server-build-${{ matrix.target }}
           path: canonical
@@ -1507,7 +1507,7 @@ jobs:
           python3 scripts/sync-markdown-version.py --version "$VERSION_NUMBER"
           python3 scripts/sync-markdown-version.py --check --version "$VERSION_NUMBER"
       - name: Set up pinned Go toolchain for nFPM
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
         with:
           go-version: "1.26.10"
           check-latest: false
@@ -1811,7 +1811,7 @@ jobs:
           fi
       - name: Download new Server binary
         if: steps.migration.outputs.enabled == 'true'
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: server-build-x86_64-unknown-linux-gnu
           path: canonical
@@ -1946,13 +1946,13 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Download x86_64 Dashboard build
         if: matrix.arch == 'x86_64'
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: gitrun-tauri-bundles
           path: dashboard-input
       - name: Download ARM64 Dashboard build
         if: matrix.arch == 'aarch64'
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: gitrun-dashboard-arm64-ci
           path: dashboard-input
@@ -1985,7 +1985,7 @@ jobs:
           source "$RUNNER_TEMP/ci-lib.sh"
           ci_apt rpm zstd
       - name: Set up pinned Go toolchain for nFPM
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
         with:
           go-version: "1.26.10"
           check-latest: false
@@ -2276,13 +2276,13 @@ jobs:
             echo "VERSION=$VERSION"
           } >> "$GITHUB_ENV"
       - name: Download musl Dashboard executable
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: ci-dashboard-musl-build-${{ matrix.target }}
           path: canonical
       - name: Set up pinned Go toolchain for nFPM (musl)
         if: matrix.kind == 'musl'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
         with:
           go-version: "1.26.10"
           check-latest: false
@@ -2480,37 +2480,37 @@ jobs:
       - *checkout
       - *boot
       - name: Download certified Server packages
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           pattern: ci-server-packages-*
           path: all-assets/server
           merge-multiple: true
       - name: Download certified GNU Desktop packages and AppImages
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           pattern: ci-dashboard-gnu-packages-*
           path: all-assets/desktop-gnu
           merge-multiple: true
       - name: Download certified musl Desktop executables
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           pattern: ci-dashboard-musl-build-*
           path: all-assets/desktop-musl-build
           merge-multiple: true
       - name: Download certified musl Desktop packages
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           pattern: ci-dashboard-musl-packages-*
           path: all-assets/desktop-musl-packages
           merge-multiple: true
       - name: Download exact shared Release inputs
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: ci-release-common
           path: all-assets/common
       - name: Download conditional migration package
         if: env.MIGRATION_RELEASE == 'true'
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: ci-migration-deb-linux-x86_64
           path: all-assets/migration
@@ -2785,7 +2785,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
       - name: Download Rust source inventory
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: rust-source-inventory
           path: ${{ runner.temp }}
@@ -2858,21 +2858,21 @@ jobs:
       - *checkout
       - *boot
       - name: Download Rust source inventory
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: rust-source-inventory
           path: ${{ runner.temp }}
       - name: Download Kani proof results
         if: always()
         continue-on-error: true
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: kani-formal-results
           path: ${{ runner.temp }}
       - name: Download Verus proof results
         if: always()
         continue-on-error: true
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: verus-formal-results
           path: ${{ runner.temp }}
@@ -3253,7 +3253,7 @@ jobs:
           restore-keys: |
             gitrun-${{ env.CACHE_EPOCH }}-${{ runner.os }}-${{ runner.arch }}-desktop-aarch64-gnu-${{ env.RUST_VERSION }}-
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: "22"
           package-manager-cache: false

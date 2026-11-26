@@ -59,7 +59,7 @@ checks = {
     "Dashboard provenance declares architecture-specific package availability": "desktop_package_formats" in release and "desktop_package_arches" in release and "aarch64-unknown-linux-musl" in release,
     "Dashboard cache key is isolated from Server builds": "-desktop-" in release and "hashFiles('Cargo.lock', 'Cargo.toml', '**/Cargo.toml', 'crates/gitrun-dashboard-tauri/package-lock.json')" in release,
     "Dashboard cache is saved after its artifact build": release.index("Upload independent Dashboard artifacts") < release.index("Save Dashboard Cargo and npm caches"),
-    "Dashboard uses the Node 24-compatible setup-node action": "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" in release,
+    "Dashboard uses the Node 24-compatible setup-node action": "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1" in release,
     "Desktop excludes Server executable": "grep -Eq" in release and "usr/bin/gitrun$" in release,
     "release notes include per-architecture ABI tables": '["Architecture", "ABI", "Package format", "Artifact", "SHA-256"]' in release,
     "release notes are generated from signed manifest": "manifest = json.loads(manifest_path.read_text" in release,

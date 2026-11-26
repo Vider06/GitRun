@@ -543,13 +543,33 @@ jobs:
     runs-on: *runner
     timeout-minutes: 60
     permissions:
+      actions: read
       contents: read
+      security-events: write
     outputs: *job_outputs
     steps:
       - *checkout
       - *boot
       - name: Secret pattern scan
-        run: python3 scripts/ci/check-secret-patterns.py
+        id: secret_scan
+        run: >-
+          python3 scripts/ci/check-secret-patterns.py
+          --sarif-file "$GITHUB_WORKSPACE/gitrun-secret-patterns.sarif"
+          --defer-failure
+
+      - name: Publish secret pattern findings to Code Scanning
+        if: ${{ always() && !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934 # v4
+        with:
+          sarif_file: gitrun-secret-patterns.sarif
+          category: gitrun-secret-patterns
+
+      - name: Enforce secret pattern findings
+        if: ${{ always() && !cancelled() }}
+        run: >-
+          python3 scripts/ci/check-secret-patterns.py
+          --sarif-file "$GITHUB_WORKSPACE/gitrun-secret-patterns.sarif"
+          --fail-on-findings
 
       - name: actionlint (syntax, expressions, shell in run blocks)
         run: |

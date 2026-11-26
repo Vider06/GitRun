@@ -150,29 +150,66 @@ run_verus_target() {
   return 0
 }
 
-run_verus_package() {
-  local package="$1"
+run_verus_workspace() {
+  local expected_packages="$1"
   shift
   local -a sources=("$@")
   local output
   local rc
-  # Cargo may report an up-to-date target without invoking Verus, which means
-  # there is no fresh verifier summary to attribute to this production package.
-  # Remove only this package's artifacts so every certification unit executes
-  # Verus now; dependencies remain cached.
-  cargo clean -p "$package"
-  if output="$(cargo -vv verus verify --locked -p "$package" --lib -- --expand-errors --time --time-expanded --log-all --multiple-errors "$verus_multiple_errors" --cfg verus 2>&1)"; then
+  local summary_count
+  local summary_line
+  local result_pattern='verification results:: ([0-9]+) verified, ([0-9]+) errors'
+  local verified_count
+  local error_count
+
+  # Force each opted-in production crate to execute once, then let Cargo-Verus
+  # verify the workspace dependency graph in a single invocation. This avoids
+  # re-verifying vstd independently for every root package.
+  for package in "${package_order[@]}"; do
+    cargo clean -p "$package"
+  done
+
+  if output="$(cargo -vv verus verify --locked --workspace --exclude gitrun-dashboard-tauri --lib -- --expand-errors --time --time-expanded --log-all --multiple-errors "$verus_multiple_errors" --cfg verus 2>&1)"; then
     printf '%s\n' "$output"
-    record_successful_verus_results "$output" "Cargo package $package" "${sources[@]}" || true
+    summary_count="$(printf '%s\n' "$output" | grep -Ec 'verification results:: [0-9]+ verified, [0-9]+ errors' || true)"
+    if (( summary_count < expected_packages + 1 )); then
+      proof_failures=$((proof_failures + 1))
+      for source in "${sources[@]}"; do
+        record_result "$source" UNVERIFIED
+      done
+      record_verus_diagnostic "verus-workspace-summary" "Verus workspace summary validation" 1 "$output"
+      echo "Verus emitted $summary_count result summaries for $expected_packages production packages; refusing to mark sources PROVEN." >&2
+      return 0
+    fi
+
+    while IFS= read -r summary_line; do
+      if [[ "$summary_line" =~ $result_pattern ]]; then
+        verified_count="${BASH_REMATCH[1]}"
+        error_count="${BASH_REMATCH[2]}"
+        if (( error_count != 0 )); then
+          proof_failures=$((proof_failures + 1))
+          for source in "${sources[@]}"; do
+            record_result "$source" UNVERIFIED
+          done
+          record_verus_diagnostic "verus-workspace-errors" "Verus workspace result validation" 1 "$output"
+          echo "A Verus workspace result reported $verified_count verified and $error_count errors; refusing to mark sources PROVEN." >&2
+          return 0
+        fi
+      fi
+    done < <(printf '%s\n' "$output" | grep -E 'verification results:: [0-9]+ verified, [0-9]+ errors')
+
+    for source in "${sources[@]}"; do
+      record_result "$source" PROVEN
+    done
   else
     rc=$?
     printf '%s\n' "$output"
-    record_verus_diagnostic "verus-package-$package" "cargo -vv verus verify --locked -p $package --lib" "$rc" "$output"
+    record_verus_diagnostic "verus-workspace" "cargo -vv verus verify --locked --workspace --exclude gitrun-dashboard-tauri --lib" "$rc" "$output"
     proof_failures=$((proof_failures + 1))
     for source in "${sources[@]}"; do
       record_result "$source" FAILED
     done
-    echo "Verus Cargo package verification failed: $package (exit $rc)." >&2
+    echo "Verus workspace verification failed (exit $rc)." >&2
   fi
   return 0
 }
@@ -336,16 +373,14 @@ for source in "${production_sources[@]}"; do
   fi
 done
 
-for package in "${package_order[@]}"; do
-  package_sources=()
-  for source in "${production_sources[@]}"; do
-    if [[ "$source" == "crates/$package/"* && "$source" != "crates/gitrun-gsr/src/bin/gitrun-api.rs" ]]; then
-      package_sources+=("$source")
-    fi
-  done
-  echo "Verifying production invariants in Cargo package $package."
-  run_verus_package "$package" "${package_sources[@]}"
+workspace_sources=()
+for source in "${production_sources[@]}"; do
+  if [[ "$source" != "crates/gitrun-cli/src/presenter.rs" && "$source" != "crates/gitrun-cli/src/repo_component.rs" && "$source" != "crates/gitrun-gsr/src/bin/gitrun-api.rs" ]]; then
+    workspace_sources+=("$source")
+  fi
 done
+echo "Verifying production invariants across the Cargo workspace (${#package_order[@]} packages)."
+run_verus_workspace "${#package_order[@]}" "${workspace_sources[@]}"
 
 # The CLI binary is not a Verus target: its runtime dependency exports are
 # deliberately unavailable under cfg(verus). Its pure policy proof is run

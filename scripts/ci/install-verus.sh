@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly verus_version="0.2026.11.02.8bf68ee"
+readonly verus_version="0.2026.11.26.b7ad556"
 readonly archive="verus-${verus_version}-x86-linux.zip"
 readonly url="https://github.com/verus-lang/verus/releases/download/release/${verus_version}/${archive}"
 readonly base="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
@@ -13,7 +13,7 @@ command -v unzip >/dev/null
 command -v rustup >/dev/null
 # Verus is built against this exact rustc commit; the repository's main CI
 # toolchain is intentionally left unchanged.
-rustup toolchain install 1.99.1 --profile minimal --component rustc-dev --component llvm-tools
+rustup toolchain install 1.100.0 --profile minimal --component rustc-dev --component llvm-tools
 rm -rf "$root" "$download"
 # The URL is HTTPS; curl verifies the certificate and negotiates TLS securely by default.
 curl --fail --location --retry 3 "$url" --output "$download"

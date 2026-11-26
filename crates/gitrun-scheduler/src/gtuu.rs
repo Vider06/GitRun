@@ -680,7 +680,8 @@ mod tests {
             // fallback an old directory timestamp to simulate an abandoned
             // lock rather than assuming the PID is definitely dead.
             let old_time = SystemTime::now() - Duration::from_secs(60 * 60 * 2);
-            std::fs::set_times(&lock_path, std::fs::FileTimes::new().set_modified(old_time)).unwrap();
+            std::fs::set_times(&lock_path, std::fs::FileTimes::new().set_modified(old_time))
+                .unwrap();
         }
 
         // This must succeed by reclaiming the abandoned lock, not error out

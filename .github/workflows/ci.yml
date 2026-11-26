@@ -557,14 +557,24 @@ jobs:
           --sarif-file "$GITHUB_WORKSPACE/gitrun-secret-patterns.sarif"
           --defer-failure
 
+      # The upload action resolves the analyzed commit from checkout_path.
+      # Check out the PR head separately so the SARIF commit and source lines
+      # belong to the branch, rather than the synthetic pull/<number>/merge checkout.
+      - name: Checkout pull request head for SARIF
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: .sarif-source
+          persist-credentials: false
+
       - name: Publish secret pattern findings to Code Scanning
         if: ${{ always() && !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934 # v4
         with:
           sarif_file: gitrun-secret-patterns.sarif
           category: gitrun-secret-patterns
-          # Code Scanning must index this analysis against the PR source branch,
-          # not GitHub's synthetic refs/pull/<number>/merge ref.
+          checkout_path: ${{ github.event_name == 'pull_request' && format('{0}/.sarif-source', github.workspace) || github.workspace }}
           ref: ${{ github.event_name == 'pull_request' && format('refs/heads/{0}', github.event.pull_request.head.ref) || github.ref }}
           sha: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 

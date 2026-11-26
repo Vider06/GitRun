@@ -27,7 +27,7 @@ RULES = (
     {
         "id": "gitrun-aws-access-key",
         "name": "AWS access key ID",
-        "pattern": re.compile(r"AKIA[0-9A-Z]{16}", re.IGNORECASE),
+        "pattern": re.compile(r"AKIA[0-9A-Z]{16}"),
     },
     {
         "id": "gitrun-private-key-header",

@@ -486,16 +486,7 @@ jobs:
       - *checkout
       - *boot
       - name: Test tracked-file cache fingerprints
-        shell: bash
-        run: |
-          set -euo pipefail
-          first="$(bash scripts/ci/hash-tracked-files.sh Cargo.lock Cargo.toml '**/Cargo.toml')"
-          second="$(bash scripts/ci/hash-tracked-files.sh Cargo.lock Cargo.toml '**/Cargo.toml')"
-          empty="$(bash scripts/ci/hash-tracked-files.sh '.gitrun-ci-nonexistent-fixture/**')"
-          [[ "$first" =~ ^[0-9a-f]{64}$ ]]
-          [[ "$first" == "$second" ]]
-          [[ -z "$empty" ]]
-          echo "tracked-file cache fingerprint is stable and handles unmatched patterns"
+        run: python3 scripts/ci/selftest-hash-tracked-files.py
       - name: Test log parsers and helpers
         run: bash scripts/ci/selftest.sh
       - *report

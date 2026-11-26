@@ -3412,21 +3412,6 @@ jobs:
             echo "| InRelease probe | success |"
             echo
           } | ci_sum
-      - name: Install Tauri Linux system dependencies
-        run: |
-          set -euo pipefail
-          source "$RUNNER_TEMP/ci-lib.sh"
-          install_tauri_deps() {
-            sudo env DEBIAN_FRONTEND=noninteractive apt-get \
-              -o Acquire::http::Timeout=30 \
-              -o Acquire::https::Timeout=30 \
-              -o Acquire::Retries=2 \
-              install -y --no-install-recommends \
-                build-essential curl wget file pkg-config libxdo-dev libssl-dev \
-                libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
-                patchelf xdg-utils imagemagick
-          }
-          ci_run "install Tauri Linux system dependencies" install_tauri_deps
       - name: Verify Tauri system dependencies
         run: |
           source "$RUNNER_TEMP/ci-lib.sh"

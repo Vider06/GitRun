@@ -7,7 +7,8 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # Default to Canonical. The GARR endpoint is enabled only for the Tauri
-# canary job through GITRUN_APT_MIRROR; do not change every CI job at once.
+# canary job through GITRUN_APT_MIRROR; keep security.ubuntu.com canonical
+# because third-party archive mirrors may lag the noble-security package pool.
 mirror="${GITRUN_APT_MIRROR:-https://archive.ubuntu.com/ubuntu/}"
 case "$mirror" in
   https://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu/)
@@ -32,16 +33,16 @@ sources=(
 for source in "${sources[@]}"; do
   [ -f "$source" ] || continue
   sed -i -E \
-    "s#https?://(([[:alnum:]-]+[.])*archive[.]ubuntu[.]com|security[.]ubuntu[.]com)/ubuntu/?#$mirror#g" \
+    "s#https?://(([[:alnum:]-]+[.])*archive[.]ubuntu[.]com)/ubuntu/?#$mirror#g" \
     "$source"
 done
 
-# Fail closed only on endpoints outside the selected mirror. Canonical's
-# archive and security hosts are valid when Canonical is selected; GARR must
-# not leave any Canonical archive source active.
+# Fail closed only on archive endpoints outside the selected mirror.
+# Keep security.ubuntu.com canonical for the noble-security pocket: archive
+# mirrors can publish its index before all referenced package files are synced.
 case "$mirror" in
   https://ubuntu.mirror.garr.it/ubuntu-archive/)
-    forbidden='https?://(([[:alnum:]-]+[.])*archive[.]ubuntu[.]com|security[.]ubuntu[.]com)/ubuntu'
+    forbidden='https?://(([[:alnum:]-]+[.])*archive[.]ubuntu[.]com)/ubuntu'
     ;;
   *)
     forbidden='https?://(azure|[[:alnum:]-]+[.]ec2)[.]archive[.]ubuntu[.]com/ubuntu'

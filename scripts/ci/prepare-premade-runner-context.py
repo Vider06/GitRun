@@ -81,17 +81,22 @@ def main() -> int:
     (context / "docker/runner").mkdir(parents=True)
 
     resources = (ROOT / "crates/gitrun-setup/src/resources.rs").read_text(encoding="utf-8")
-    start = resources.find("RUNNER_BUILD_FILES:")
-    if start < 0:
+    targets: list[str] = []
+    inside_inventory = False
+    for line in resources.splitlines():
+        if "RUNNER_BUILD_FILES:" in line:
+            inside_inventory = True
+            continue
+        if inside_inventory and line.startswith("];"):
+            break
+        if inside_inventory:
+            match = re.search(r'"([^"]+)"', line)
+            if match:
+                item = match.group(1)
+                if item in ("Cargo.toml", "Cargo.lock") or item.startswith("crates/"):
+                    targets.append(item)
+    if not inside_inventory:
         raise RuntimeError("RUNNER_BUILD_FILES inventory is missing from setup resources")
-    end = resources.find("];", start)
-    if end < 0:
-        raise RuntimeError("RUNNER_BUILD_FILES inventory is not terminated")
-    inventory = resources[start:end]
-    targets = [
-        item for item in re.findall(r'"([^"]+)"', inventory)
-        if item in ("Cargo.toml", "Cargo.lock") or item.startswith("crates/")
-    ]
     if not targets:
         raise RuntimeError("RUNNER_BUILD_FILES inventory produced no build-context files")
 

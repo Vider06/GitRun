@@ -28,7 +28,8 @@ def main() -> int:
     )
     if not ref_match or not path_match:
         raise RuntimeError("canonical Premade runner ref/path constants are missing or malformed")
-    pinned_ref, pinned_path = ref_match.groups()
+    pinned_ref = ref_match.group(1)
+    pinned_path = path_match.group(1)
 
     runner_temp = Path(os.environ["RUNNER_TEMP"])
     premade = runner_temp / "premade-runner.Dockerfile"

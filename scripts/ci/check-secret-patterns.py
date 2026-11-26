@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 import subprocess
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,7 +20,11 @@ def main() -> int:
         ("git", "ls-files", "-z"), cwd=ROOT, check=True, capture_output=True,
     ).stdout.decode("utf-8", errors="replace").split("\0")
     errors = 0
-    excluded = {"docs/ROADMAP_PHASES.md", "SECURITY.md"}
+    excluded = {
+        "docs/ROADMAP_PHASES.md",
+        "SECURITY.md",
+        "scripts/ci/check-secret-patterns.py",  # Contains the detector patterns themselves.
+    }
     for relative in filter(None, files):
         if relative in excluded:
             continue

@@ -2,6 +2,7 @@
 """Ensure every executable entry point guards unsupported Android runtimes."""
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -26,7 +27,11 @@ def main() -> int:
             continue
         lines = path.read_text(encoding="utf-8").splitlines()
         main_line = next(
-            (index for index, line in enumerate(lines) if line.strip() == "fn main()"),
+            (
+                index
+                for index, line in enumerate(lines)
+                if re.match(r"^\\s*(?:pub\\s+)?fn\\s+main\\s*\\(\\s*\\)\\s*(?:->\\s*[^{}]+)?\\s*\\{?\\s*$", line)
+            ),
             None,
         )
         if main_line is None:

@@ -558,17 +558,7 @@ jobs:
       - *checkout
       - *boot
       - name: Secret pattern scan
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          pat='(gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----|xox[baprs]-[A-Za-z0-9-]{10,}|sk_live_[0-9a-zA-Z]{24,})'
-          scan() {
-            local f l bad=0
-            while IFS=: read -r f l _; do
-              ci_annot error "$f" "$l" "" "possible credential" "credential-like string committed (value hidden): revoke it and purge it from history"; bad=1
-            done < <(git grep -nIE "$pat" -- . ':!docs/ROADMAP_PHASES.md' ':!SECURITY.md' || true)
-            return "$bad"
-          }
-          ci_run "secret pattern scan" scan
+        run: python3 scripts/ci/check-secret-patterns.py
 
       - name: actionlint (syntax, expressions, shell in run blocks)
         run: |
@@ -2948,21 +2938,7 @@ jobs:
           rc=0
           ci_run "cargo test" test_run || rc=1
           ci_run "Shared management backend tests (headless)" cargo test --locked -p gitrun-management --no-default-features --all-targets || rc=1
-          cli_graph_check() {
-            graph="$(cargo tree --locked -e normal -p gitrun-cli)"
-            if grep -q "gitrun-dashboard-tauri" <<<"$graph"; then
-              echo "gitrun-cli must not depend on the dashboard package" >&2
-              return 1
-            fi
-            if grep -qE "(^|[[:space:]])tauri v" <<<"$graph"; then
-              echo "gitrun-cli must not link the Tauri runtime" >&2
-              return 1
-            fi
-            test -f crates/gitrun-management/src/backend.rs
-            test -f crates/gitrun-management/src/control_manager.rs
-            test ! -e crates/gitrun-dashboard-tauri/src-tauri/src/control_manager.rs
-          }
-          ci_run "CLI and Control Manager are dashboard-independent" cli_graph_check
+          ci_run "CLI and Control Manager are dashboard-independent" python3 scripts/ci/check-cli-boundaries.py
           if [ -s "$CI_DIR/test-totals.txt" ]; then
             read -r totals < "$CI_DIR/test-totals.txt"
             { echo "### 🧪 Tests"; echo; echo "\`$totals\`"; echo; } | ci_sum
@@ -3011,15 +2987,7 @@ jobs:
             cargo check --locked --workspace --exclude gitrun-dashboard-tauri --all-targets
           }
           ci_run "Compile every workspace crate and target without the Dashboard GUI" headless_workspace_check
-          headless_graph_check() {
-            local graph
-            graph="$(cargo tree --locked --workspace --exclude gitrun-dashboard-tauri -e normal)"
-            if grep -Eiq '(^|[[:space:]])(tauri|webkit2gtk) v' <<<"$graph"; then
-              echo "The headless workspace dependency graph unexpectedly includes Tauri or WebKitGTK" >&2
-              return 1
-            fi
-          }
-          ci_run "Headless workspace dependency graph excludes Tauri and WebKitGTK" headless_graph_check
+          ci_run "Headless workspace dependency graph excludes Tauri and WebKitGTK" python3 scripts/ci/check-headless-dependencies.py
       - name: Upload cargo build timings
         if: always() && env.CI_UPLOAD_ARTIFACTS == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

@@ -1305,18 +1305,7 @@ jobs:
           ci_run "Vault security tests" cargo test --locked -p gitrun-vault || rc=1
           exit "$rc"
       - name: Verify security-sensitive workflow invariants
-        run: |
-          source "$RUNNER_TEMP/ci-lib.sh"
-          verify_security_invariants() {
-            grep -q 'id-token: write' .github/workflows/release.yml && return 1
-            grep -q 'aws-actions/configure-aws-credentials@' .github/workflows/release.yml && return 1
-            grep -q 'ED25519_SHA_512' .github/workflows/release.yml && return 1
-            grep -q 'GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64' .github/workflows/release.yml || return 1
-            grep -q 'GITRUN_UPDATE_SIGNING_KEY_ID' .github/workflows/release.yml || return 1
-            grep -q 'GITRUN_UPDATE_SIGNATURE_REQUIRED' crates/gitrun-updater/src/lib.rs || return 1
-            grep -q 'GITRUN_RUNNER_NETWORK' config/config.example.env || return 1
-          }
-          ci_run "Security-sensitive workflow invariants" verify_security_invariants
+        run: python3 scripts/ci/check-security-invariants.py
       - *rust_prune
       - *s_tc
       - *s_reg
@@ -1399,40 +1388,7 @@ jobs:
           ci_run "Manage routes reads and writes through Control Manager IPC" cargo test --locked -p gitrun-cli control_manager_routing_tests -- --nocapture || rc=1
           ci_run "CLI doctor reads protected configuration through Control Manager IPC" cargo test --locked -p gitrun-cli control_manager_cli_routing_tests -- --nocapture || rc=1
 
-          validate_systemd_units() {
-            command -v systemd-analyze >/dev/null 2>&1 || {
-              echo "systemd-analyze is required to validate the service units" >&2
-              return 1
-            }
-            # Build the executable explicitly: the preceding package tests do not
-            # guarantee that Cargo has produced target/debug/gitrun.
-            cargo build --locked -p gitrun-cli --bin gitrun || return 1
-            sudo install -Dm0755 target/debug/gitrun /usr/local/bin/gitrun || return 1
-            sudo install -Dm0600 config/config.example.env /etc/gitrun/gitrun.env || return 1
-            sudo install -Dm0644 systemd/gitrun.service /etc/systemd/system/gitrun.service || return 1
-            sudo install -Dm0644 systemd/gitrun-gsr.service /etc/systemd/system/gitrun-gsr.service || return 1
-            sudo install -Dm0644 systemd/gitrun-control.service /etc/systemd/system/gitrun-control.service || return 1
-            getent group gitrun-control >/dev/null 2>&1 || sudo groupadd --system gitrun-control || return 1
-            sudo systemd-analyze verify gitrun.service gitrun-gsr.service gitrun-control.service || return 1
-
-            # Catch regressions in reboot enablement and restart-on-crash policy.
-            grep -Fq 'WantedBy=multi-user.target' systemd/gitrun.service || return 1
-            grep -Fq 'WantedBy=multi-user.target' systemd/gitrun-gsr.service || return 1
-            grep -Fq 'WantedBy=multi-user.target' systemd/gitrun-control.service || return 1
-            grep -Fq 'Restart=on-failure' systemd/gitrun.service || return 1
-            grep -Fq 'Restart=on-failure' systemd/gitrun-gsr.service || return 1
-            grep -Fq 'Restart=on-failure' systemd/gitrun-control.service || return 1
-            grep -Fq 'ExecStart=/usr/local/bin/gitrun scheduler' systemd/gitrun.service || return 1
-            grep -Fq 'ExecStart=/usr/local/bin/gitrun gsr-watchdog' systemd/gitrun-gsr.service || return 1
-            grep -Fq 'ExecStart=/usr/local/bin/gitrun control-manager' systemd/gitrun-control.service || return 1
-            grep -Fq 'ServiceManager::Systemd' crates/gitrun-setup/src/lib.rs || return 1
-            grep -Fq 'systemctl' crates/gitrun-setup/src/lib.rs || return 1
-            grep -Fq 'gitrun.service' crates/gitrun-setup/src/lib.rs || return 1
-            grep -Fq 'gitrun-gsr.service' crates/gitrun-setup/src/lib.rs || return 1
-            grep -Fq 'gitrun-control.service' crates/gitrun-setup/src/lib.rs || return 1
-            grep -Fq 'gitrun-gsr.service' crates/gitrun-setup/src/lib.rs || return 1
-            grep -Fq 'gsr-watchdog' crates/gitrun-cli/src/main.rs || return 1
-          }
+          ci_run "Validate systemd unit syntax and service command alignment" python3 scripts/ci/check-systemd-units.py || rc=1
           ci_run "Validate systemd unit syntax and service command alignment" validate_systemd_units || rc=1
           exit "$rc"
       - name: Verify live GitDockRun mount namespace behavior
@@ -2841,27 +2797,7 @@ jobs:
           source "$RUNNER_TEMP/ci-lib.sh"
           rc=0
           ci_run "Linux ABI, distro, package manager and init-system detection" cargo test --locked -p gitrun-platform || rc=1
-          check_android_entrypoint_guards() {
-            local file
-            local entrypoints=(
-              crates/gitrun-cli/src/main.rs
-              crates/gitrun-scheduler/src/main.rs
-              crates/gitrun-gsr/src/main.rs
-              crates/gitrun-gsr/src/bin/gitrun-api.rs
-              crates/gitrun-gsr/src/bin/gitrun-gsr-agent.rs
-              crates/gitrun-recovery/src/main.rs
-              crates/gitrun-dashboard-tauri/src-tauri/src/main.rs
-            )
-            for file in "${entrypoints[@]}"; do
-              test -f "$file" || { ci_err "missing executable entry point: $file"; return 1; }
-              awk '
-                /^fn main\(\)/ { main_line = NR; in_main = 1; next }
-                in_main && /ensure_supported_runtime\(\)/ { guard_line = NR; exit }
-                END { if (!main_line || !guard_line || guard_line - main_line > 6) exit 1 }
-              ' "$file" || { ci_err "Android runtime guard missing or too late in $file"; return 1; }
-            done
-          }
-          ci_run "Android guard coverage at every executable entry point" check_android_entrypoint_guards || rc=1
+          ci_run "Android guard coverage at every executable entry point" python3 scripts/ci/check-android-entrypoint-guards.py || rc=1
           ci_run "Minimal runner bootstrap carries the platform crate" cargo test --locked -p gitrun-setup bootstrap_lock_matches_the_minimal_workspace || rc=1
           ci_run "Minimal runner Dockerfile includes all bootstrap crates" cargo test --locked -p gitrun-setup bootstrap_dockerfile_uses_minimal_gsr_build_context_and_original_bash || rc=1
           ci_run "Headless management backend compiles without desktop features" cargo test --locked -p gitrun-management || rc=1

@@ -5,6 +5,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # vstd is coupled to the pinned Verus binary and its Rust toolchain.
+    # Update it only through a coordinated Verus + vstd change, never via Dependabot alone.
+    ignore:
+      - dependency-name: vstd
     # Keep the workspace dependency graph in one version-update PR.
     groups:
       workspace-crates:

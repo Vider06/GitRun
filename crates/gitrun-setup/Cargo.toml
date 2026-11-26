@@ -6,7 +6,7 @@ license = "Apache-2.0"
 description = "Host dependency and setup checks for GitRun"
 
 [dependencies]
-vstd = "=0.0.0-2026-11-01-0251"
+vstd = "=0.0.0-2026-11-22-0344"
 gitrun-core = { path = "../gitrun-core" }
 gitrun-updater = { path = "../gitrun-updater" }
 gitrun-platform = { path = "../gitrun-platform" }

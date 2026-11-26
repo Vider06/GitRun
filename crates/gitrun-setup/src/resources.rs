@@ -1,11 +1,100 @@
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
+#[cfg(not(any(kani, verus)))]
 use super::SetupError;
+
+#[cfg(verus)]
+#[allow(unused_imports)]
+use vstd::prelude::*;
+#[cfg(verus)]
+verus! {
+    /// Character-level model of searching one string inside another.
+    pub open spec fn contains_char_subsequence(
+        haystack: Seq<char>,
+        needle: Seq<char>,
+    ) -> bool {
+        exists |start: int|
+            0 <= start
+                && start + needle.len() <= haystack.len()
+                && #[trigger] haystack.subrange(start, start + needle.len()) =~= needle
+    }
+}
+
+/// Rust's `str::contains` is not currently modeled by vstd. Keep the standard
+/// library operation behind one narrow trusted boundary with its exact character
+/// substring contract. Kani and setup tests exercise the concrete body.
+#[cfg(not(verus))]
+#[doc(hidden)]
+pub fn contains_literal(haystack: &str, needle: &str) -> bool {
+    haystack.contains(needle)
+}
+
+#[cfg(verus)]
+#[verifier::external_body]
+#[verifier::allow_in_spec]
+#[verus_spec(
+    returns contains_char_subsequence(haystack@, needle@)
+)]
+#[doc(hidden)]
+pub fn contains_literal(haystack: &str, needle: &str) -> bool {
+    // The concrete implementation is compiled only in non-Verus builds.
+    // Verus reasons from the exact character-subsequence contract above.
+    true
+}
 
 /// Build from the Dockerfile shipped in this signed GitRun release. The updater
 /// must not silently keep using an older independently pinned Premade file.
+#[cfg(not(any(kani, verus)))]
 pub(crate) fn runner_dockerfile_for_bootstrap() -> Result<String, SetupError> {
     runner_dockerfile_from_source(include_str!("../../../docker/runner/Dockerfile"))
 }
 
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns contains_char_subsequence(
+            source@,
+            "COPY Cargo.toml Cargo.lock ./"@
+        ) && contains_char_subsequence(
+            source@,
+            "COPY crates ./crates"@
+        )
+    )
+)]
+pub fn dockerfile_has_full_workspace_copy(source: &str) -> bool {
+    contains_literal(source, "COPY Cargo.toml Cargo.lock ./")
+        && contains_literal(source, "COPY crates ./crates")
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(returns contains_char_subsequence(
+        source@,
+        "/bin/bash.gitrun-real"@
+    ))
+)]
+pub fn dockerfile_uses_safe_bash_entrypoint(source: &str) -> bool {
+    contains_literal(source, "/bin/bash.gitrun-real")
+}
+
+#[cfg_attr(verus, verus_verify(dual_spec, open))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns !contains_char_subsequence(
+            source@,
+            "COPY crates ./crates"@
+        )
+    )
+)]
+pub fn dockerfile_build_context_is_minimal(source: &str) -> bool {
+    !contains_literal(source, "COPY crates ./crates")
+}
+
+#[cfg(not(any(kani, verus)))]
 fn runner_dockerfile_from_source(source: &str) -> Result<String, SetupError> {
     const FULL_WORKSPACE_COPY: &str = "COPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates";
     const MINIMAL_WORKSPACE_COPY: &str = concat!(
@@ -16,7 +105,7 @@ fn runner_dockerfile_from_source(source: &str) -> Result<String, SetupError> {
         "COPY crates/gitrun-platform ./crates/gitrun-platform"
     );
 
-    if !source.contains(FULL_WORKSPACE_COPY) {
+    if !dockerfile_has_full_workspace_copy(source) {
         return Err(SetupError::Command(
             "Premade runner Dockerfile is missing the expected workspace marker".into(),
         ));
@@ -28,14 +117,14 @@ fn runner_dockerfile_from_source(source: &str) -> Result<String, SetupError> {
         .replace(FULL_WORKSPACE_COPY, MINIMAL_WORKSPACE_COPY)
         .replace(LEGACY_ENTRYPOINT, SAFE_ENTRYPOINT);
 
-    if !adapted.contains(SAFE_ENTRYPOINT) || adapted.contains(LEGACY_ENTRYPOINT) {
+    if !dockerfile_uses_safe_bash_entrypoint(&adapted) || adapted.contains(LEGACY_ENTRYPOINT) {
         return Err(SetupError::Command(
             "Premade runner Dockerfile must launch the bootstrap through the original Bash binary"
                 .into(),
         ));
     }
 
-    if adapted.contains(FULL_WORKSPACE_COPY) || adapted.contains("COPY crates ./crates") {
+    if !dockerfile_build_context_is_minimal(&adapted) {
         return Err(SetupError::Command(
             "Premade runner Dockerfile could not be reduced to the setup build context".into(),
         ));
@@ -45,6 +134,7 @@ fn runner_dockerfile_from_source(source: &str) -> Result<String, SetupError> {
 
 /// Resolve an official, compiled-in runner profile. Arbitrary remote Dockerfiles
 /// are never executed by the privileged bootstrap path.
+#[cfg(not(any(kani, verus)))]
 pub(crate) fn runner_dockerfile_for_profile(profile: &str) -> Result<String, SetupError> {
     match profile {
         "minimum" => Ok(include_str!(
@@ -58,24 +148,36 @@ pub(crate) fn runner_dockerfile_for_profile(profile: &str) -> Result<String, Set
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub(crate) const RUNNER_ENTRYPOINT: &str = include_str!("../../../docker/runner/entrypoint.sh");
 
+#[cfg(not(any(kani, verus)))]
 pub(crate) const SYSTEMD_SERVICE: &str = include_str!("../../../systemd/gitrun.service");
+#[cfg(not(any(kani, verus)))]
 pub(crate) const SYSTEMD_GSR_SERVICE: &str = include_str!("../../../systemd/gitrun-gsr.service");
+#[cfg(not(any(kani, verus)))]
 pub(crate) const SYSTEMD_CONTROL_MANAGER_SERVICE: &str =
     include_str!("../../../systemd/gitrun-control.service");
 
+#[cfg(not(any(kani, verus)))]
 pub(crate) const GITRUN_SERVICE: &str = include_str!("../../../packaging/gitrun-service");
+#[cfg(not(any(kani, verus)))]
 pub(crate) const OPENRC_GITRUN: &str = include_str!("../../../packaging/openrc/gitrun");
+#[cfg(not(any(kani, verus)))]
 pub(crate) const OPENRC_GITRUN_GSR: &str = include_str!("../../../packaging/openrc/gitrun-gsr");
+#[cfg(not(any(kani, verus)))]
 pub(crate) const RUNIT_GITRUN_RUN: &str = include_str!("../../../packaging/runit/gitrun/run");
+#[cfg(not(any(kani, verus)))]
 pub(crate) const RUNIT_GITRUN_LOG_RUN: &str =
     include_str!("../../../packaging/runit/gitrun/log/run");
+#[cfg(not(any(kani, verus)))]
 pub(crate) const RUNIT_GITRUN_GSR_RUN: &str =
     include_str!("../../../packaging/runit/gitrun-gsr/run");
+#[cfg(not(any(kani, verus)))]
 pub(crate) const RUNIT_GITRUN_GSR_LOG_RUN: &str =
     include_str!("../../../packaging/runit/gitrun-gsr/log/run");
 
+#[cfg(not(any(kani, verus)))]
 pub(crate) const SYSTEMD_SERVICE_DIRECT: &str = r#"[Unit]
 Description=GitRun Rust scheduler
 Requires=docker.service
@@ -111,12 +213,14 @@ WantedBy=multi-user.target
 /// GSR agent after the GitRun package has been installed. This intentionally
 /// contains only the crates required by gitrun-gsr-agent; it is not the
 /// application's main workspace manifest.
+#[cfg(not(any(kani, verus)))]
 pub(crate) const RUNNER_BUILD_CARGO_MANIFEST: &str = r#"[workspace]
 resolver = "2"
 members = ["crates/gitrun-core", "crates/gitrun-exe", "crates/gitrun-gsr", "crates/gitrun-platform"]
 
 "#;
 
+#[cfg(not(any(kani, verus)))]
 pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
     (
         "crates/gitrun-platform/Cargo.toml",
@@ -272,7 +376,7 @@ pub(crate) const RUNNER_BUILD_FILES: &[(&str, &str, u32)] = &[
     ),
 ];
 
-#[cfg(test)]
+#[cfg(all(test, not(any(kani, verus))))]
 mod tests {
     use super::*;
 
@@ -457,3 +561,162 @@ mod tests {
         }
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::{
+        dockerfile_build_context_is_minimal, dockerfile_has_full_workspace_copy,
+        dockerfile_uses_safe_bash_entrypoint,
+    };
+
+    #[kani::proof]
+    fn bootstrap_dockerfile_requires_minimal_build_context_and_safe_entrypoint() {
+        let source =
+            "COPY Cargo.toml Cargo.lock ./\nCOPY crates ./crates\nENTRYPOINT [\"/entrypoint.sh\"]";
+        let adapted = "COPY Cargo.toml Cargo.lock ./\nCOPY crates/gitrun-core ./crates/gitrun-core\nCOPY crates/gitrun-exe ./crates/gitrun-exe\nCOPY crates/gitrun-gsr ./crates/gitrun-gsr\nCOPY crates/gitrun-platform ./crates/gitrun-platform\nENTRYPOINT [\"/bin/bash.gitrun-real\", \"/entrypoint.sh\"]";
+        assert!(dockerfile_has_full_workspace_copy(source));
+        assert!(dockerfile_uses_safe_bash_entrypoint(adapted));
+        assert!(dockerfile_build_context_is_minimal(adapted));
+        assert!(!dockerfile_has_full_workspace_copy(adapted));
+        assert!(!dockerfile_uses_safe_bash_entrypoint(source));
+        assert!(!dockerfile_build_context_is_minimal(source));
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::{
+        contains_char_subsequence, dockerfile_build_context_is_minimal,
+        dockerfile_has_full_workspace_copy, dockerfile_uses_safe_bash_entrypoint,
+    };
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn lemma_contains_char_subsequence_at(
+            haystack: Seq<char>,
+            needle: Seq<char>,
+            start: int,
+        )
+            requires
+                0 <= start,
+                start + needle.len() <= haystack.len(),
+                haystack.subrange(start, start + needle.len()) =~= needle,
+            ensures contains_char_subsequence(haystack, needle),
+        {
+            reveal(contains_char_subsequence);
+            assert(exists |candidate: int|
+                0 <= candidate
+                    && candidate + needle.len() <= haystack.len()
+                    && #[trigger] haystack.subrange(
+                        candidate,
+                        candidate + needle.len(),
+                    ) =~= needle
+            ) by {
+                assert(start + needle.len() <= haystack.len());
+                assert(haystack.subrange(start, start + needle.len()) =~= needle);
+            }
+        }
+
+        proof fn bootstrap_dockerfile_requires_minimal_build_context_and_safe_entrypoint() {
+            let source = "COPY Cargo.toml Cargo.lock ./ COPY crates ./crates";
+            let adapted = "COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real";
+            let cargo_copy = "COPY Cargo.toml Cargo.lock ./";
+            let crates_copy = "COPY crates ./crates";
+            let safe_bash = "/bin/bash.gitrun-real";
+
+            // Verus treats string-literal contents as opaque until each
+            // concrete literal is revealed. Supply explicit witnesses for
+            // the existential substring contracts rather than asking SMT to
+            // discover offsets in the literals.
+            reveal_strlit("COPY Cargo.toml Cargo.lock ./ COPY crates ./crates");
+            reveal_strlit("COPY Cargo.toml Cargo.lock ./");
+            reveal_strlit("COPY crates ./crates");
+            reveal_strlit("COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real");
+            reveal_strlit("/bin/bash.gitrun-real");
+
+            lemma_contains_char_subsequence_at(source@, cargo_copy@, 0);
+            lemma_contains_char_subsequence_at(source@, crates_copy@, 30);
+            assert(dockerfile_has_full_workspace_copy(source));
+
+            lemma_contains_char_subsequence_at(adapted@, safe_bash@, 45);
+            assert(dockerfile_uses_safe_bash_entrypoint(adapted));
+
+            // Prove the adapted Dockerfile does not contain the broad COPY
+            // marker. Every candidate either starts after index zero, where
+            // its first character is not 'C', or starts at zero and differs
+            // at index 11 ('/' rather than ' ').
+            assert forall |index: int|
+                0 <= index < adapted@.len() && index != 0
+                implies #[trigger] adapted@[index] != 'C' by {
+                reveal_strlit("COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real");
+            }
+            assert forall |start: int|
+                0 <= start
+                    && start + (crates_copy@.len() as int) <= adapted@.len() as int
+                    implies #[trigger] adapted@.subrange(
+                        start,
+                        start + (crates_copy@.len() as int),
+                    ) != crates_copy@ by {
+                reveal_strlit("COPY crates ./crates");
+                reveal_strlit("COPY crates/gitrun-core ./crates/gitrun-core /bin/bash.gitrun-real");
+                if start == 0 {
+                    assert(adapted@[11] == '/');
+                    assert(crates_copy@[11] == ' ');
+                    vstd::seq::lemma_seq_subrange_index(
+                        adapted@,
+                        start,
+                        start + (crates_copy@.len() as int),
+                        11,
+                    );
+                } else {
+                    assert(adapted@[start] != 'C');
+                    assert(crates_copy@[0] == 'C');
+                    vstd::seq::lemma_seq_subrange_index(
+                        adapted@,
+                        start,
+                        start + (crates_copy@.len() as int),
+                        0,
+                    );
+                }
+            }
+            assert(dockerfile_build_context_is_minimal(adapted));
+
+            // The source contains no lowercase 'b', while the required Bash
+            // marker has 'b' at offset one. This proves that the marker cannot
+            // occur at any offset in the source Dockerfile.
+            assert forall |index: int|
+                0 <= index < source@.len()
+                implies #[trigger] source@[index] != 'b' by {
+                reveal_strlit("COPY Cargo.toml Cargo.lock ./ COPY crates ./crates");
+            }
+            assert forall |start: int|
+                0 <= start && start + (safe_bash@.len() as int) <= source@.len()
+                implies #[trigger] source@.subrange(
+                    start,
+                    start + (safe_bash@.len() as int),
+                ) != safe_bash@ by {
+                reveal_strlit("/bin/bash.gitrun-real");
+                assert(source@[start + 1] != 'b');
+                assert(safe_bash@[1] == 'b');
+                vstd::seq::lemma_seq_subrange_index(
+                    source@,
+                    start,
+                    start + (safe_bash@.len() as int),
+                    1,
+                );
+            }
+            assert(!dockerfile_uses_safe_bash_entrypoint(source));
+
+            // The source has the broad COPY marker, so its build context is
+            // correctly classified as non-minimal.
+            assert(!dockerfile_build_context_is_minimal(source));
+        }
+    }
+}
+
+#[cfg(kani)]
+#[allow(dead_code)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

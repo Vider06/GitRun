@@ -3997,6 +3997,51 @@ mod mount_runtime_tests {
     use super::*;
     use std::process::Command;
 
+    const MOUNT_TEST_IMAGE_PULL_ATTEMPTS: usize = 3;
+
+    /// Ensures the privileged mount test has its disposable image available locally.
+    /// Registry pulls are retried for transient network failures, but a persistent
+    /// registry outage remains a hard test failure with all attempt diagnostics.
+    fn ensure_mount_test_image_available(image: &str) -> Result<(), String> {
+        let inspect = Command::new("docker")
+            .args(["image", "inspect", image])
+            .output()
+            .map_err(|error| format!("could not inspect Docker image {image}: {error}"))?;
+        if inspect.status.success() {
+            return Ok(());
+        }
+
+        let mut failures = vec![format!(
+            "local image inspection failed: {}{}",
+            String::from_utf8_lossy(&inspect.stdout),
+            String::from_utf8_lossy(&inspect.stderr)
+        )];
+
+        for attempt in 1..=MOUNT_TEST_IMAGE_PULL_ATTEMPTS {
+            match Command::new("docker").args(["pull", image]).output() {
+                Ok(output) if output.status.success() => return Ok(()),
+                Ok(output) => failures.push(format!(
+                    "pull attempt {attempt}/{MOUNT_TEST_IMAGE_PULL_ATTEMPTS} failed ({}): {}{}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                )),
+                Err(error) => failures.push(format!(
+                    "pull attempt {attempt}/{MOUNT_TEST_IMAGE_PULL_ATTEMPTS} could not start: {error}"
+                )),
+            }
+
+            if attempt < MOUNT_TEST_IMAGE_PULL_ATTEMPTS {
+                std::thread::sleep(Duration::from_secs(2 * attempt as u64));
+            }
+        }
+
+        Err(format!(
+            "Docker image {image} is unavailable after {MOUNT_TEST_IMAGE_PULL_ATTEMPTS} pull attempts:\n{}",
+            failures.join("\n")
+        ))
+    }
+
     struct TemporaryContainer(String);
 
     impl Drop for TemporaryContainer {
@@ -4674,6 +4719,9 @@ mod mount_runtime_tests {
         let target = format!("/workspace/gitrun-mount-{suffix}");
         let image =
             std::env::var("GITRUN_MOUNT_TEST_IMAGE").unwrap_or_else(|_| "alpine:3.21".into());
+        ensure_mount_test_image_available(&image).unwrap_or_else(|error| {
+            panic!("could not prepare disposable mount-test image: {error}")
+        });
         let output = Command::new("docker")
             .args([
                 "run",

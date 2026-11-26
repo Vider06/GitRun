@@ -9,23 +9,40 @@
 //! write to a temp file, then atomically rename over the target, so a crash
 //! mid-write never leaves a half-written `scheduler-state.json` behind.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify, SpecOrd};
+
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::collections::HashMap;
+#[cfg(not(any(kani, verus)))]
 use std::fs;
+#[cfg(not(any(kani, verus)))]
 use std::io::Read;
 #[cfg(unix)]
+#[cfg(not(any(kani, verus)))]
 use std::os::unix::fs::OpenOptionsExt;
+#[cfg(not(any(kani, verus)))]
 use std::path::{Path, PathBuf};
+#[cfg(not(any(kani, verus)))]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(not(any(kani, verus)))]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(not(any(kani, verus)))]
 use thiserror::Error;
 
+#[cfg(not(any(kani, verus)))]
 static STATE_TMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+#[cfg(not(any(kani, verus)))]
 const MAX_JOB_IDENTITIES: usize = 4096;
+#[cfg(not(any(kani, verus)))]
 const JOB_ID_RETENTION_SECONDS: u64 = 90 * 86_400;
+#[cfg(not(any(kani, verus)))]
 const JOB_ID_REFRESH_BUCKET_SECONDS: u64 = 300;
 
 #[derive(Debug, Error)]
+#[cfg(not(any(kani, verus)))]
 pub enum StateError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -37,6 +54,7 @@ pub enum StateError {
     UnsafePath(String),
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct PersistedJobIdentity {
     repository: String,
     run_id: u64,
@@ -46,6 +64,7 @@ struct PersistedJobIdentity {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 struct StateFile {
     #[serde(default)]
     idle_since: HashMap<String, u64>,
@@ -60,10 +79,12 @@ struct StateFile {
     next_job_identity_sequence: u64,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn default_next_job_identity_sequence() -> u64 {
     1
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Default for StateFile {
     fn default() -> Self {
         Self {
@@ -76,11 +97,13 @@ impl Default for StateFile {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub struct SchedulerState {
     path: PathBuf,
     data: StateFile,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_state_directory(path: &Path) -> Result<(), StateError> {
     let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -103,6 +126,7 @@ fn validate_state_directory(path: &Path) -> Result<(), StateError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_state_file_metadata(metadata: &fs::Metadata, path: &Path) -> Result<(), StateError> {
     if !metadata.is_file() {
         return Err(StateError::UnsafePath(format!(
@@ -123,6 +147,7 @@ fn validate_state_file_metadata(metadata: &fs::Metadata, path: &Path) -> Result<
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_state_file(path: &Path) -> Result<Option<StateFile>, StateError> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
@@ -139,18 +164,45 @@ fn read_state_file(path: &Path) -> Result<Option<StateFile>, StateError> {
     Ok(Some(serde_json::from_str(&raw)?))
 }
 
-fn valid_repository_identity(repository: &str) -> bool {
-    let Some((owner, name)) = repository.trim().split_once('/') else {
-        return false;
-    };
-    !owner.is_empty()
-        && !name.is_empty()
-        && owner.len() <= 100
-        && name.len() <= 100
-        && !repository.chars().any(char::is_control)
-        && !repository.chars().any(char::is_whitespace)
+#[cfg_attr(verus, verus_verify(dual_spec, closed))]
+#[cfg_attr(
+    verus,
+    verus_spec(
+        returns (byte >= 48 && byte <= 57)
+            || (byte >= 65 && byte <= 90)
+            || (byte >= 97 && byte <= 122)
+            || matches!(byte, b'.' | b'_' | b'-')
+    )
+)]
+#[allow(clippy::manual_range_contains)] // Keep the byte predicate compatible with Verus specifications.
+pub(crate) fn repository_identity_byte_is_valid(byte: u8) -> bool {
+    (byte >= b'0' && byte <= b'9')
+        || (byte >= b'A' && byte <= b'Z')
+        || (byte >= b'a' && byte <= b'z')
+        || matches!(byte, b'.' | b'_' | b'-')
 }
 
+fn repository_identity_segment_is_valid(segment: &str) -> bool {
+    !segment.is_empty()
+        && segment.len() <= 100
+        && segment != "."
+        && segment != ".."
+        && segment.bytes().all(repository_identity_byte_is_valid)
+}
+
+fn valid_repository_identity(repository: &str) -> bool {
+    if repository.trim() != repository {
+        return false;
+    }
+    let Some((owner, name)) = repository.split_once('/') else {
+        return false;
+    };
+    !name.contains('/')
+        && repository_identity_segment_is_valid(owner)
+        && repository_identity_segment_is_valid(name)
+}
+
+#[cfg(not(any(kani, verus)))]
 fn repository_identity_hash(repository: &str) -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
     for byte in repository.trim().to_ascii_lowercase().bytes() {
@@ -160,6 +212,7 @@ fn repository_identity_hash(repository: &str) -> u64 {
     hash
 }
 
+#[cfg(not(any(kani, verus)))]
 fn make_gitrun_job_id(repository: &str, sequence: u64) -> Option<String> {
     if !valid_repository_identity(repository) || sequence == 0 {
         return None;
@@ -170,6 +223,7 @@ fn make_gitrun_job_id(repository: &str, sequence: u64) -> Option<String> {
     ))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn valid_gitrun_job_id(code: &str, repository: &str) -> bool {
     let Some((hash, sequence_hex)) = code
         .strip_prefix("grj-")
@@ -187,6 +241,7 @@ fn valid_gitrun_job_id(code: &str, repository: &str) -> bool {
         && code.len() == 4 + 16 + 1 + 16
 }
 
+#[cfg(not(any(kani, verus)))]
 fn job_identity_key(repository: &str, run_id: u64, job_id: u64) -> String {
     format!(
         "{}|{run_id}|{job_id}",
@@ -194,6 +249,7 @@ fn job_identity_key(repository: &str, run_id: u64, job_id: u64) -> String {
     )
 }
 
+#[cfg(not(any(kani, verus)))]
 fn validate_state(data: &StateFile) -> Result<(), StateError> {
     let now = SchedulerState::now();
 
@@ -241,6 +297,7 @@ fn validate_state(data: &StateFile) -> Result<(), StateError> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 impl SchedulerState {
     pub fn load(state_dir: &Path) -> Result<Self, StateError> {
         let path = state_dir.join("scheduler-state.json");
@@ -536,6 +593,7 @@ impl SchedulerState {
 }
 
 #[cfg(test)]
+#[cfg(not(any(kani, verus)))]
 mod tests {
     use super::*;
 
@@ -800,4 +858,63 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn repository_identity_requires_exactly_two_safe_segments() {
+        for valid in ["owner/repo", "Vider06/GitRun", "owner_1/repo.name"] {
+            assert!(valid_repository_identity(valid), "{valid}");
+        }
+        for invalid in [
+            "",
+            "/repo",
+            "owner/",
+            "owner/repo/extra",
+            "owner//repo",
+            "../repo",
+            "owner/..",
+            "owner /repo",
+            " owner/repo",
+            "owner/repo ",
+        ] {
+            assert!(!valid_repository_identity(invalid), "{invalid}");
+        }
+    }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::repository_identity_byte_is_valid;
+
+    #[kani::proof]
+    fn repository_identity_byte_alphabet_is_exact() {
+        let byte: u8 = kani::any();
+        assert_eq!(
+            repository_identity_byte_is_valid(byte),
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
+        );
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::repository_identity_byte_is_valid;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn repository_identity_byte_alphabet_is_exact(byte: u8)
+            ensures
+                repository_identity_byte_is_valid(byte)
+                    == ((byte >= 48 && byte <= 57)
+                        || (byte >= 65 && byte <= 90)
+                        || (byte >= 97 && byte <= 122)
+                        || matches!(byte, b'.' | b'_' | b'-')),
+        {
+        }
+    }
+}
+
+#[cfg(kani)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

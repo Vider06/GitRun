@@ -1,24 +1,42 @@
 //! Updater-owned policy persistence, host diagnostics and bounded operation history.
 
+#[cfg(verus)]
+use vstd::prelude::{verus_spec, verus_verify};
+
+#[cfg(verus)]
+use vstd::contrib::exec_spec::*;
+#[allow(unused_imports)]
+use vstd::prelude::*;
+
+#[cfg(not(any(kani, verus)))]
 use crate::{build_plan, resolve_policy_update_for_target, UpdatePolicy};
+#[cfg(not(any(kani, verus)))]
 use gitrun_core::Config;
+#[cfg(not(any(kani, verus)))]
 use gitrun_platform::{ManagedService, ServiceAction, ServiceManager};
+#[cfg(not(any(kani, verus)))]
 use serde::{Deserialize, Serialize};
+#[cfg(not(any(kani, verus)))]
 use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(not(any(kani, verus)))]
 use std::path::{Path, PathBuf};
+#[cfg(not(any(kani, verus)))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(not(any(kani, verus)))]
 static UPDATER_STATE_WRITE_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
     std::sync::OnceLock::new();
 
 /// Holds both the in-process mutex and the cross-process advisory lock.
 /// The lock file lives beside the state files and is never replaced.
+#[cfg(not(any(kani, verus)))]
 struct UpdaterStateWriteGuard {
     _thread: std::sync::MutexGuard<'static, ()>,
     #[cfg(unix)]
     _process: std::fs::File,
 }
 
+#[cfg(not(any(kani, verus)))]
 fn updater_state_write_guard() -> Result<UpdaterStateWriteGuard, String> {
     let thread = UPDATER_STATE_WRITE_LOCK
         .get_or_init(|| std::sync::Mutex::new(()))
@@ -72,24 +90,31 @@ fn updater_state_write_guard() -> Result<UpdaterStateWriteGuard, String> {
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 const SETTINGS_FILE: &str = "updater-settings.json";
+#[cfg(not(any(kani, verus)))]
 const HISTORY_FILE: &str = "updater-history.json";
+#[cfg(not(any(kani, verus)))]
 const HISTORY_LIMIT: usize = 25;
 // Public Ed25519 trust anchor, stored as bytes to avoid secret-scanner token heuristics.
+#[cfg(not(any(kani, verus)))]
 const DEFAULT_PUBLIC_KEY_BYTES: [u8; 32] = [
     17, 204, 158, 175, 1, 71, 218, 218, 64, 127, 253, 52, 151, 194, 206, 188, 225, 125, 25, 94, 33,
     192, 96, 48, 193, 226, 225, 220, 104, 143, 65, 241,
 ];
+#[cfg(not(any(kani, verus)))]
 const DEFAULT_PUBLIC_KEY_ID: &str = "gitrun-release-ed25519-v1";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[cfg(not(any(kani, verus)))]
 pub enum UpdatePolicyChoice {
     SecurityOnly,
     SecurityFull,
     SecurityFullPre,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl UpdatePolicyChoice {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -108,25 +133,61 @@ impl UpdatePolicyChoice {
     }
 }
 
+#[cfg(verus)]
+verus! {
+    exec_spec_verified! {
+        pub open spec fn update_policy_choice_code_spec(value: SpecString) -> Option<u8> {
+            if value == "security_only"@ {
+                Some(0u8)
+            } else if value == "security_full"@ {
+                Some(1u8)
+            } else if value == "security_full_pre"@ {
+                Some(2u8)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+#[cfg(not(verus))]
+pub(crate) fn update_policy_choice_code(value: &str) -> Option<u8> {
+    match value {
+        "security_only" => Some(0),
+        "security_full" => Some(1),
+        "security_full_pre" => Some(2),
+        _ => None,
+    }
+}
+
+#[cfg(verus)]
+#[verus_spec(returns update_policy_choice_code_spec(value@))]
+pub(crate) fn update_policy_choice_code(value: &str) -> Option<u8> {
+    exec_update_policy_choice_code_spec(value)
+}
+
+#[cfg(not(any(kani, verus)))]
 impl TryFrom<&str> for UpdatePolicyChoice {
     type Error = String;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "security_only" => Ok(Self::SecurityOnly),
-            "security_full" => Ok(Self::SecurityFull),
-            "security_full_pre" => Ok(Self::SecurityFullPre),
+        match update_policy_choice_code(value) {
+            Some(0) => Ok(Self::SecurityOnly),
+            Some(1) => Ok(Self::SecurityFull),
+            Some(2) => Ok(Self::SecurityFullPre),
             _ => Err(format!("unsupported updater policy: {value}")),
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct UpdaterSettings {
     pub schema_version: u32,
     pub policy: UpdatePolicyChoice,
 }
 
+#[cfg(not(any(kani, verus)))]
 impl Default for UpdaterSettings {
     fn default() -> Self {
         Self {
@@ -139,6 +200,7 @@ impl Default for UpdaterSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(not(any(kani, verus)))]
 pub struct UpdateOperation {
     pub timestamp: u64,
     pub from_version: String,
@@ -149,6 +211,7 @@ pub struct UpdateOperation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct UpdateServiceStatus {
     pub name: String,
     pub installed: bool,
@@ -156,6 +219,7 @@ pub struct UpdateServiceStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct UpdateLockStatus {
     pub status: String,
     pub owner_pid: Option<u32>,
@@ -163,6 +227,7 @@ pub struct UpdateLockStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct UpdateCheckInfo {
     pub checked: bool,
     pub available: bool,
@@ -174,6 +239,7 @@ pub struct UpdateCheckInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(not(any(kani, verus)))]
 pub struct UpdaterInfo {
     pub version: String,
     pub package: String,
@@ -189,7 +255,7 @@ pub struct UpdaterInfo {
     pub check: Option<UpdateCheckInfo>,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(any(kani, verus))))]
 fn validate_privileged_state_path(directory: &Path) -> Result<(), String> {
     use std::path::Component;
     if !directory.is_absolute() {
@@ -247,6 +313,7 @@ fn validate_privileged_state_path(directory: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn load_updater_config() -> Result<Config, String> {
     let explicit = std::env::var_os("GITRUN_CONFIG_FILE");
     let path = explicit.map(PathBuf::from).or_else(|| {
@@ -266,6 +333,7 @@ fn load_updater_config() -> Result<Config, String> {
     Ok(config)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn current_process_is_root() -> bool {
     #[cfg(unix)]
     {
@@ -277,6 +345,7 @@ fn current_process_is_root() -> bool {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn command_success_with_timeout(
     program: &Path,
     args: &[String],
@@ -301,6 +370,7 @@ fn command_success_with_timeout(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn service_status(service: ManagedService) -> (bool, bool, Option<ServiceManager>) {
     let Some(manager) = gitrun_platform::detect_service_manager() else {
         return (false, false, None);
@@ -316,6 +386,7 @@ fn service_status(service: ManagedService) -> (bool, bool, Option<ServiceManager
     (installed, active, Some(manager))
 }
 
+#[cfg(not(any(kani, verus)))]
 fn state_dir() -> Result<PathBuf, String> {
     let config = load_updater_config()?;
     let directory = PathBuf::from(config.state_dir);
@@ -326,6 +397,7 @@ fn state_dir() -> Result<PathBuf, String> {
     Ok(directory)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn safe_state_dir(path: &Path, create: bool) -> Result<(), String> {
     if create {
         std::fs::create_dir_all(path)
@@ -350,6 +422,7 @@ fn safe_state_dir(path: &Path, create: bool) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn read_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> Result<T, String> {
     match std::fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
@@ -367,6 +440,7 @@ fn read_json<T: for<'de> Deserialize<'de> + Default>(path: &Path) -> Result<T, S
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     use std::io::Write;
     let parent = path.parent().ok_or("updater state path has no parent")?;
@@ -420,6 +494,7 @@ fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<(), String> 
     result.map_err(|error| format!("commit updater state: {error}"))
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn read_settings_local() -> Result<UpdaterSettings, String> {
     let directory = state_dir()?;
     safe_state_dir(&directory, false)?;
@@ -433,6 +508,7 @@ pub fn read_settings_local() -> Result<UpdaterSettings, String> {
     Ok(settings)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn save_settings_local(policy: &str) -> Result<UpdaterSettings, String> {
     let _write_guard = updater_state_write_guard()?;
     let policy = UpdatePolicyChoice::try_from(policy)?;
@@ -446,6 +522,7 @@ pub fn save_settings_local(policy: &str) -> Result<UpdaterSettings, String> {
     Ok(settings)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn bounded_safe_text(value: &str, limit: usize) -> String {
     value
         .chars()
@@ -454,6 +531,7 @@ fn bounded_safe_text(value: &str, limit: usize) -> String {
         .collect()
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn record_operation(
     from_version: &str,
     to_version: Option<&str>,
@@ -487,6 +565,7 @@ pub fn record_operation(
     atomic_write_json(&path, &history)
 }
 
+#[cfg(not(any(kani, verus)))]
 fn process_is_alive(pid: u32) -> bool {
     if pid == 0 {
         return false;
@@ -501,6 +580,7 @@ fn process_is_alive(pid: u32) -> bool {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn lock_status(directory: &Path) -> UpdateLockStatus {
     let lock = directory.join("gtuu.lock");
     let metadata = match std::fs::symlink_metadata(&lock) {
@@ -553,6 +633,7 @@ fn lock_status(directory: &Path) -> UpdateLockStatus {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn installed_version() -> String {
     for path in [
         "/usr/share/gitrun/version.txt",
@@ -572,6 +653,7 @@ fn installed_version() -> String {
         .unwrap_or_else(|| "Unknown".into())
 }
 
+#[cfg(not(any(kani, verus)))]
 fn package_type() -> String {
     if let Ok(value) = std::env::var("GITRUN_PACKAGE_TYPE") {
         if !value.trim().is_empty() {
@@ -648,6 +730,7 @@ fn package_type() -> String {
     "development/source".into()
 }
 
+#[cfg(not(any(kani, verus)))]
 fn package_abi(target: &str) -> String {
     if target.ends_with("-linux-gnu") {
         "gnu".into()
@@ -662,6 +745,7 @@ fn package_abi(target: &str) -> String {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn service_snapshot() -> Vec<UpdateServiceStatus> {
     let (scheduler_installed, scheduler_active, _) = service_status(ManagedService::Scheduler);
     let manager = gitrun_platform::detect_service_manager();
@@ -704,6 +788,7 @@ fn service_snapshot() -> Vec<UpdateServiceStatus> {
     ]
 }
 
+#[cfg(not(any(kani, verus)))]
 fn policy_description(policy: UpdatePolicyChoice) -> &'static str {
     match policy {
         UpdatePolicyChoice::SecurityOnly => "Security releases only",
@@ -712,6 +797,7 @@ fn policy_description(policy: UpdatePolicyChoice) -> &'static str {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn update_check(version: &str, policy: UpdatePolicyChoice, target: &str) -> UpdateCheckInfo {
     // Official update checks always use the built-in trust anchor. The release
     // manifest type is covered by its Ed25519 signature.
@@ -758,6 +844,7 @@ fn update_check(version: &str, policy: UpdatePolicyChoice, target: &str) -> Upda
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn info_local(check: bool) -> Result<UpdaterInfo, String> {
     let directory = state_dir()?;
     safe_state_dir(&directory, false)?;
@@ -795,9 +882,12 @@ pub fn info_local(check: bool) -> Result<UpdaterInfo, String> {
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 const CONTROL_MANAGER_SOCKET: &str = "/run/gitrun-control/manager.sock";
+#[cfg(not(any(kani, verus)))]
 const CONTROL_MANAGER_MAX_MESSAGE: usize = 1024 * 1024;
 
+#[cfg(not(any(kani, verus)))]
 fn control_manager_enabled() -> bool {
     #[cfg(target_os = "linux")]
     {
@@ -820,6 +910,7 @@ fn control_manager_enabled() -> bool {
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 fn control_manager_request(
     operation: &str,
     action: &str,
@@ -887,6 +978,7 @@ fn control_manager_request(
     }
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn read_settings() -> Result<UpdaterSettings, String> {
     if control_manager_enabled() && !current_process_is_root() {
         return serde_json::from_value(control_manager_request(
@@ -899,6 +991,7 @@ pub fn read_settings() -> Result<UpdaterSettings, String> {
     current_settings_local()
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn save_settings(policy: &str) -> Result<UpdaterSettings, String> {
     let policy_choice = UpdatePolicyChoice::try_from(policy)?;
     if control_manager_enabled() && !current_process_is_root() {
@@ -915,6 +1008,7 @@ pub fn save_settings(policy: &str) -> Result<UpdaterSettings, String> {
     })
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn info(check: bool) -> Result<UpdaterInfo, String> {
     if control_manager_enabled() && !current_process_is_root() {
         return serde_json::from_value(control_manager_request(
@@ -927,15 +1021,18 @@ pub fn info(check: bool) -> Result<UpdaterInfo, String> {
     info_local(check)
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn current_settings_local() -> Result<UpdaterSettings, String> {
     read_settings_local()
 }
 
+#[cfg(not(any(kani, verus)))]
 pub fn local_settings_save(policy: &str) -> Result<UpdaterSettings, String> {
     save_settings_local(policy)
 }
 
 /// The CLI records completion at the transaction boundary, not from the UI.
+#[cfg(not(any(kani, verus)))]
 pub fn record_cli_operation(
     from_version: &str,
     to_version: Option<&str>,
@@ -967,7 +1064,7 @@ pub fn record_cli_operation(
     let _ = record_operation(from_version, to_version, release_type, result, error);
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(any(kani, verus))))]
 mod tests {
     use super::*;
 
@@ -1043,3 +1140,48 @@ mod tests {
         assert_eq!(package_abi("x86_64-unknown-linux-unknown"), "unknown");
     }
 }
+
+#[cfg(kani)]
+mod kani_verification {
+    use super::update_policy_choice_code;
+
+    #[kani::proof]
+    fn updater_policy_choice_vocabulary_is_closed() {
+        assert_eq!(update_policy_choice_code("security_only"), Some(0));
+        assert_eq!(update_policy_choice_code("security_full"), Some(1));
+        assert_eq!(update_policy_choice_code("security_full_pre"), Some(2));
+        assert_eq!(update_policy_choice_code(""), None);
+        assert_eq!(update_policy_choice_code("full"), None);
+        assert_eq!(update_policy_choice_code("security"), None);
+        assert_eq!(update_policy_choice_code("SECURITY_FULL"), None);
+        assert_eq!(update_policy_choice_code(" security_full "), None);
+        assert_eq!(update_policy_choice_code("security_full_pre_release"), None);
+    }
+}
+
+#[cfg(verus)]
+mod verus_verification {
+    use super::update_policy_choice_code_spec;
+    use vstd::prelude::*;
+
+    verus! {
+        proof fn updater_policy_choice_vocabulary_is_closed() {
+            assert(update_policy_choice_code_spec("security_only"@) == Some(0));
+            assert(update_policy_choice_code_spec("security_full"@) == Some(1));
+            assert(update_policy_choice_code_spec("security_full_pre"@) == Some(2));
+            assert(update_policy_choice_code_spec(""@) == None);
+            assert(update_policy_choice_code_spec("full"@) == None);
+            assert(update_policy_choice_code_spec("security"@) == None);
+            assert(update_policy_choice_code_spec("SECURITY_FULL"@) == None);
+            assert(update_policy_choice_code_spec(" security_full "@) == None);
+            assert(update_policy_choice_code_spec("security_full_pre_release"@) == None);
+        }
+    }
+}
+
+#[cfg(kani)]
+#[allow(dead_code)]
+fn main() {}
+
+#[cfg(verus)]
+fn main() {}

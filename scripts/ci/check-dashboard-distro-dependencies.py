@@ -33,10 +33,16 @@ PROBES = (
     ),
     (
         "openSUSE (glibc)",
-        "opensuse/leap:latest",
-        "zypper --non-interactive refresh && zypper --non-interactive install --no-recommends "
-        "pkg-config gcc gcc-c++ make curl wget file libopenssl-devel "
-        "libappindicator3-1 librsvg-devel webkit2gtk3-devel",
+        "opensuse/tumbleweed:latest",
+        "refreshed=0; "
+        "for attempt in 1 2 3; do "
+        "if zypper --non-interactive refresh --force; then refreshed=1; break; fi; "
+        "sleep 5; "
+        "done; "
+        "test \"$refreshed\" -eq 1; "
+        "zypper --non-interactive install --no-recommends "
+        "pkgconf-pkg-config gcc gcc-c++ make curl wget file libopenssl-devel "
+        "libayatana-appindicator3-devel librsvg-devel webkitgtk3-devel",
     ),
     (
         "Alpine Linux (musl, x86_64 APK)",

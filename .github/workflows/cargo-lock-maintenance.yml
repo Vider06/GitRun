@@ -71,7 +71,7 @@ jobs:
             local generated="$workdir/generated.lock"
 
             rm -f "$generated"
-            cargo update --workspace --manifest-path "$manifest"
+            cargo update --workspace --verbose --manifest-path "$manifest"
 
             if [ ! -f "$root/Cargo.lock" ]; then
               echo "::error::Cargo did not generate a lockfile for $lock"
@@ -92,7 +92,7 @@ jobs:
           for lock in "${locks[@]}"; do
             case "$lock" in
               Cargo.lock)
-                if ! cargo update --workspace --manifest-path Cargo.toml; then
+                if ! cargo update --workspace --verbose --manifest-path Cargo.toml; then
                   failures+=( "$lock" )
                   echo "::error::failed to regenerate $lock"
                 elif git diff --quiet -- "$lock"; then
@@ -123,7 +123,7 @@ jobs:
                 cp -a crates/gitrun-platform "$bootstrap/crates/"
                 cp "$lock" "$bootstrap/Cargo.lock"
 
-                if ! cargo update --workspace --manifest-path "$bootstrap/Cargo.toml"; then
+                if ! cargo update --workspace --verbose --manifest-path "$bootstrap/Cargo.toml"; then
                   failures+=( "$lock" )
                   echo "::error::failed to regenerate $lock"
                 elif ! cmp -s "$bootstrap/Cargo.lock" "$lock"; then

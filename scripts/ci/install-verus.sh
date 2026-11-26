@@ -3,7 +3,8 @@ set -euo pipefail
 
 readonly verus_version="0.2026.11.26.b7ad556"
 readonly archive="verus-${verus_version}-x86-linux.zip"
-readonly url="https://github.com/verus-lang/verus/releases/download/release/${verus_version}/${archive}"
+# Verus publishes CI rolling releases under the release/rolling tag namespace.
+readonly url="https://github.com/verus-lang/verus/releases/download/release/rolling/${verus_version}/${archive}"
 readonly base="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 readonly root="$base/verus"
 readonly download="$base/$archive"

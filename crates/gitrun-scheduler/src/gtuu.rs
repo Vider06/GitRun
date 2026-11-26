@@ -679,10 +679,8 @@ mod tests {
             // Non-Unix cannot check process liveness portably, so give the
             // fallback an old directory timestamp to simulate an abandoned
             // lock rather than assuming the PID is definitely dead.
-            let old_time = filetime::FileTime::from_system_time(
-                SystemTime::now() - Duration::from_secs(60 * 60 * 2),
-            );
-            filetime::set_file_mtime(&lock_path, old_time).unwrap();
+            let old_time = SystemTime::now() - Duration::from_secs(60 * 60 * 2);
+            std::fs::set_times(&lock_path, std::fs::FileTimes::new().set_modified(old_time)).unwrap();
         }
 
         // This must succeed by reclaiming the abandoned lock, not error out
@@ -707,10 +705,8 @@ mod tests {
         fs::create_dir(&lock_path).unwrap();
         fs::write(lock_path.join("pid"), std::process::id().to_string()).unwrap();
 
-        let old_time = filetime::FileTime::from_system_time(
-            SystemTime::now() - Duration::from_secs(60 * 60 * 2),
-        );
-        filetime::set_file_mtime(&lock_path, old_time).unwrap();
+        let old_time = SystemTime::now() - Duration::from_secs(60 * 60 * 2);
+        std::fs::set_times(&lock_path, std::fs::FileTimes::new().set_modified(old_time)).unwrap();
 
         let second = GtuuLock::acquire(&dir);
         assert!(
@@ -728,10 +724,8 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let lock_path = dir.join("gtuu.lock");
         fs::create_dir(&lock_path).unwrap();
-        let old_time = filetime::FileTime::from_system_time(
-            SystemTime::now() - Duration::from_secs(60 * 60 * 2),
-        );
-        let _ = filetime::set_file_mtime(&lock_path, old_time);
+        let old_time = SystemTime::now() - Duration::from_secs(60 * 60 * 2);
+        let _ = std::fs::set_times(&lock_path, std::fs::FileTimes::new().set_modified(old_time));
 
         let reclaimed = GtuuLock::acquire(&dir);
         assert!(

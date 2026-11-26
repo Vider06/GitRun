@@ -1808,9 +1808,8 @@ jobs:
             aarch64-unknown-linux-musl) arch=arm64; formats="apk"; xbps_arch=aarch64-musl; xbps_dep=musl; base_dep=musl; cpu=aarch64-musl ;;
             *) echo "Unsupported package target: $TARGET" >&2; exit 1 ;;
           esac
-          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm zstd
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_apt rpm zstd
           command -v go >/dev/null
           GOBIN="$RUNNER_TEMP/bin" go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
           export PATH="$RUNNER_TEMP/bin:$PATH"
@@ -2057,9 +2056,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends dpkg-dev imagemagick
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_apt dpkg-dev imagemagick
           test "$VERSION" = v1.9.1
           binary="$GITHUB_WORKSPACE/canonical/gitrun-x86_64-unknown-linux-gnu"
           test -x "$binary"
@@ -2211,9 +2209,8 @@ jobs:
       - name: Install package inspection tools
         run: |
           set -euo pipefail
-          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends rpm zstd
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_apt rpm zstd
       - name: Set up pinned Go toolchain for nFPM
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
@@ -2625,9 +2622,8 @@ jobs:
       - name: Install metadata tools
         run: |
           set -euo pipefail
-          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq zip
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_apt jq zip
       - name: Synchronize and validate release version metadata
         shell: bash
         run: |
@@ -2748,9 +2744,8 @@ jobs:
       - name: Install release asset inspection tools
         run: |
           set -euo pipefail
-          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends jq zstd unzip rpm file
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_apt jq zstd unzip rpm file
       - name: Assemble canonical Release asset set
         shell: bash
         run: |
@@ -3508,10 +3503,8 @@ jobs:
       - name: Install Tauri Linux dependencies
         run: |
           set -euo pipefail
-          sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev \
+          source "$RUNNER_TEMP/ci-lib.sh"
+          ci_apt build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev \
             librsvg2-dev patchelf xdg-utils libwebkit2gtk-4.1-dev imagemagick
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d

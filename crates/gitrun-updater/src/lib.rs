@@ -3540,6 +3540,7 @@ mod tests {
                 installation_method: Some("system-package-manager".into()),
             }],
             signature: None,
+            signature_v2: None,
             signature_key_id: None,
             runner_image: None,
             repository: Some("Vider06/GitRun".into()),

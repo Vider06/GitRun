@@ -15,6 +15,8 @@ from io import BytesIO
 from typing import Any
 
 ARTIFACT_PREFIX = "gitrun-main-verification-attestation"
+REPORT: list[str] = []
+
 REQUIRED_JOBS = (
     "rust-source-inventory",
     "kani-formal-verification",
@@ -112,7 +114,8 @@ def main() -> int:
     release_sha = os.environ["RELEASE_SHA"].lower()
     release_ref = os.environ["RELEASE_REF"]
     event = os.environ["RELEASE_EVENT"]
-    report: list[str] = []
+    report = REPORT
+    report.clear()
 
     if not token:
         raise GateError("GH_TOKEN is missing; actions:read permission is required")
@@ -220,7 +223,6 @@ def main() -> int:
             f"- CI workflow conclusion: **{selected_run.get('conclusion')}**."
         )
         report.extend(describe_jobs(jobs))
-        write_summary(report)
         failed_names = [
             job.get("name", str(job.get("id"))) for job in failed_jobs
         ]
@@ -357,5 +359,5 @@ if __name__ == "__main__":
         sys.exit(main())
     except GateError as error:
         print(f"RELEASE BLOCKED: {error}", file=sys.stderr)
-        write_summary([f"- **FAILED:** {error}"])
+        write_summary([*REPORT, f"- **FAILED:** {error}"])
         sys.exit(1)

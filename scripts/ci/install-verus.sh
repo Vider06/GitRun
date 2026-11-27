@@ -7,7 +7,7 @@ readonly archive="verus-${verus_version}-x86-linux.zip"
 readonly url="https://github.com/verus-lang/verus/releases/download/release/rolling/${verus_version}/${archive}"
 # Store the public digest as decimal bytes so secret scanners do not mistake
 # a long hexadecimal checksum for a credential.
-readonly sha256_bytes=(10 213 12 40 206 11 192 50 179 39 245 46 77 241 153 57 86 28 217 7 86 154 126 170 126 201 103 82 30 14 122)
+readonly sha256_bytes=(10 213 12 40 206 11 192 50 179 39 245 46 77 241 153 57 87 97 205 144 117 105 167 234 167 236 150 117 33 224 231 171)
 readonly base="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 readonly root="$base/verus"
 readonly download="$base/$archive"

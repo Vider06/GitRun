@@ -3731,7 +3731,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: gitrun-main-verification-attestation
+          name: gitrun-main-verification-attestation-${{ github.run_attempt }}
           path: ${{ runner.temp }}/gitrun-verification-attestation.json
           if-no-files-found: ignore
           retention-days: 30

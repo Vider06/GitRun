@@ -3662,3 +3662,76 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/ci/render-cache-gc-summary.py | tee -a "$GITHUB_STEP_SUMMARY"
+
+  verification-attestation:
+    name: Publish main verification attestation
+    needs:
+      - variables-verification
+      - environment
+      - detect
+      - cargo-lock
+      - python-quality
+      - ci-selftest
+      - repository
+      - workflows
+      - shell
+      - powershell
+      - frontend
+      - audit-node
+      - rust-lint
+      - rust-test
+      - rust-build
+      - audit-rust
+      - security-hardening
+      - gsr-watchdog
+      - runtime-contracts
+      - systemd-verify
+      - native-service-manager-contracts
+      - platform-target-check
+      - release-package-certification
+      - migration-package-certification
+      - release-inputs-certification
+      - release-asset-assembly-certification
+      - platform-compatibility
+      - multi-distro-contracts
+      - release-contracts
+      - rust-source-inventory
+      - kani-formal-verification
+      - verus-formal-verification
+      - formal-verification
+      - miri
+      - tauri
+      - tauri-arm64
+      - release-dashboard-package-certification
+      - release-dashboard-musl-build-certification
+      - release-dashboard-musl-package-certification
+      - tauri-recovery
+      - docker
+      - cache-gc
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - *checkout
+      - name: Generate per-job verification attestation
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WORKFLOW_NAME: ${{ github.workflow }}
+        run: python3 scripts/ci/create-verification-attestation.py
+      - name: Upload main verification attestation
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: gitrun-main-verification-attestation
+          path: ${{ runner.temp }}/gitrun-verification-attestation.json
+          if-no-files-found: ignore
+          retention-days: 30

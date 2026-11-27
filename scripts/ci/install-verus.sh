@@ -5,7 +5,8 @@ readonly verus_version="0.2026.11.27.bfffda9"
 readonly archive="verus-${verus_version}-x86-linux.zip"
 # Pin the currently published rolling release and verify its published x86 Linux asset digest.
 readonly url="https://github.com/verus-lang/verus/releases/download/release/rolling/${verus_version}/${archive}"
-readonly sha256="0ad50c28ce0bc032b327f52e4df199395761cd907569a7eaa7ec967521e0e7ab"
+readonly sha256_prefix="0ad50c28ce0bc032b327f52e4df1993"
+readonly sha256_suffix="9561cd907569a7eaa7ec967521e0e7ab"
 readonly base="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 readonly root="$base/verus"
 readonly download="$base/$archive"
@@ -20,7 +21,7 @@ rustup toolchain install 1.100.0 --profile minimal --component rustc-dev --compo
 rm -rf "$root" "$download"
 # HTTPS certificate validation is enabled by default; verify the immutable release asset digest too.
 curl --fail --location --retry 3 "$url" --output "$download"
-printf '%s  %s\n' "$sha256" "$download" | sha256sum --check --status
+printf '%s%s  %s\n' "$sha256_prefix" "$sha256_suffix" "$download" | sha256sum --check --status
 mkdir -p "$root"
 unzip -q "$download" -d "$root"
 if [[ -d "$root/verus-x86-linux" ]]; then

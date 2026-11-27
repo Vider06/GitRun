@@ -6598,6 +6598,7 @@ mod debian_reinstall_artifact_tests {
             git_commit: "test-commit-id".into(),
             artifacts,
             signature: None,
+            signature_v2: None,
             signature_key_id: None,
             dependencies: Vec::new(),
             runner_image: None,

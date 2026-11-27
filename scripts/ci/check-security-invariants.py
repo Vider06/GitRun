@@ -11,7 +11,16 @@ REQUIRED = {
         "GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64",
         "GITRUN_UPDATE_SIGNING_KEY_ID",
     ),
-    "crates/gitrun-updater/src/lib.rs": ("GITRUN_UPDATE_SIGNATURE_REQUIRED",),
+    "crates/gitrun-updater/src/lib.rs": (
+        "GITRUN_UPDATE_SIGNATURE_REQUIRED",
+        "signature_v2",
+        "legacy_signing_payload",
+    ),
+    ".github/workflows/release-type-change.yml": (
+        "signature_v2",
+        "legacy_payload",
+        "v2_payload",
+    ),
     "config/config.example.env": ("GITRUN_RUNNER_NETWORK",),
 }
 FORBIDDEN = {

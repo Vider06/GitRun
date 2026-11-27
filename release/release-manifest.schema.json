@@ -11,6 +11,7 @@
     },
     "release_type": { "type": "string", "enum": ["pre", "full", "security"] },
     "signature": { "type": "string", "pattern": "^[0-9a-f]{128}$" },
+    "signature_v2": { "type": "string", "pattern": "^[0-9a-f]{128}$" },
     "signature_key_id": { "type": "string", "const": "gitrun-release-ed25519-v1" },
     "git_commit": {
       "type": "string",

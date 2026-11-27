@@ -2822,16 +2822,29 @@ jobs:
     steps:
       - *checkout
       - *boot
+      # Verus and the locked vstd release require Rust 1.100.0. The shared
+      # boot step exports the repository-wide 1.99.0 toolchain, so explicitly
+      # override it for every step that invokes rustup, Cargo, or Verus.
       - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        env:
+          RUSTUP_TOOLCHAIN: 1.100.0
         with:
-          toolchain: ${{ env.RUST_VERSION }}
+          toolchain: 1.100.0
+          components: rustc-dev, llvm-tools
       - name: Install pinned Verus verifier
         shell: bash
+        env:
+          RUSTUP_TOOLCHAIN: 1.100.0
         run: bash scripts/ci/install-verus.sh
       - name: Verify Verus smoke and production proofs
         shell: bash
-        run: bash scripts/ci/verify-verus-formal.sh
+        env:
+          RUSTUP_TOOLCHAIN: 1.100.0
+        run: |
+          rustc -vV
+          cargo --version
+          bash scripts/ci/verify-verus-formal.sh
       - name: Upload Verus per-source proof results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

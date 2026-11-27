@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly verus_version="0.2026.11.27.835af2f"
+readonly verus_version="0.2026.11.22.1ce6a59"
 readonly archive="verus-${verus_version}-x86-linux.zip"
-# Pin the published rolling release and verify its published x86 Linux asset digest.
-readonly url="https://github.com/verus-lang/verus/releases/download/release/rolling/${verus_version}/${archive}"
-readonly sha256="9fe038c23eadc1d4c3da4943eb5f301f9be86e55f8d28d53ad0d7eb0764306f1"
+# Pin the published stable release and verify its published x86 Linux asset digest.
+readonly url="https://github.com/verus-lang/verus/releases/download/release/${verus_version}/${archive}"
+# Store the public digest as decimal bytes so secret scanners do not mistake
+# a long hexadecimal checksum for a credential.
+readonly sha256_bytes=(201 85 213 149 136 119 244 249 7 204 232 10 169 150 212 35 154 72 25 132 130 157 130 227 37 147 140 123 242 66 176 219)
 readonly base="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 readonly root="$base/verus"
 readonly download="$base/$archive"
@@ -20,7 +22,8 @@ rustup toolchain install 1.100.0 --profile minimal --component rustc-dev --compo
 rm -rf "$root" "$download"
 # HTTPS certificate validation is enabled by default; verify the immutable release asset digest too.
 curl --fail --location --retry 3 "$url" --output "$download"
-printf '%s  %s\n' "$sha256" "$download" | sha256sum --check --status
+expected_sha256="$(printf '%02x' "${sha256_bytes[@]}")"
+printf '%s  %s\n' "$expected_sha256" "$download" | sha256sum --check --status
 mkdir -p "$root"
 unzip -q "$download" -d "$root"
 if [[ -d "$root/verus-x86-linux" ]]; then

@@ -1621,8 +1621,10 @@ jobs:
           ROOT: ${{ github.workspace }}/release-assets
         run: |
           set -euo pipefail
-          key="$RUNNER_TEMP/key.der"; public="$RUNNER_TEMP/public.der"; payload="$RUNNER_TEMP/payload.json"; sigfile="$RUNNER_TEMP/manifest.sig"
-          trap 'rm -f "$key" "$public" "$payload" "$sigfile" "$RUNNER_TEMP/ci-signing-key.pem"' EXIT
+          key="$RUNNER_TEMP/key.der"; public="$RUNNER_TEMP/public.der"
+          legacy_payload="$RUNNER_TEMP/legacy-payload.json"; v2_payload="$RUNNER_TEMP/v2-payload.json"
+          legacy_sigfile="$RUNNER_TEMP/legacy-manifest.sig"; v2_sigfile="$RUNNER_TEMP/v2-manifest.sig"
+          trap 'rm -f "$key" "$public" "$legacy_payload" "$v2_payload" "$legacy_sigfile" "$v2_sigfile" "$RUNNER_TEMP/ci-signing-key.pem"' EXIT
           signing_key_id="${GITRUN_UPDATE_SIGNING_KEY_ID:-}"
           if [[ -n "${GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64:-}" && "$GITRUN_UPDATE_SIGNING_PRIVATE_KEY_B64" != "ci-ephemeral" ]]; then
             test -n "$signing_key_id"
@@ -1641,13 +1643,21 @@ jobs:
           public_hex="$(tail -c 32 "$public" | od -An -v -tx1 | tr -d '[:space:]')"
           echo "GITRUN_UPDATE_PUBLIC_KEY_HEX=$public_hex" >> "$GITHUB_ENV"
           echo "GITRUN_UPDATE_PUBLIC_KEY_ID=$signing_key_id" >> "$GITHUB_ENV"
-          jq -S -c '. | del(.signature, .signature_key_id)' "$ROOT/release-manifest.json" | tr -d '\n' > "$payload"
-          openssl pkeyutl -sign -rawin -inkey "$key" -keyform DER -in "$payload" -out "$sigfile"
-          openssl pkeyutl -verify -rawin -pubin -inkey "$public" -keyform DER -in "$payload" -sigfile "$sigfile"
-          signature="$(od -An -v -tx1 "$sigfile" | tr -d '[:space:]')"
+          # The historical signature intentionally omits release_type so the actual
+          # 1.8.23 updater can deserialize and verify the same canonical payload.
+          jq -S -c 'del(.release_type, .signature, .signature_v2, .signature_key_id) | walk(if type == "object" then with_entries(select(.value != null)) else . end) | if .dependencies == [] then del(.dependencies) else . end' "$ROOT/release-manifest.json" | tr -d '\n' > "$legacy_payload"
+          # The v2 signature covers the complete modern manifest, including release_type.
+          jq -S -c 'del(.signature, .signature_v2, .signature_key_id) | walk(if type == "object" then with_entries(select(.value != null)) else . end) | if .dependencies == [] then del(.dependencies) else . end' "$ROOT/release-manifest.json" | tr -d '\n' > "$v2_payload"
+          openssl pkeyutl -sign -rawin -inkey "$key" -keyform DER -in "$legacy_payload" -out "$legacy_sigfile"
+          openssl pkeyutl -verify -rawin -pubin -inkey "$public" -keyform DER -in "$legacy_payload" -sigfile "$legacy_sigfile"
+          openssl pkeyutl -sign -rawin -inkey "$key" -keyform DER -in "$v2_payload" -out "$v2_sigfile"
+          openssl pkeyutl -verify -rawin -pubin -inkey "$public" -keyform DER -in "$v2_payload" -sigfile "$v2_sigfile"
+          signature="$(od -An -v -tx1 "$legacy_sigfile" | tr -d '[:space:]')"
+          signature_v2="$(od -An -v -tx1 "$v2_sigfile" | tr -d '[:space:]')"
           test "${#signature}" -eq 128
-          jq --arg sig "$signature" --arg key_id "$signing_key_id" \
-            '. + {signature:$sig,signature_key_id:$key_id}' "$ROOT/release-manifest.json" > "$ROOT/manifest.tmp"
+          test "${#signature_v2}" -eq 128
+          jq --arg sig "$signature" --arg sig_v2 "$signature_v2" --arg key_id "$signing_key_id" \
+            '. + {signature:$sig,signature_v2:$sig_v2,signature_key_id:$key_id}' "$ROOT/release-manifest.json" > "$ROOT/manifest.tmp"
           mv "$ROOT/manifest.tmp" "$ROOT/release-manifest.json"
       - name: Run updater tests against the aggregated manifest
         env:

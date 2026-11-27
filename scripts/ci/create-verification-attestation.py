@@ -57,6 +57,9 @@ def main() -> int:
             "attestation is missing required job records: " + ", ".join(missing)
         )
 
+    run_attempt = int(os.environ["RUN_ATTEMPT"])
+    artifact_name = f"gitrun-main-verification-attestation-{run_attempt}"
+
     document = {
         "schema_version": 1,
         "repository": os.environ["REPOSITORY"],
@@ -66,7 +69,8 @@ def main() -> int:
         "branch": os.environ["BRANCH"],
         "commit_sha": os.environ["COMMIT_SHA"],
         "run_id": int(os.environ["RUN_ID"]),
-        "run_attempt": int(os.environ["RUN_ATTEMPT"]),
+        "run_attempt": run_attempt,
+        "artifact_name": artifact_name,
         "run_url": os.environ["RUN_URL"],
         "created_at": datetime.now(timezone.utc).isoformat(),
         "jobs": jobs,

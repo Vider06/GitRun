@@ -24,7 +24,7 @@ fn verifies_release_manifest_signature_when_fixture_is_provided() {
     let mut tampered: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).expect("read signed manifest"))
             .expect("parse signed manifest");
-    let original_type = tampered["release_type"].as_str().unwrap_or("pre");
+    let original_type = tampered["release_type"].as_str().unwrap_or("pre").to_owned();
     tampered["release_type"] = serde_json::Value::String(
         if original_type == "pre" { "full" } else { "pre" }.to_owned(),
     );

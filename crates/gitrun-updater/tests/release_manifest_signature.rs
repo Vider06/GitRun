@@ -9,7 +9,7 @@ fn verifies_release_manifest_signature_when_fixture_is_provided() {
     let expected_key_id =
         env::var("GITRUN_UPDATE_PUBLIC_KEY_ID").expect("public key id must be configured");
 
-    let manifest = load_manifest(path).expect("GitRun updater must accept the release signature");
+    let manifest = load_manifest(&path).expect("GitRun updater must accept the release signature");
     assert_eq!(manifest.name, "GitRun");
     assert!(manifest.signature.is_some());
     assert!(

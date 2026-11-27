@@ -37,12 +37,10 @@ jobs:
           RELEASE_SHA: ${{ github.sha }}
           RELEASE_REF: ${{ github.ref }}
           RELEASE_EVENT: ${{ github.event_name }}
-          GITHUB_STEP_SUMMARY: ${{ github.step_summary }}
         run: python3 scripts/ci/verify-release-attestation.py
 
   prepare:
     name: Prepare immutable release inputs
-    needs: verify-ci-attestation
     needs: verify-ci-attestation
     runs-on: ubuntu-24.04
     timeout-minutes: 60

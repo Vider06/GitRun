@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -318,6 +319,28 @@ def main() -> int:
     attested_jobs = attestation.get("jobs")
     if not isinstance(attested_jobs, dict) or not attested_jobs:
         raise GateError("attestation contains no per-job results")
+    workflow_lines = open(".github/workflows/ci.yml", encoding="utf-8").read().splitlines()
+    try:
+        jobs_marker = workflow_lines.index("jobs:")
+    except ValueError as error:
+        raise GateError("checked-out CI workflow has no top-level jobs section") from error
+    expected_job_ids = set()
+    for line in workflow_lines[jobs_marker + 1 :]:
+        if line and not line.startswith(" "):
+            break
+        match = re.fullmatch(r"  ([a-zA-Z0-9_-]+):", line)
+        if match:
+            expected_job_ids.add(match.group(1))
+    expected_job_ids.discard("verification-attestation")
+    actual_job_ids = set(attested_jobs)
+    if actual_job_ids != expected_job_ids:
+        missing = sorted(expected_job_ids - actual_job_ids)
+        unexpected = sorted(actual_job_ids - expected_job_ids)
+        raise GateError(
+            f"attestation does not cover every CI job; missing={missing}, "
+            f"unexpected={unexpected}"
+        )
+
     required_jobs = attestation.get("required_jobs")
     if not isinstance(required_jobs, list) or set(REQUIRED_JOBS) - set(required_jobs):
         raise GateError(

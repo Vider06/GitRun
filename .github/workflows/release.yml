@@ -17,8 +17,33 @@ env:
   RUST_VERSION: "1.99.0"
   CACHE_EPOCH: "release-v6"
 jobs:
+  verify-ci-attestation:
+    name: Verify exact main CI attestation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verify main HEAD, CI run, every job and attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_EVENT: ${{ github.event_name }}
+          GITHUB_STEP_SUMMARY: ${{ github.step_summary }}
+        run: python3 scripts/ci/verify-release-attestation.py
+
   prepare:
     name: Prepare immutable release inputs
+    needs: verify-ci-attestation
+    needs: verify-ci-attestation
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:

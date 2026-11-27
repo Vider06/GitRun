@@ -182,8 +182,7 @@ jobs:
           set -euo pipefail
           docker info >/dev/null
           sudo bash scripts/ci/force-ubuntu-archive-mirror.sh
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends file binutils
+          sudo bash scripts/ci/apt-install-ubuntu.sh file binutils
           command -v readelf
       - name: Restore target-specific Cargo cache
         id: cargo-cache

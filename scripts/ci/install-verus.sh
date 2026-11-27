@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly verus_version="0.2026.11.27.bfffda9"
+readonly verus_version="0.2026.11.22.1ce6a59"
 readonly archive="verus-${verus_version}-x86-linux.zip"
-# Pin the currently published rolling release and verify its published x86 Linux asset digest.
-readonly url="https://github.com/verus-lang/verus/releases/download/release/rolling/${verus_version}/${archive}"
+# Pin the published stable release and verify its published x86 Linux asset digest.
+readonly url="https://github.com/verus-lang/verus/releases/download/release/${verus_version}/${archive}"
 # Store the public digest as decimal bytes so secret scanners do not mistake
 # a long hexadecimal checksum for a credential.
-readonly sha256_bytes=(10 213 12 40 206 11 192 50 179 39 245 46 77 241 153 57 87 97 205 144 117 105 167 234 167 236 150 117 33 224 231 171)
+readonly sha256_bytes=(201 85 213 149 136 119 244 249 7 204 232 10 169 150 212 35 154 72 25 132 130 157 130 227 37 147 140 123 242 66 176 219)
 readonly base="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 readonly root="$base/verus"
 readonly download="$base/$archive"

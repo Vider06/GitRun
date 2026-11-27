@@ -14,7 +14,7 @@ import zipfile
 from io import BytesIO
 from typing import Any
 
-ARTIFACT_NAME = "gitrun-main-verification-attestation"
+ARTIFACT_PREFIX = "gitrun-main-verification-attestation"
 REQUIRED_JOBS = (
     "rust-source-inventory",
     "kani-formal-verification",
@@ -23,6 +23,21 @@ REQUIRED_JOBS = (
     "miri",
     "summary",
 )
+
+
+class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Strip the GitHub token when an artifact download redirects off-host."""
+
+    def redirect_request(self, request, fp, code, message, headers, new_url):
+        redirected = super().redirect_request(
+            request, fp, code, message, headers, new_url
+        )
+        if redirected is not None:
+            old_host = urllib.parse.urlparse(request.full_url).netloc
+            new_host = urllib.parse.urlparse(new_url).netloc
+            if old_host != new_host:
+                redirected.remove_header("Authorization")
+        return redirected
 
 
 class GateError(RuntimeError):
@@ -40,7 +55,8 @@ def api_request(url: str, token: str) -> bytes:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        opener = urllib.request.build_opener(SafeRedirectHandler())
+        with opener.open(request, timeout=60) as response:
             return response.read()
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", "replace")[:1500]
@@ -164,7 +180,6 @@ def main() -> int:
             if run.get("head_sha", "").lower() == release_sha
             and run.get("head_branch") == "main"
             and run.get("event") == "push"
-            and run.get("path") == ".github/workflows/ci.yml"
         ]
         if candidates:
             candidates.sort(
@@ -228,8 +243,10 @@ def main() -> int:
             "is missing or unsuccessful"
         )
 
+    run_attempt = int(selected_run.get("run_attempt", 1))
+    artifact_name = f"{ARTIFACT_PREFIX}-{run_attempt}"
     artifact_query = urllib.parse.urlencode(
-        {"name": ARTIFACT_NAME, "per_page": 100}
+        {"name": artifact_name, "per_page": 100}
     )
     artifacts_url = (
         f"{api_url}/repos/{repository_path}/actions/runs/{run_id}/artifacts?"
@@ -239,12 +256,12 @@ def main() -> int:
     matches = [
         artifact
         for artifact in artifacts
-        if artifact.get("name") == ARTIFACT_NAME
+        if artifact.get("name") == artifact_name
         and not artifact.get("expired", False)
     ]
     if len(matches) != 1:
         raise GateError(
-            f"expected exactly one unexpired '{ARTIFACT_NAME}' artifact "
+            f"expected exactly one unexpired '{artifact_name}' artifact "
             f"in CI run {run_id}; found {len(matches)}"
         )
 
@@ -275,6 +292,8 @@ def main() -> int:
         "branch": "main",
         "commit_sha": release_sha,
         "run_id": run_id,
+        "run_attempt": run_attempt,
+        "artifact_name": artifact_name,
     }
     for field, expected_value in expected_fields.items():
         actual_value = attestation.get(field)
@@ -312,13 +331,21 @@ def main() -> int:
 
     report.append("- CI job `verification-attestation`: **success**.")
     report.append(
-        f"- Attestation artifact: `{ARTIFACT_NAME}` "
+        f"- Attestation artifact: `{artifact_name}` "
         f"(artifact ID {matches[0].get('id')})."
     )
     report.append(f"- Per-job records validated: **{len(attested_jobs)}**.")
     report.append(
         "- Kani, Verus, dual-verifier gate, Miri and CI summary all passed."
     )
+    latest_main_sha = (
+        api_json(main_ref_url, token).get("object", {}).get("sha", "").lower()
+    )
+    if latest_main_sha != release_sha:
+        raise GateError(
+            f"main moved before release authorization: expected {release_sha}, "
+            f"now {latest_main_sha}"
+        )
     report.append("\n**Release gate passed.**")
     write_summary(report)
     print("\n".join(report))

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly verus_version="0.2026.11.27.835af2f"
+readonly verus_version="0.2026.11.27.bfffda9"
 readonly archive="verus-${verus_version}-x86-linux.zip"
-# Pin the published rolling release and verify its published x86 Linux asset digest.
+# Pin the currently published rolling release and verify its published x86 Linux asset digest.
 readonly url="https://github.com/verus-lang/verus/releases/download/release/rolling/${verus_version}/${archive}"
-readonly sha256="9fe038c23eadc1d4c3da4943eb5f301f9be86e55f8d28d53ad0d7eb0764306f1"
+readonly sha256="0ad50c28ce0bc032b327f52e4df199395761cd907569a7eaa7ec967521e0e7ab"
 readonly base="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 readonly root="$base/verus"
 readonly download="$base/$archive"

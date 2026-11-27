@@ -17,8 +17,31 @@ env:
   RUST_VERSION: "1.99.0"
   CACHE_EPOCH: "release-v6"
 jobs:
+  verify-ci-attestation:
+    name: Verify exact main CI attestation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Verify main HEAD, CI run, every job and attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_EVENT: ${{ github.event_name }}
+        run: python3 scripts/ci/verify-release-attestation.py
+
   prepare:
     name: Prepare immutable release inputs
+    needs: verify-ci-attestation
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -1153,8 +1176,8 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  formal-verification:
-    name: Formal verification and package certification
+  package-certification:
+    name: Release package certification
     needs: [prepare, collect, package-server, package-dashboard, migration-package]
     if: ${{ always() && needs.prepare.result == 'success' && needs.collect.result == 'success' && needs.package-server.result == 'success' && needs.package-dashboard.result == 'success' && (needs.migration-package.result == 'success' || (needs.prepare.outputs.migration_release != 'true' && needs.migration-package.result == 'skipped')) }}
     runs-on: ubuntu-24.04
@@ -1170,25 +1193,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-          components: rustfmt
-      - name: Check Rust workspace formatting
-        shell: bash
-        run: cargo fmt --all -- --check
-      - name: Verify every tracked Rust source file
-        shell: bash
-        run: bash scripts/ci/verify-rust-source-coverage.bash
-      - name: Upload Rust source inventory
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: release-rust-source-inventory
-          path: ${{ runner.temp }}/gitrun-rust-source-inventory.tsv
-          if-no-files-found: ignore
-          retention-days: 7
       - name: Download collected canonical inputs
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
@@ -1455,73 +1459,17 @@ jobs:
             digest="$(sha256sum "$package" | cut -d ' ' -f 1)"
             printf 'VERIFIED %s (%s bytes, sha256=%s)\n' "$name" "$(stat -c '%s' "$package")" "$digest"
           done
-      - name: Install pinned Rust toolchain
-        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-      - name: Install pinned Kani and Verus verifiers
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo install --locked kani-verifier --version 0.68.0
-          cargo kani setup
-          bash scripts/ci/install-verus.sh
-      - name: Prove required Rust invariants
-        shell: bash
-        run: |
-          bash scripts/ci/verify-rust-formal.sh
-      - name: Verify Verus toolchain and proof runner
-        shell: bash
-        run: |
-          "${RUNNER_TEMP}/verus/installed/verus" verification/verus/smoke.rs
-      - name: Enforce dual-verifier coverage for every tracked Rust file
-        shell: bash
-        run: |
-          python3 scripts/ci/verify-rust-dual-coverage.py
-      - name: Install pinned nightly Miri toolchain
-        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
-        with:
-          toolchain: nightly-2026-11-06
-          components: miri
-      - name: Prepare Miri sysroot
-        run: cargo +nightly-2026-11-06 miri setup
-      - name: Run targeted Miri regression test
-        run: bash scripts/ci/verify-rust-miri.sh
-      - name: Upload Miri source coverage
-        if: always()
+      - name: Upload certified release payload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: release-miri-source-coverage
-          path: ${{ runner.temp }}/gitrun-miri-source-coverage.tsv
-          if-no-files-found: ignore
-          retention-days: 7
-      - name: Upload Kani per-file coverage status
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: release-kani-source-coverage
-          path: ${{ runner.temp }}/gitrun-kani-source-coverage.tsv
-          if-no-files-found: ignore
-          retention-days: 7
-      - name: Upload dual-verifier source coverage
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: release-dual-verifier-source-coverage
-          path: ${{ runner.temp }}/gitrun-dual-verifier-coverage.tsv
-          if-no-files-found: ignore
-          retention-days: 7
-      - name: Upload formally verified release payload
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: formally-verified-release-assets
+          name: certified-release-assets
           path: release-assets/*
           if-no-files-found: error
           retention-days: 3
 
   sign:
     name: Sign manifest and verify updater
-    needs: [prepare, formal-verification]
+    needs: [prepare, package-certification]
     if: github.event_name == 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -1539,7 +1487,7 @@ jobs:
       - name: Download validated release payload
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          name: formally-verified-release-assets
+          name: certified-release-assets
           path: release-assets
       - name: Install release manifest tools
         run: |

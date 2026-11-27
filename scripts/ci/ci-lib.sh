@@ -278,12 +278,40 @@ ci_apt() {
     : > "$CI_DIR/apt-mirror-forced"
   fi
 
+  # GitHub's Ubuntu images may include Microsoft's optional package feed.
+  # GitRun's CI prerequisites come from Ubuntu; a transient Microsoft 403 must
+  # not make unrelated package certification fail. Build a private source-parts
+  # directory excluding only source files that reference that optional feed.
+  # Keep the runner's real APT configuration untouched.
+  local apt_sourceparts="$CI_DIR/apt-sourceparts"
+  local apt_sourcelist="$CI_DIR/apt-sources.list"
+  if [ ! -f "$CI_DIR/apt-sources-prepared" ]; then
+    mkdir -p "$apt_sourceparts"
+    : > "$apt_sourcelist"
+    if [ -f /etc/apt/sources.list ]; then
+      grep -Eiv 'packages[.]microsoft[.]com' /etc/apt/sources.list > "$apt_sourcelist" || true
+    fi
+    shopt -s nullglob
+    local source
+    for source in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+      if grep -Eqi 'packages[.]microsoft[.]com' "$source"; then
+        echo "[$(date -Is)] excluding optional Microsoft APT source from CI prerequisite refresh: $source"
+      else
+        cp "$source" "$apt_sourceparts/"
+      fi
+    done
+    shopt -u nullglob
+    : > "$CI_DIR/apt-sources-prepared"
+  fi
+
   # Bound network waits without changing the workflow/job timeout, and keep
   # the package-manager output visible in every job that uses this helper.
   if [ ! -f "$CI_DIR/apt-updated" ]; then
     started=$(date +%s)
-    echo "[$(date -Is)] apt-get update started"
+    echo "[$(date -Is)] apt-get update started (Ubuntu sources; optional Microsoft feed excluded)"
     if (set -o pipefail; $sudo apt-get \
+      -o Dir::Etc::sourcelist="$apt_sourcelist" \
+      -o Dir::Etc::sourceparts="$apt_sourceparts/" \
       -o Acquire::http::Timeout=30 \
       -o Acquire::https::Timeout=30 \
       -o Acquire::Retries=2 \

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -212,6 +213,7 @@ def main() -> int:
         f"{api_url}/repos/{repository_path}/actions/runs/{run_id}/jobs?per_page=100"
     )
     jobs = api_json(jobs_url, token).get("jobs", [])
+    report.extend(describe_jobs(jobs))
     failed_jobs = [
         job
         for job in jobs
@@ -222,7 +224,6 @@ def main() -> int:
         report.append(
             f"- CI workflow conclusion: **{selected_run.get('conclusion')}**."
         )
-        report.extend(describe_jobs(jobs))
         failed_names = [
             job.get("name", str(job.get("id"))) for job in failed_jobs
         ]
@@ -270,8 +271,16 @@ def main() -> int:
     archive_url = matches[0].get("archive_download_url")
     if not archive_url:
         raise GateError("GitHub did not provide the artifact archive URL")
+    archive_bytes = api_request(archive_url, token)
+    expected_digest = matches[0].get("digest")
+    actual_digest = "sha256:" + hashlib.sha256(archive_bytes).hexdigest()
+    if not isinstance(expected_digest, str) or expected_digest != actual_digest:
+        raise GateError(
+            f"attestation artifact digest mismatch: expected {expected_digest!r}, "
+            f"downloaded {actual_digest!r}"
+        )
     try:
-        with zipfile.ZipFile(BytesIO(api_request(archive_url, token))) as archive:
+        with zipfile.ZipFile(BytesIO(archive_bytes)) as archive:
             json_files = [
                 name
                 for name in archive.namelist()
@@ -294,6 +303,7 @@ def main() -> int:
         "branch": "main",
         "commit_sha": release_sha,
         "run_id": run_id,
+        "run_attempt": run_attempt,
         "run_attempt": run_attempt,
         "artifact_name": artifact_name,
     }

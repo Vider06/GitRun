@@ -305,7 +305,6 @@ def main() -> int:
         "commit_sha": release_sha,
         "run_id": run_id,
         "run_attempt": run_attempt,
-        "run_attempt": run_attempt,
         "artifact_name": artifact_name,
     }
     for field, expected_value in expected_fields.items():
@@ -331,7 +330,6 @@ def main() -> int:
         match = re.fullmatch(r"  ([a-zA-Z0-9_-]+):", line)
         if match:
             expected_job_ids.add(match.group(1))
-    expected_job_ids.discard("verification-attestation")
     actual_job_ids = set(attested_jobs)
     if actual_job_ids != expected_job_ids:
         missing = sorted(expected_job_ids - actual_job_ids)

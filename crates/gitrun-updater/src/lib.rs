@@ -190,6 +190,9 @@ pub struct ReleaseManifest {
     pub artifacts: Vec<ReleaseArtifact>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+    /// Signature over the complete current manifest, including release_type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature_v2: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature_key_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -310,6 +313,13 @@ impl ReleaseManifest {
         if let Some(repository) = &self.repository {
             validate_repository(repository)?;
         }
+        if self.signature_v2.as_ref().is_some_and(|signature| {
+            signature.len() != 128 || !signature.chars().all(|c| c.is_ascii_hexdigit())
+        }) {
+            return Err(UpdateError::InvalidManifest(
+                "manifest v2 signature must be 64-byte hex".into(),
+            ));
+        }
         match (&self.signature, &self.signature_key_id) {
             (Some(signature), key_id) => {
                 if signature.len() != 128 || !signature.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -394,32 +404,71 @@ impl ReleaseManifest {
                 let public = decode_hex(public_key).ok_or_else(|| {
                     UpdateError::InvalidManifest("update public key must be 32-byte hex".into())
                 })?;
-                let sig = decode_hex(signature).ok_or_else(|| {
-                    UpdateError::InvalidManifest("update signature must be hex".into())
-                })?;
-                if public.len() != 32 || sig.len() != 64 {
+                if public.len() != 32 {
                     return Err(UpdateError::InvalidManifest(
-                        "invalid Ed25519 key or signature length".into(),
+                        "invalid Ed25519 public key length".into(),
                     ));
                 }
-                let payload = self.signing_payload()?;
-                UnparsedPublicKey::new(&ED25519, &public)
-                    .verify(&payload, &sig)
-                    .map_err(|_| {
-                        UpdateError::InvalidManifest(
-                            "update manifest signature verification failed".into(),
-                        )
-                    })
+                let verify = |payload: &[u8], encoded_signature: &str| {
+                    let sig = decode_hex(encoded_signature).ok_or_else(|| {
+                        UpdateError::InvalidManifest("update signature must be hex".into())
+                    })?;
+                    if sig.len() != 64 {
+                        return Err(UpdateError::InvalidManifest(
+                            "invalid Ed25519 signature length".into(),
+                        ));
+                    }
+                    UnparsedPublicKey::new(&ED25519, &public)
+                        .verify(payload, &sig)
+                        .map_err(|_| {
+                            UpdateError::InvalidManifest(
+                                "update manifest signature verification failed".into(),
+                            )
+                        })
+                };
+
+                // Dual-signed manifests keep the historical signature payload for
+                // the 1.8.23 updater, while v2 authenticates release_type and every
+                // other modern field. Older modern manifests (without v2) retain
+                // their original full-manifest signature semantics.
+                let legacy_payload = if self.signature_v2.is_some() {
+                    self.legacy_signing_payload()?
+                } else {
+                    self.signing_payload()?
+                };
+                verify(&legacy_payload, signature)?;
+                if let Some(signature_v2) = self.signature_v2.as_deref() {
+                    verify(&self.signing_payload()?, signature_v2)?;
+                }
+                Ok(())
             }
         }
     }
 
     fn signing_payload(&self) -> Result<Vec<u8>, UpdateError> {
+        self.canonical_signing_payload(true)
+    }
+
+    fn legacy_signing_payload(&self) -> Result<Vec<u8>, UpdateError> {
+        self.canonical_signing_payload(false)
+    }
+
+    fn canonical_signing_payload(
+        &self,
+        include_release_type: bool,
+    ) -> Result<Vec<u8>, UpdateError> {
         let mut unsigned = self.clone();
         unsigned.signature = None;
+        unsigned.signature_v2 = None;
         unsigned.signature_key_id = None;
-        let value = serde_json::to_value(&unsigned)
+        let mut value = serde_json::to_value(&unsigned)
             .map_err(|error| UpdateError::InvalidManifest(error.to_string()))?;
+        if !include_release_type {
+            value
+                .as_object_mut()
+                .ok_or_else(|| UpdateError::InvalidManifest("manifest must be an object".into()))?
+                .remove("release_type");
+        }
         let canonical = canonicalize_json(value);
         serde_json::to_vec(&canonical)
             .map_err(|error| UpdateError::InvalidManifest(error.to_string()))

@@ -3707,6 +3707,7 @@ jobs:
       - release-dashboard-musl-package-certification
       - tauri-recovery
       - docker
+      - summary
       - cache-gc
     if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04

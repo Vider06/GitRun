@@ -2079,7 +2079,7 @@ jobs:
           test "$(/usr/bin/gitrun --version --gitrun)" = "GitRun $VERSION_NUMBER"
           test "$(/usr/local/bin/gitrun --version --gitrun)" = "GitRun $VERSION_NUMBER"
 
-      - name: Generate professional release notes
+      - name: Generate release notes
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.prepare.outputs.version }}

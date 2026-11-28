@@ -66,6 +66,12 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > "$release_json"
           jq -e '.draft == false' "$release_json" >/dev/null
           old_prerelease="$(jq -r '.prerelease' "$release_json")"
+          latest_release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .id 2>/dev/null || true)"
+          if [ "$latest_release_id" = "$release_id" ]; then
+            old_make_latest=true
+          else
+            old_make_latest=false
+          fi
           old_body_file="$RUNNER_TEMP/release-body.old"
           jq -r '.body // ""' "$release_json" > "$old_body_file"
 
@@ -136,19 +142,30 @@ jobs:
               gh release upload "$TAG" "$old_manifest" --repo "$GITHUB_REPOSITORY" --clobber || true
               gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
                 -F prerelease="$old_prerelease" \
+                -F make_latest="$old_make_latest" \
                 -F body="$(cat "$old_body_file")" >/dev/null || true
             fi
           }
           trap rollback ERR
           gh release upload "$TAG" "$signed" --repo "$GITHUB_REPOSITORY" --clobber
 
-          if [ "$RELEASE_TYPE" = pre ]; then
-            new_prerelease=true
-          else
-            new_prerelease=false
-          fi
+          case "$RELEASE_TYPE" in
+            pre)
+              new_prerelease=true
+              new_make_latest=false
+              ;;
+            full)
+              new_prerelease=false
+              new_make_latest=true
+              ;;
+            security)
+              new_prerelease=false
+              new_make_latest=false
+              ;;
+          esac
           gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
             -F prerelease="$new_prerelease" \
+            -F make_latest="$new_make_latest" \
             -F body="$(cat "$new_body_file")" >/dev/null
           committed=true
           trap - ERR
